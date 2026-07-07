@@ -145,6 +145,7 @@ class SecondaryStationheadPlayer {
   int64_t lastAudioAt_ = 0;
   SecondaryStationheadTimestamp audioStoppedAt_;
   int64_t lastReloadAt_ = 0;
+  int64_t nextTickAt_ = 0;
   int64_t retryAt_ = 0;
   int64_t apiAuthStartedAt_ = 0;
   std::mutex apiAuthResultMutex_;

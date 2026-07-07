@@ -154,6 +154,7 @@ SecondaryStationheadPlayer::~SecondaryStationheadPlayer() {
 void SecondaryStationheadPlayer::Start() {
   if (shuttingDown_) return;
   retryAt_ = 0;
+  nextTickAt_ = 0;
   Create();
 }
 
@@ -632,9 +633,11 @@ void SecondaryStationheadPlayer::Reconnect() {
 
 void SecondaryStationheadPlayer::Tick(int64_t nowMs) {
   if (shuttingDown_) return;
+  if (nowMs < nextTickAt_) return;
   if (authClosePending_.exchange(false, std::memory_order_acq_rel)) {
     CloseAuthWebView();
     ShowInteractive(loginRequired_.load(std::memory_order_acquire));
+    nextTickAt_ = nowMs + 1'000;
   }
   if (retryAt_ > 0 && nowMs >= retryAt_) {
     retryAt_ = 0;
@@ -649,7 +652,10 @@ void SecondaryStationheadPlayer::Tick(int64_t nowMs) {
     RestoreSecondaryAfterSpotifyApiAuthorization();
     return;
   }
-  if (!webview_) return;
+  if (!webview_) {
+    nextTickAt_ = nowMs + 1'000;
+    return;
+  }
   MaybeStartSpotifyApiAuthorization(this);
   if (!audioPlaying_.load(std::memory_order_relaxed) && audioStoppedAt_ > 0 &&
       nowMs - audioStoppedAt_ >= kAudioRecoveryMs && !loginRequired_) {
@@ -667,7 +673,26 @@ void SecondaryStationheadPlayer::Tick(int64_t nowMs) {
       nowMs - lastReloadAt_ >= reloadInterval) {
     log_.Info(L"Secondary Stationhead maintenance reload");
     Reconnect();
+    nextTickAt_ = nowMs + 1'000;
+    return;
   }
+  int64_t next = nowMs + 5 * 60'000;
+  const auto consider = [&](int64_t deadline) {
+    if (deadline <= nowMs) next = nowMs + 1'000;
+    else next = std::min(next, deadline);
+  };
+  if (retryAt_ > 0) consider(retryAt_);
+  if (apiAuthorization_ && apiAuthStartedAt_ > 0) consider(apiAuthStartedAt_ + kApiAuthTimeoutMs);
+  if (!audioPlaying_.load(std::memory_order_relaxed) && audioStoppedAt_ > 0 && !loginRequired_) {
+    consider(audioStoppedAt_ + kAudioRecoveryMs);
+  }
+  if (retryAt_ == 0 && !loginRequired_ && createdAt_ > 0 && !audioPlaying_) {
+    consider(createdAt_ + kNavigationTimeoutMs);
+  }
+  if (audioPlaying_.load(std::memory_order_relaxed) && lastReloadAt_ > 0 && reloadInterval > 0) {
+    consider(lastReloadAt_ + reloadInterval);
+  }
+  nextTickAt_ = std::max(nowMs + 1'000, next);
 }
 
 void SecondaryStationheadPlayer::ScheduleRetry(const std::wstring& reason, int64_t delayMs) {
@@ -713,6 +738,7 @@ void SecondaryStationheadPlayer::CloseWebView() {
   audioStoppedAt_ = 0;
   lastReloadAt_ = 0;
   retryAt_ = 0;
+  nextTickAt_ = 0;
   {
     std::lock_guard lock(mutex_);
     status_.created = false;

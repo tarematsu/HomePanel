@@ -1117,12 +1117,12 @@ void StationheadPlayer::Tick(int64_t nowMs, bool diagnosticsVisible) {
     if (status_.navigating || status_.created) status_.detail = L"起動していません";
   }
   const bool spotifyStateChanged = spotifyStateDirty_.exchange(false);
-  const bool spotifyFallbackPollDue = nowMs - lastSpotifyCheckAt_ >= 5 * 60'000;
+  const bool spotifyFallbackPollDue = nowMs - lastSpotifyCheckAt_ >= 15 * 60'000;
   if (spotifyStateChanged || spotifyFallbackPollDue) {
     lastSpotifyCheckAt_ = nowMs;
     RefreshSpotifyState();
   }
-  const int64_t memoryCheckInterval = diagnosticsVisible ? 5'000 : 30 * 60'000;
+  const int64_t memoryCheckInterval = diagnosticsVisible ? 15'000 : 60 * 60'000;
   if (nowMs - lastMemoryCheckAt_ >= memoryCheckInterval) {
     lastMemoryCheckAt_ = nowMs;
     const size_t memory = MeasureProcessWorkingSet();
@@ -1136,7 +1136,7 @@ void StationheadPlayer::Tick(int64_t nowMs, bool diagnosticsVisible) {
   };
   if (reloadInterval > 0) consider(lastReloadAt_ + reloadInterval);
   if (nowMs <= startupScanUntil_) consider(lastScanAt_ + 1'500);
-  consider(lastSpotifyCheckAt_ + 5 * 60'000);
+  consider(lastSpotifyCheckAt_ + 15 * 60'000);
   consider(lastMemoryCheckAt_ + memoryCheckInterval);
   if (fallbackSec > 0 && createdForAudioCheckAt_ > 0) consider(createdForAudioCheckAt_ + static_cast<int64_t>(fallbackSec) * 1'000);
   nextTickAt_ = std::max(nowMs + 1'000, next);
