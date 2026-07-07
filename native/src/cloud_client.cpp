@@ -82,6 +82,10 @@ int VersionOr(const JsonObject& versions, const wchar_t* name, int fallback) {
     return fallback;
   }
 }
+
+std::string WinHttpErrorText(const char* action) {
+  return std::string(action) + " failed (" + std::to_string(GetLastError()) + ")";
+}
 }  // namespace
 
 CloudClient::CloudClient(HWND window, AppConfig config, fs::path dataDir, std::wstring deviceToken,
@@ -153,15 +157,15 @@ void CloudClient::EnsureHttpHandlesLocked() {
   port_ = parts.nPort;
   secure_ = parts.nScheme == INTERNET_SCHEME_HTTPS;
 
-  session_ = WinHttpOpen(L"HomePanel/2.6", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+  session_ = WinHttpOpen(L"HomePanel/2.6", accessType_,
                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-  if (!session_) throw std::runtime_error("WinHttpOpen failed");
+  if (!session_) throw std::runtime_error(WinHttpErrorText("WinHttpOpen"));
   DWORD protocols = WINHTTP_PROTOCOL_FLAG_HTTP2;
   WinHttpSetOption(session_, WINHTTP_OPTION_ENABLE_HTTP_PROTOCOL, &protocols, sizeof(protocols));
   connection_ = WinHttpConnect(session_, host_.c_str(), port_, 0);
   if (!connection_) {
     ResetHttpHandlesLocked();
-    throw std::runtime_error("WinHttpConnect failed");
+    throw std::runtime_error(WinHttpErrorText("WinHttpConnect"));
   }
 }
 
@@ -176,8 +180,9 @@ HttpResponse CloudClient::Request(const std::wstring& method, const std::wstring
                                            secure_ ? WINHTTP_FLAG_SECURE : 0);
     if (!request) {
       ResetHttpHandlesLocked();
+      if (accessType_ == WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY) accessType_ = WINHTTP_ACCESS_TYPE_NO_PROXY;
       if (!attempt) continue;
-      throw std::runtime_error("WinHttpOpenRequest failed");
+      throw std::runtime_error(WinHttpErrorText("WinHttpOpenRequest"));
     }
 
     int timeout = 8000;
@@ -194,10 +199,15 @@ HttpResponse CloudClient::Request(const std::wstring& method, const std::wstring
         body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(body.data()),
         static_cast<DWORD>(body.size()), static_cast<DWORD>(body.size()), 0);
     if (!sent || !WinHttpReceiveResponse(request, nullptr)) {
+      const DWORD requestError = GetLastError();
       WinHttpCloseHandle(request);
       ResetHttpHandlesLocked();
+      if (accessType_ == WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY) {
+        accessType_ = WINHTTP_ACCESS_TYPE_NO_PROXY;
+        log_.Warn(L"WinHTTP automatic proxy failed; retrying without proxy");
+      }
       if (!attempt) continue;
-      throw std::runtime_error("WinHTTP request failed");
+      throw std::runtime_error("WinHTTP request failed (" + std::to_string(requestError) + ")");
     }
 
     HttpResponse output;
@@ -221,7 +231,7 @@ HttpResponse CloudClient::Request(const std::wstring& method, const std::wstring
     }
     WinHttpCloseHandle(request);
     if (tooLarge) throw std::runtime_error("Cloudflare response exceeded 16 MiB");
-    if (!readOk) throw std::runtime_error("WinHTTP response read failed");
+    if (!readOk) throw std::runtime_error(WinHttpErrorText("WinHTTP response read"));
     return output;
   }
   throw std::runtime_error("WinHTTP request failed");

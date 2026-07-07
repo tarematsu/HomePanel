@@ -72,6 +72,10 @@ struct WebResult {
   std::string body;
 };
 
+std::string WinHttpErrorText(const char* action) {
+  return std::string(action) + " failed (" + std::to_string(GetLastError()) + ")";
+}
+
 WebResult WebRequest(const std::wstring& method, const std::wstring& url,
                      const std::wstring& bearer = {}) {
   URL_COMPONENTS parts{sizeof(parts)};
@@ -91,63 +95,89 @@ WebResult WebRequest(const std::wstring& method, const std::wstring& url,
     requestPath.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
   }
 
-  HINTERNET session = WinHttpOpen(
-      L"HomePanel-Spotify/2.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-      WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-  if (!session) throw std::runtime_error("Spotify WinHttpOpen failed");
-  HINTERNET connection = WinHttpConnect(
-      session, std::wstring(host, parts.dwHostNameLength).c_str(), parts.nPort, 0);
-  if (!connection) {
-    WinHttpCloseHandle(session);
-    throw std::runtime_error("Spotify WinHttpConnect failed");
-  }
-  HINTERNET request = WinHttpOpenRequest(
-      connection, method.c_str(), requestPath.c_str(), nullptr,
-      WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-      parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
-  if (!request) {
-    WinHttpCloseHandle(connection);
-    WinHttpCloseHandle(session);
-    throw std::runtime_error("Spotify request creation failed");
-  }
-  WinHttpSetTimeouts(request, 8000, 8000, 8000, 8000);
-  std::wstring headers = L"Accept: application/json\r\n";
-  if (!bearer.empty()) {
-    headers += L"Authorization: Bearer " + bearer + L"\r\n";
-  }
-  const BOOL sent = WinHttpSendRequest(
-      request, headers.c_str(), static_cast<DWORD>(headers.size()),
-      WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-  if (!sent || !WinHttpReceiveResponse(request, nullptr)) {
+  for (DWORD accessType : {WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_ACCESS_TYPE_NO_PROXY}) {
+    HINTERNET session = WinHttpOpen(
+        L"HomePanel-Spotify/2.0", accessType,
+        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) {
+      if (accessType == WINHTTP_ACCESS_TYPE_NO_PROXY) {
+        throw std::runtime_error(WinHttpErrorText("Spotify WinHttpOpen"));
+      }
+      continue;
+    }
+    HINTERNET connection = WinHttpConnect(
+        session, std::wstring(host, parts.dwHostNameLength).c_str(), parts.nPort, 0);
+    if (!connection) {
+      WinHttpCloseHandle(session);
+      if (accessType == WINHTTP_ACCESS_TYPE_NO_PROXY) {
+        throw std::runtime_error(WinHttpErrorText("Spotify WinHttpConnect"));
+      }
+      continue;
+    }
+    HINTERNET request = WinHttpOpenRequest(
+        connection, method.c_str(), requestPath.c_str(), nullptr,
+        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+        parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
+    if (!request) {
+      WinHttpCloseHandle(connection);
+      WinHttpCloseHandle(session);
+      if (accessType == WINHTTP_ACCESS_TYPE_NO_PROXY) {
+        throw std::runtime_error(WinHttpErrorText("Spotify WinHttpOpenRequest"));
+      }
+      continue;
+    }
+    WinHttpSetTimeouts(request, 8000, 8000, 8000, 8000);
+    std::wstring headers = L"Accept: application/json\r\n";
+    if (!bearer.empty()) {
+      headers += L"Authorization: Bearer " + bearer + L"\r\n";
+    }
+    const BOOL sent = WinHttpSendRequest(
+        request, headers.c_str(), static_cast<DWORD>(headers.size()),
+        WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+    if (!sent || !WinHttpReceiveResponse(request, nullptr)) {
+      const std::string detail = "Spotify request failed (" + std::to_string(GetLastError()) + ")";
+      WinHttpCloseHandle(request);
+      WinHttpCloseHandle(connection);
+      WinHttpCloseHandle(session);
+      if (accessType == WINHTTP_ACCESS_TYPE_NO_PROXY) throw std::runtime_error(detail);
+      continue;
+    }
+
+    WebResult result;
+    DWORD statusSize = sizeof(result.status);
+    WinHttpQueryHeaders(
+        request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX, &result.status, &statusSize,
+        WINHTTP_NO_HEADER_INDEX);
+    bool ok = true;
+    std::string failure;
+    for (;;) {
+      DWORD available = 0;
+      if (!WinHttpQueryDataAvailable(request, &available)) {
+        ok = false;
+        failure = WinHttpErrorText("Spotify response query");
+        break;
+      }
+      if (!available) break;
+      const size_t offset = result.body.size();
+      result.body.resize(offset + available);
+      DWORD read = 0;
+      if (!WinHttpReadData(
+              request, result.body.data() + offset, available, &read)) {
+        ok = false;
+        failure = WinHttpErrorText("Spotify response read");
+        break;
+      }
+      result.body.resize(offset + read);
+      if (!read) break;
+    }
     WinHttpCloseHandle(request);
     WinHttpCloseHandle(connection);
     WinHttpCloseHandle(session);
-    throw std::runtime_error("Spotify request failed");
+    if (ok) return result;
+    if (accessType == WINHTTP_ACCESS_TYPE_NO_PROXY) throw std::runtime_error(failure);
   }
-
-  WebResult result;
-  DWORD statusSize = sizeof(result.status);
-  WinHttpQueryHeaders(
-      request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-      WINHTTP_HEADER_NAME_BY_INDEX, &result.status, &statusSize,
-      WINHTTP_NO_HEADER_INDEX);
-  for (;;) {
-    DWORD available = 0;
-    if (!WinHttpQueryDataAvailable(request, &available) || !available) break;
-    const size_t offset = result.body.size();
-    result.body.resize(offset + available);
-    DWORD read = 0;
-    if (!WinHttpReadData(
-            request, result.body.data() + offset, available, &read)) {
-      break;
-    }
-    result.body.resize(offset + read);
-    if (!read) break;
-  }
-  WinHttpCloseHandle(request);
-  WinHttpCloseHandle(connection);
-  WinHttpCloseHandle(session);
-  return result;
+  throw std::runtime_error("Spotify request failed");
 }
 
 class SpotifyRuntime {

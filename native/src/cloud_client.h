@@ -160,6 +160,7 @@ class CloudClient {
   std::wstring basePath_;
   INTERNET_PORT port_ = 0;
   bool secure_ = true;
+  DWORD accessType_ = WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
 
   std::mutex spotifyPollMutex_;
   std::mutex spotifyMutex_;
