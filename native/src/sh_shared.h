@@ -12,6 +12,28 @@ inline int64_t StationheadReloadIntervalMs(int intervalMinutes) noexcept {
   return intervalMinutes > 0 ? static_cast<int64_t>(intervalMinutes) * 60'000 : 0;
 }
 
+inline std::wstring StationheadVolumeScript(int percent) {
+  std::wostringstream script;
+  script << L"(() => { const v=" << percent << L"/100;"
+         << L"window.__homepanelStationheadVolume=v;"
+         << L"const apply=e=>{if(!e||e.__homepanelVolume===v)return;"
+         << L"try{e.volume=v;e.defaultMuted=v<=0;e.muted=v<=0?true:false;e.__homepanelVolume=v;}catch(_){}};"
+         << L"const applyAll=(root=document)=>{for(const e of root.querySelectorAll?.('audio,video')||[])apply(e);"
+         << L"if(root?.matches?.('audio,video'))apply(root);};"
+         << L"applyAll();"
+         << L"if(!window.__homepanelStationheadVolumeObserver){"
+         << L"window.__homepanelStationheadVolumeApply=()=>applyAll();"
+         << L"window.__homepanelStationheadVolumeObserver=new MutationObserver(records=>{"
+         << L"for(const record of records){for(const node of record.addedNodes||[]){"
+         << L"if(node instanceof Element){applyAll(node);}}}});"
+         << L"window.__homepanelStationheadVolumeObserver.observe(document,{childList:true,subtree:true});"
+         << L"document.addEventListener('play',event=>apply(event.target),true);"
+         << L"document.addEventListener('loadedmetadata',event=>apply(event.target),true);"
+         << L"window.__homepanelStationheadVolumeTimer=setInterval(window.__homepanelStationheadVolumeApply,5000);"
+         << L"} return true; })()";
+  return script.str();
+}
+
 // Blocks image/font network requests once a Stationhead WebView has
 // confirmed playback (armed set true by the caller at that point), matching
 // the blockImagesAfterPlayback/blockFontsAfterPlayback config flags' actual

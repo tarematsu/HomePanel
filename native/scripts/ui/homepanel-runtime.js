@@ -58,7 +58,6 @@
     }
 
     const diagnosticsChanged = revisionChanged('diagnostics', runtime);
-    const stationheadChanged = revisionChanged('stationhead', runtime);
     const sensorsChanged = revisionChanged('sensors', runtime);
     const historyChanged = revisionChanged('airHistory', runtime);
 
@@ -66,7 +65,6 @@
       renderControls(runtime);
       text('#version', runtime.diagnostics?.appVersion || '');
     }
-    if (dashboardChanged || stationheadChanged) panels.stationhead?.renderStationhead(runtime.stationhead || {});
     if (sensorsChanged) panels.air?.renderAir(runtime.sensors || {});
     if (dashboardChanged || historyChanged) {
       window.dispatchEvent(new CustomEvent('homepanel:air-history', { detail: airHistorySource() }));

@@ -35,6 +35,7 @@ constexpr wchar_t kStartupScript[] = LR"JS(
   const loginPattern = /^(log\s*in|sign\s*in|login)(?:\s+.*)?$/i;
   let observer = null;
   let scanQueued = false;
+  let scanTimer = 0;
   let attempts = 0;
   let retryAt = 0;
   let loginReported = false;
@@ -72,9 +73,15 @@ constexpr wchar_t kStartupScript[] = LR"JS(
   };
   const scan = () => {
     scanQueued = false;
+    scanTimer = 0;
     const ready = document.readyState !== 'loading' && !!document.body;
     const isPlaying = publishAudio();
-    if (!ready || isPlaying || !document.body) return;
+    if (!ready || !document.body) return;
+    if (isPlaying) {
+      observer?.disconnect?.();
+      observer = null;
+      return;
+    }
     let start = null;
     let login = false;
     for (const element of document.querySelectorAll(selector)) {
@@ -105,7 +112,7 @@ constexpr wchar_t kStartupScript[] = LR"JS(
   const schedule = () => {
     if (scanQueued) return;
     scanQueued = true;
-    nativeTimeout(scan, 16);
+    scanTimer = nativeTimeout(scan, 250);
   };
   const relevant = record => {
     if (record.type === 'attributes') return Boolean(record.target?.matches?.(selector) || record.target?.closest?.(selector));
@@ -117,8 +124,7 @@ constexpr wchar_t kStartupScript[] = LR"JS(
   if (NativeMutationObserver) {
     observer = new NativeMutationObserver(records => { if (records.some(relevant)) schedule(); });
     observer.observe(document, {
-      childList: true, subtree: true, characterData: true, attributes: true,
-      attributeFilter: ['class','style','hidden','disabled','aria-hidden','aria-disabled']
+      childList: true, subtree: true
     });
   }
   for (const eventName of ['play','playing','canplay','pause','ended','stalled','waiting','error']) {

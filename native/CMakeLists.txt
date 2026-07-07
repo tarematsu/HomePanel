@@ -49,9 +49,27 @@ if(NOT EXISTS "${HOMEPANEL_RADAR_SATELLITE}" OR NOT EXISTS "${HOMEPANEL_RADAR_MA
   message(FATAL_ERROR "Bundled radar layers are missing from scripts/ui")
 endif()
 
-configure_file(resources/HomePanel.rc.in "${CMAKE_CURRENT_BINARY_DIR}/generated/HomePanel.rc" @ONLY)
-configure_file(resources/HomePanelUpdater.rc.in "${CMAKE_CURRENT_BINARY_DIR}/generated/HomePanelUpdater.rc" @ONLY)
-configure_file(src/version.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/version.h" @ONLY)
+set(HOMEPANEL_GENERATED_HOME_RC "${CMAKE_CURRENT_BINARY_DIR}/generated/HomePanel.rc")
+set(HOMEPANEL_GENERATED_UPDATER_RC "${CMAKE_CURRENT_BINARY_DIR}/generated/HomePanelUpdater.rc")
+set(HOMEPANEL_GENERATED_VERSION_H "${CMAKE_CURRENT_BINARY_DIR}/generated/version.h")
+
+add_custom_target(homepanel_version_files ALL
+  COMMAND "${CMAKE_COMMAND}"
+          -DHOMEPANEL_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+          -DINPUT_HOME_RC=${CMAKE_CURRENT_SOURCE_DIR}/resources/HomePanel.rc.in
+          -DINPUT_UPDATER_RC=${CMAKE_CURRENT_SOURCE_DIR}/resources/HomePanelUpdater.rc.in
+          -DINPUT_VERSION_H=${CMAKE_CURRENT_SOURCE_DIR}/src/version.h.in
+          -DOUTPUT_HOME_RC=${HOMEPANEL_GENERATED_HOME_RC}
+          -DOUTPUT_UPDATER_RC=${HOMEPANEL_GENERATED_UPDATER_RC}
+          -DOUTPUT_VERSION_H=${HOMEPANEL_GENERATED_VERSION_H}
+          -DHOMEPANEL_RADAR_SATELLITE=${HOMEPANEL_RADAR_SATELLITE}
+          -DHOMEPANEL_RADAR_MAP=${HOMEPANEL_RADAR_MAP}
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/write_version_files.cmake"
+  BYPRODUCTS
+    "${HOMEPANEL_GENERATED_HOME_RC}"
+    "${HOMEPANEL_GENERATED_UPDATER_RC}"
+    "${HOMEPANEL_GENERATED_VERSION_H}"
+  VERBATIM)
 
 set(WEBVIEW2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/packages/Microsoft.Web.WebView2.1.0.4022.49" CACHE PATH "Extracted Microsoft WebView2 NuGet package")
 set(WEBVIEW2_NATIVE_DIR "${WEBVIEW2_DIR}/build/native/x64")
@@ -134,7 +152,7 @@ set(HOMEPANEL_RENDERER_SOURCES
   src/renderer_runtime.cpp)
 
 set(HOMEPANEL_RESOURCE_SOURCES
-  "${CMAKE_CURRENT_BINARY_DIR}/generated/HomePanel.rc"
+  "${HOMEPANEL_GENERATED_HOME_RC}"
   "${CMAKE_CURRENT_SOURCE_DIR}/resources/HomePanel.manifest")
 
 add_executable(HomePanel WIN32
@@ -144,6 +162,7 @@ add_executable(HomePanel WIN32
   ${HOMEPANEL_RENDERER_SOURCES}
   ${HOMEPANEL_RESOURCE_SOURCES})
 homepanel_configure_common_target(HomePanel)
+add_dependencies(HomePanel homepanel_version_files)
 target_compile_definitions(HomePanel PRIVATE HOMEPANEL_ENABLE_SPOTIFY_RUNTIME)
 target_link_libraries(HomePanel PRIVATE
   "${WEBVIEW2_NATIVE_DIR}/WebView2Loader.dll.lib"
@@ -160,11 +179,12 @@ set(HOMEPANEL_UPDATER_SOURCES
   src/config.cpp
   src/logger.cpp
   src/cloud_client.cpp
-  "${CMAKE_CURRENT_BINARY_DIR}/generated/HomePanelUpdater.rc"
+  "${HOMEPANEL_GENERATED_UPDATER_RC}"
   "${CMAKE_CURRENT_SOURCE_DIR}/resources/HomePanel.manifest")
 
 add_executable(HomePanelUpdater WIN32 ${HOMEPANEL_UPDATER_SOURCES})
 homepanel_configure_common_target(HomePanelUpdater)
+add_dependencies(HomePanelUpdater homepanel_version_files)
 target_link_libraries(HomePanelUpdater PRIVATE winhttp bcrypt wintrust crypt32 shell32 ole32 user32 windowsapp runtimeobject iphlpapi)
 
 install(TARGETS HomePanel HomePanelUpdater RUNTIME DESTINATION .)

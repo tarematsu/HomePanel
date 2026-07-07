@@ -37,9 +37,6 @@
     setInterval(() => {
       if (!document.hidden) panels.clock?.updateClock();
     }, 1000);
-    setInterval(() => {
-      if (!document.hidden) panels.stationhead?.tickProgress();
-    }, 5000);
     setInterval(() => panels.radar?.refreshRadar(), panels.radar?.refreshMs || 5 * 60 * 1000);
 
     window.addEventListener('online', () => panels.radar?.refreshRadar());
@@ -50,7 +47,6 @@
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
         panels.clock?.updateClock();
-        panels.stationhead?.tickProgress();
         panels.energy?.drawEnergyChart();
         panels.radar?.refreshRadar();
       }

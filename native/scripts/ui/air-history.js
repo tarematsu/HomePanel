@@ -190,51 +190,6 @@
 (() => {
   'use strict';
 
-  let stationhead = window.__homepanelRuntimeState?.stationhead || null;
-  let progressTimer = 0;
-
-  function formatMs(value) {
-    const seconds = Math.max(0, Math.floor(Number(value || 0) / 1000));
-    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-  }
-
-  function updateProgress() {
-    if (document.hidden || !stationhead?.playing || stationhead.audioSilent) return;
-    const duration = Number(stationhead.trackDurationMs) || 0;
-    const sampledAt = Number(stationhead.sampledAt) || 0;
-    const expectedEndAt = Number(stationhead.expectedEndAt) || 0;
-    if (duration <= 0 || sampledAt <= 0) return;
-    const sampled = expectedEndAt > sampledAt ? Math.max(0, duration - (expectedEndAt - sampledAt)) : 0;
-    const elapsed = Math.min(duration, sampled + Math.max(0, Date.now() - sampledAt));
-    const fill = document.getElementById('sp-progress-fill');
-    const elapsedNode = document.getElementById('sp-elapsed');
-    const remainingNode = document.getElementById('sp-remaining');
-    const transform = `scaleX(${(elapsed / duration).toFixed(4)})`;
-    const elapsedText = formatMs(elapsed);
-    const remainingText = `-${formatMs(duration - elapsed)}`;
-    if (fill && fill.style.transform !== transform) fill.style.transform = transform;
-    if (elapsedNode && elapsedNode.textContent !== elapsedText) elapsedNode.textContent = elapsedText;
-    if (remainingNode && remainingNode.textContent !== remainingText) remainingNode.textContent = remainingText;
-  }
-
-  function stopProgress() {
-    if (!progressTimer) return;
-    clearTimeout(progressTimer);
-    progressTimer = 0;
-  }
-
-  function scheduleProgress(immediate = false) {
-    stopProgress();
-    if (document.hidden || !stationhead?.playing || stationhead.audioSilent) return;
-    if (immediate) updateProgress();
-    const delay = Math.max(80, 1010 - (Date.now() % 1000));
-    progressTimer = setTimeout(() => {
-      progressTimer = 0;
-      updateProgress();
-      scheduleProgress();
-    }, delay);
-  }
-
   function addLegend() {
     const stage = document.querySelector('.radar-stage');
     if (!stage || stage.querySelector('.radar-legend')) return;
@@ -258,17 +213,5 @@
     stage.appendChild(legend);
   }
 
-  window.chrome?.webview?.addEventListener('message', event => {
-    if (event.data?.stationhead) {
-      stationhead = event.data.stationhead;
-      scheduleProgress(true);
-    }
-  });
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stopProgress();
-    else scheduleProgress(true);
-  });
-
   addLegend();
-  scheduleProgress(true);
 })();
