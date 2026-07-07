@@ -547,19 +547,15 @@
   -webkit-line-clamp: 1 !important;
 }
 
-.spotify-panel .sp-live-row,
-.spotify-panel .stationhead-progress,
-.spotify-panel .stationhead-progress-time {
+.spotify-panel .sp-live-row {
   display: none !important;
 }
 
 .spotify-panel .stationhead-audio-controls {
-  display: grid !important;
-  grid-template-columns: auto minmax(0, 1fr) !important;
+  display: flex !important;
   align-items: center !important;
-  gap: 4px !important;
-  width: 100% !important;
-  min-width: 0 !important;
+  gap: 6px !important;
+  width: auto !important;
   min-height: 20px !important;
   margin-top: 1px !important;
   visibility: visible !important;
@@ -578,34 +574,6 @@
   white-space: nowrap !important;
 }
 
-.spotify-panel .stationhead-volume-control {
+.spotify-panel .stationhead-progress {
   display: grid !important;
-  grid-template-columns: minmax(34px, 1fr) auto !important;
-  align-items: center !important;
-  gap: 4px !important;
-  min-width: 0 !important;
-  min-height: 18px !important;
-  visibility: visible !important;
-  opacity: 1 !important;
-}
-
-.spotify-panel .stationhead-volume-control > span {
-  display: none !important;
-}
-
-.spotify-panel .stationhead-volume-slider {
-  display: block !important;
-  width: 100% !important;
-  min-width: 34px !important;
-  height: 16px !important;
-  visibility: visible !important;
-  opacity: 1 !important;
-  accent-color: var(--blue);
-}
-
-.spotify-panel .stationhead-volume-control b {
-  min-width: 24px !important;
-  font-size: 7px !important;
-  line-height: 1 !important;
-  text-align: right !important;
 }

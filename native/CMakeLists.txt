@@ -43,15 +43,11 @@ function(homepanel_run_script description script)
   set(HOMEPANEL_SCRIPT_OUTPUT "${HOMEPANEL_SCRIPT_OUTPUT}${HP_OUTPUT}" PARENT_SCOPE)
 endfunction()
 
-set(HOMEPANEL_RADAR_SATELLITE "${CMAKE_CURRENT_BINARY_DIR}/generated/radar-satellite.png")
-set(HOMEPANEL_RADAR_MAP "${CMAKE_CURRENT_BINARY_DIR}/generated/radar-map.png")
-homepanel_run_script("Generate bundled radar layers" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_radar_base.ps1"
-  ARGS -SatelliteOutputPath "${HOMEPANEL_RADAR_SATELLITE}"
-       -MapOutputPath "${HOMEPANEL_RADAR_MAP}")
+set(HOMEPANEL_RADAR_SATELLITE "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ui/radar-satellite.png")
+set(HOMEPANEL_RADAR_MAP "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ui/radar-map.png")
 if(NOT EXISTS "${HOMEPANEL_RADAR_SATELLITE}" OR NOT EXISTS "${HOMEPANEL_RADAR_MAP}")
-  message(FATAL_ERROR "Radar layer generator did not create the bundled radar layers")
+  message(FATAL_ERROR "Bundled radar layers are missing from scripts/ui")
 endif()
-message(STATUS "${HOMEPANEL_SCRIPT_OUTPUT}")
 
 configure_file(resources/HomePanel.rc.in "${CMAKE_CURRENT_BINARY_DIR}/generated/HomePanel.rc" @ONLY)
 configure_file(resources/HomePanelUpdater.rc.in "${CMAKE_CURRENT_BINARY_DIR}/generated/HomePanelUpdater.rc" @ONLY)

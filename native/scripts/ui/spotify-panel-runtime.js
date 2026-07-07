@@ -21,8 +21,8 @@
     b: { value: {}, fetchedAt: 0, error: '', revision: 0 },
   };
   const audioUiState = {
-    a: { muted: false, volume: 100 },
-    b: { muted: false, volume: 100 },
+    a: { muted: false },
+    b: { muted: false },
   };
 
   const $ = selector => document.querySelector(selector);
@@ -47,10 +47,6 @@
     const state = audioUiState[key];
     if (!state) return;
     const button = $(`#stationhead-${key}-audio`);
-    const slider = $(`#stationhead-${key}-volume`);
-    const valueNode = $(`#stationhead-${key}-volume-value`);
-    const volume = Math.max(0, Math.min(100, Math.round(Number(state.volume) || 0)));
-    state.volume = volume;
     if (button) {
       button.classList.toggle('is-muted', Boolean(state.muted));
       button.setAttribute('aria-pressed', state.muted ? 'true' : 'false');
@@ -59,8 +55,6 @@
       if (label.textContent !== next) label.textContent = next;
       button.title = state.muted ? 'クリックで音声ON' : 'クリックで音声OFF';
     }
-    if (slider instanceof HTMLInputElement && slider.value !== String(volume)) slider.value = String(volume);
-    if (valueNode && valueNode.textContent !== `${volume}%`) valueNode.textContent = `${volume}%`;
   }
 
   function syncAudioControlsFromRuntime(state) {
@@ -81,18 +75,6 @@
       audioUiState[key].muted = !audioUiState[key].muted;
       updateAudioControls(key);
     });
-    const handleVolume = event => {
-      const slider = event.target.closest('.stationhead-volume-slider[data-audio-window][data-action]');
-      if (!(slider instanceof HTMLInputElement)) return;
-      const key = slider.dataset.audioWindow;
-      if (!audioUiState[key]) return;
-      const volume = Math.max(0, Math.min(100, Math.round(Number(slider.value) || 0)));
-      audioUiState[key].volume = volume;
-      updateAudioControls(key);
-      postNativeAction(slider.dataset.action, volume);
-    };
-    document.addEventListener('input', handleVolume);
-    document.addEventListener('change', handleVolume);
     updateAudioControls('a');
     updateAudioControls('b');
   }
@@ -223,7 +205,7 @@
     return {
       name: String(source.name || source.title || source.trackTitle || '').trim(),
       artist: String(artist || source.trackArtist || '').trim(),
-      artwork: source.artwork || source.artworkUrl || source.albumArtUrl || source.image || source.imageUrl || images[0]?.url || '',
+      artwork: source.artwork || source.artworkUrl || source.albumArtUrl || source.image || source.imageUrl || source.thumbnail_url || images[0]?.url || '',
       durationMs: Math.max(0, Number(source.durationMs ?? source.duration_ms ?? source.lengthMs ?? 0) || 0),
     };
   }
@@ -241,7 +223,8 @@
     let progressMs = Math.max(0, Number(value.progressMs ?? value.positionMs ?? 0) || 0);
 
     if (queue.length) {
-      let index = Number(value.currentIndex ?? value.current_index ?? 0);
+      let index = Number(value.currentIndex ?? value.current_index ?? value.queue_status?.current_index ?? -1);
+      if (!Number.isInteger(index) || index < 0 || index >= queue.length) index = queue.findIndex(item => item?.is_current === true);
       if (!Number.isInteger(index) || index < 0 || index >= queue.length) index = 0;
       let elapsed = progressMs;
       if (playing) {

@@ -52,12 +52,10 @@
 }
 
 .spotify-panel .stationhead-audio-controls {
-  display: grid !important;
-  grid-template-columns: auto minmax(0, 1fr);
+  display: flex !important;
   align-items: center;
-  gap: 4px;
-  width: 100%;
-  min-width: 0;
+  gap: 6px;
+  width: auto;
   min-height: 20px;
   margin-top: 1px;
   flex: 0 0 auto;
@@ -80,43 +78,8 @@
   color: var(--blue);
 }
 
-.spotify-panel .stationhead-volume-control {
-  display: grid !important;
-  grid-template-columns: minmax(34px, 1fr) auto;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  color: var(--muted);
-  font-size: 8px;
-  line-height: 1;
-  visibility: visible !important;
-  opacity: 1 !important;
-}
-
-.spotify-panel .stationhead-volume-control > span {
-  display: none;
-}
-
-.spotify-panel .stationhead-volume-slider {
-  display: block !important;
-  width: 100%;
-  min-width: 34px;
-  height: 16px;
-  accent-color: var(--blue);
-  visibility: visible !important;
-  opacity: 1 !important;
-}
-
-.spotify-panel .stationhead-volume-control b {
-  min-width: 25px;
-  color: var(--faint);
-  font-size: 7px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
 .spotify-panel .stationhead-progress {
-  display: none !important;
+  display: grid !important;
 }
 
 @media (min-height: 860px) {

@@ -8,10 +8,13 @@
   const RADAR_HEIGHT = 520;
   const RADAR_REFRESH_MS = 5 * 60 * 1000;
   const RADAR_DATA_URL = 'https://data.homepanel/radar.json';
+  const RADAR_BASE_SATELLITE_URL = 'radar-satellite.png';
+  const RADAR_BASE_MAP_URL = 'radar-map.png';
 
   let radarRefreshPromise = null;
   let radarSignatureValue = '';
   let radarFrame = null;
+  let baseLayersPromise = null;
 
   function loadRadarImage(url) {
     return new Promise(resolve => {
@@ -25,6 +28,22 @@
   function radarDateFromMillis(value) {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? new Date(parsed) : null;
+  }
+
+  function loadBaseLayers() {
+    if (!baseLayersPromise) {
+      baseLayersPromise = Promise.all([
+        loadRadarImage(RADAR_BASE_SATELLITE_URL),
+        loadRadarImage(RADAR_BASE_MAP_URL),
+      ]).then(([satellite, map]) => {
+        if (!satellite || !map) throw new Error('bundled radar base layers unavailable');
+        return { satellite, map };
+      }).catch(error => {
+        baseLayersPromise = null;
+        throw error;
+      });
+    }
+    return baseLayersPromise;
   }
 
   function presentRadar() {
@@ -42,20 +61,24 @@
   }
 
   async function buildRadarFrame() {
-    const response = await fetch(`${RADAR_DATA_URL}?_=${Date.now()}`, { cache: 'no-store' });
-    if (!response.ok) throw new Error(`radar HTTP ${response.status}`);
-    const radar = await response.json();
+    const baseLayers = await loadBaseLayers();
+    let radar = null;
+    try {
+      const response = await fetch(`${RADAR_DATA_URL}?_=${Date.now()}`, { cache: 'no-store' });
+      if (response.ok) radar = await response.json();
+    } catch (_) {
+      radar = null;
+    }
     const baseTiles = Array.isArray(radar?.baseTiles) ? radar.baseTiles : [];
     const frames = Array.isArray(radar?.frames) ? radar.frames : [];
     const frameData = frames[0] || null;
     const overlayTiles = Array.isArray(frameData?.tiles) ? frameData.tiles : [];
-    if (!baseTiles.length) throw new Error('radar base tiles unavailable');
 
     const signature = JSON.stringify([
       frameData?.baseTime || '',
       frameData?.validTime || '',
       overlayTiles.length,
-      baseTiles.length,
+      baseTiles.length || 'bundled',
     ]);
     if (signature === radarSignatureValue && radarFrame) {
       presentRadar();
@@ -67,10 +90,7 @@
     const scaleX = RADAR_WIDTH / width;
     const scaleY = RADAR_HEIGHT / height;
 
-    const [baseImages, overlayImages] = await Promise.all([
-      Promise.all(baseTiles.map(tile => loadRadarImage(tile.url))),
-      Promise.all(overlayTiles.map(tile => loadRadarImage(tile.url))),
-    ]);
+    const overlayImages = await Promise.all(overlayTiles.map(tile => loadRadarImage(tile.url)));
 
     const frame = document.createElement('canvas');
     frame.width = RADAR_WIDTH;
@@ -84,18 +104,7 @@
     context.globalAlpha = 1;
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
-
-    baseTiles.forEach((tile, index) => {
-      const image = baseImages[index];
-      if (!image) return;
-      context.drawImage(
-        image,
-        Math.round(Number(tile.destX || 0) * scaleX),
-        Math.round(Number(tile.destY || 0) * scaleY),
-        Math.ceil(256 * scaleX),
-        Math.ceil(256 * scaleY),
-      );
-    });
+    context.drawImage(baseLayers.satellite, 0, 0, RADAR_WIDTH, RADAR_HEIGHT);
 
     context.imageSmoothingEnabled = false;
     overlayTiles.forEach((tile, index) => {
@@ -109,6 +118,9 @@
         Math.ceil(256 * scaleY),
       );
     });
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(baseLayers.map, 0, 0, RADAR_WIDTH, RADAR_HEIGHT);
 
     const when = radarDateFromMillis(frameData?.validAt);
     if (when) {
