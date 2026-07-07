@@ -36,6 +36,20 @@ jobs:
           $version = [TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tz).ToString("yyMMddHHmm")
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      - name: Install WebView2 SDK
+        shell: pwsh
+        run: |
+          $packageRoot = "native/packages"
+          $packageDir = Join-Path $packageRoot "Microsoft.Web.WebView2.1.0.4022.49"
+          if (Test-Path -LiteralPath (Join-Path $packageDir "build/native/include/WebView2.h")) {
+            Write-Host "WebView2 SDK already available."
+            exit 0
+          }
+
+          New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+          nuget install Microsoft.Web.WebView2 -Version 1.0.4022.49 -OutputDirectory $packageRoot -NonInteractive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Configure native project
         shell: pwsh
         run: |
