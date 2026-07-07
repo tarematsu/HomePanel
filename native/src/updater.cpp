@@ -1,3 +1,5 @@
+#pragma comment(lib, "version.lib")
+
 #include "cloud_client.h"
 #include "config.h"
 #include "update_client.h"
@@ -30,6 +32,27 @@ struct Arguments {
 
 std::wstring Quote(const fs::path& path) {
   return L"\"" + path.wstring() + L"\"";
+}
+
+std::wstring InstalledFileVersion(const fs::path& executable) {
+  DWORD handle = 0;
+  const DWORD size = GetFileVersionInfoSizeW(executable.c_str(), &handle);
+  if (!size) return {};
+  std::vector<BYTE> data(size);
+  if (!GetFileVersionInfoW(executable.c_str(), 0, size, data.data())) return {};
+  VS_FIXEDFILEINFO* info = nullptr;
+  UINT infoSize = 0;
+  if (!VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &infoSize) ||
+      !info || infoSize < sizeof(VS_FIXEDFILEINFO) || info->dwSignature != 0xfeef04bd) {
+    return {};
+  }
+  std::wostringstream version;
+  version << HIWORD(info->dwFileVersionMS) << L'.'
+          << LOWORD(info->dwFileVersionMS) << L'.'
+          << HIWORD(info->dwFileVersionLS);
+  const WORD revision = LOWORD(info->dwFileVersionLS);
+  if (revision) version << L'.' << revision;
+  return version.str();
 }
 
 fs::path ExecutableRoot() {
@@ -246,16 +269,22 @@ bool LaunchRunner(const fs::path& root, const fs::path& manifest, const std::wst
   return true;
 }
 
-void ValidateManifestVersion(const UpdateManifest& manifest) {
-  if (IsVersionNewer(kVersion, manifest.version)) {
-    throw std::runtime_error("server update version is older than this updater");
+void ValidateManifestVersion(const std::wstring& baselineVersion,
+                             const UpdateManifest& manifest,
+                             const char* message) {
+  if (!baselineVersion.empty() && IsVersionNewer(baselineVersion, manifest.version)) {
+    throw std::runtime_error(message);
   }
 }
 
 int RunStandalone(const fs::path& root) {
   const fs::path data = root / L"data";
   fs::create_directories(data);
-  Log(root, L"Standalone update check started for version " + std::wstring(kVersion));
+  const std::wstring installedVersion = InstalledFileVersion(root / L"HomePanel.exe");
+  const std::wstring baselineVersion = installedVersion.empty()
+      ? std::wstring(kVersion)
+      : installedVersion;
+  Log(root, L"Standalone update check started for version " + baselineVersion);
 
   AppConfig config = LoadConfig(data / L"settings.json");
   const std::wstring deviceToken = LoadProtectedToken(data / L"device-token.dat", L"HOMEPANEL_DEVICE_TOKEN");
@@ -267,9 +296,11 @@ int RunStandalone(const fs::path& root) {
   CloudClient cloud(nullptr, config, data, deviceToken, L"", cloudLog);
   const std::string initialManifestJson = cloud.FetchUpdateManifest();
   const UpdateManifest initialManifest = ParseUpdateManifest(initialManifestJson);
-  ValidateManifestVersion(initialManifest);
+  ValidateManifestVersion(
+      baselineVersion, initialManifest,
+      "server update version is older than installed HomePanel");
 
-  const bool initiallyNewer = IsVersionNewer(initialManifest.version, kVersion);
+  const bool initiallyNewer = IsVersionNewer(initialManifest.version, baselineVersion);
   const std::wstring prompt = initiallyNewer
       ? L"HomePanel " + initialManifest.version + L" を取得して更新します。\n\n続行しますか？"
       : L"HomePanelは最新版です。\n起動できない場合に備えて、現在の版を再取得して修復しますか？";
@@ -282,7 +313,9 @@ int RunStandalone(const fs::path& root) {
   // the user confirms so a long-open confirmation dialog cannot invalidate them.
   const std::string manifestJson = cloud.FetchUpdateManifest();
   const UpdateManifest manifest = ParseUpdateManifest(manifestJson);
-  ValidateManifestVersion(manifest);
+  ValidateManifestVersion(
+      baselineVersion, manifest,
+      "server update version became older than installed HomePanel");
   if (manifest.version != initialManifest.version) {
     Log(root, L"Update version changed while awaiting confirmation: " +
               initialManifest.version + L" -> " + manifest.version);
@@ -294,7 +327,7 @@ int RunStandalone(const fs::path& root) {
   if (!LaunchRunner(root, pending, manifest.version, appPid)) {
     throw std::runtime_error("cannot start the staged updater");
   }
-  Log(root, IsVersionNewer(manifest.version, kVersion)
+  Log(root, IsVersionNewer(manifest.version, baselineVersion)
       ? L"Standalone update runner launched" : L"Standalone repair runner launched");
   return 0;
 }

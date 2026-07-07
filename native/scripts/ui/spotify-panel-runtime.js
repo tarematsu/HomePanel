@@ -15,6 +15,35 @@
   let spotifyState = {};
   let progressTimer = 0;
   let panelHeaderMetaHandled = false;
+  const shared = window.__homepanelPlaybackShared || {};
+  const asObject = shared.asObject || (value => value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+  const formatTime = shared.formatTime || (milliseconds => {
+    const seconds = Math.max(0, Math.floor(Number(milliseconds || 0) / 1000));
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  });
+  const normalizedItem = shared.normalizedItem || (value => {
+    const source = asObject(value?.track || value?.song || value);
+    const artistValue = source.artist ?? source.artists;
+    const artist = Array.isArray(artistValue)
+      ? artistValue.map(item => typeof item === 'string' ? item : item?.name).filter(Boolean).join(', ')
+      : typeof artistValue === 'object'
+        ? artistValue?.name
+        : artistValue;
+    const album = asObject(source.album);
+    const images = Array.isArray(album.images) ? album.images : Array.isArray(source.images) ? source.images : [];
+    return {
+      name: String(source.name || source.title || source.trackTitle || '').trim(),
+      artist: String(artist || source.trackArtist || '').trim(),
+      artwork: source.artwork || source.artworkUrl || source.albumArtUrl || source.image || source.imageUrl || source.thumbnail_url || images[0]?.url || '',
+      durationMs: Math.max(0, Number(source.durationMs ?? source.duration_ms ?? source.lengthMs ?? 0) || 0),
+    };
+  });
+  const queueFrom = shared.queueFrom || (value => {
+    const currentStation = asObject(value.currentStation || value.current_station);
+    const channel = asObject(value.channel);
+    const channelStation = asObject(channel.currentStation || channel.current_station);
+    return [value.queue, currentStation.queue, channelStation.queue, channel.queue].find(Array.isArray) || [];
+  });
 
   const playbackStates = {
     a: { value: {}, fetchedAt: 0, error: '', revision: 0 },
@@ -153,11 +182,6 @@
     if (fallback) fallback.hidden = true;
   }
 
-  function formatTime(milliseconds) {
-    const seconds = Math.max(0, Math.floor(Number(milliseconds || 0) / 1000));
-    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-  }
-
   function ensureProgress(prefix, bodySelector) {
     const body = bodySelector ? $(bodySelector) : compactBody(prefix);
     if (!body) return null;
@@ -179,10 +203,6 @@
     return playerRow(prefix)?.querySelector('.stationhead-compact-body') || null;
   }
 
-  function asObject(value) {
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  }
-
   function unwrapPlaybackPayload(raw) {
     const root = asObject(raw);
     const candidates = [root.playback, asObject(root.data).playback, root.data, root.stationhead, root.result, root];
@@ -191,31 +211,6 @@
       if (Object.keys(value).length) return value;
     }
     return {};
-  }
-
-  function queueFrom(value) {
-    const currentStation = asObject(value.currentStation || value.current_station);
-    const channel = asObject(value.channel);
-    const channelStation = asObject(channel.currentStation || channel.current_station);
-    return [value.queue, currentStation.queue, channelStation.queue, channel.queue].find(Array.isArray) || [];
-  }
-
-  function normalizedItem(value) {
-    const source = asObject(value?.track || value?.song || value);
-    const artistValue = source.artist ?? source.artists;
-    const artist = Array.isArray(artistValue)
-      ? artistValue.map(item => typeof item === 'string' ? item : item?.name).filter(Boolean).join(', ')
-      : typeof artistValue === 'object'
-        ? artistValue?.name
-        : artistValue;
-    const album = asObject(source.album);
-    const images = Array.isArray(album.images) ? album.images : Array.isArray(source.images) ? source.images : [];
-    return {
-      name: String(source.name || source.title || source.trackTitle || '').trim(),
-      artist: String(artist || source.trackArtist || '').trim(),
-      artwork: source.artwork || source.artworkUrl || source.albumArtUrl || source.image || source.imageUrl || source.thumbnail_url || images[0]?.url || '',
-      durationMs: Math.max(0, Number(source.durationMs ?? source.duration_ms ?? source.lengthMs ?? 0) || 0),
-    };
   }
 
   function playbackSnapshot(rawValue, now = Date.now()) {

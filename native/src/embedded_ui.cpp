@@ -64,6 +64,7 @@ constexpr UiAsset kUiAssets[] = {
     {113, L"canvas-transparency.js", true},
     {114, L"spotify-panel-runtime.js", true},
     {115, L"runtime-performance.js", true},
+    {137, L"playback-shared.js", true},
     {117, L"homepanel-core.js", true},
     {118, L"homepanel-clock.js", true},
     {119, L"homepanel-news.js", true},

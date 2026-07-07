@@ -15,26 +15,6 @@ namespace hp {
 namespace {
 
 using InstallPresence = std::map<std::wstring, bool>;
-std::wstring InstalledFileVersion(const fs::path& executable) {
-  DWORD handle = 0;
-  const DWORD size = GetFileVersionInfoSizeW(executable.c_str(), &handle);
-  if (!size) return {};
-  std::vector<BYTE> data(size);
-  if (!GetFileVersionInfoW(executable.c_str(), 0, size, data.data())) return {};
-  VS_FIXEDFILEINFO* info = nullptr;
-  UINT infoSize = 0;
-  if (!VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &infoSize) ||
-      !info || infoSize < sizeof(VS_FIXEDFILEINFO) || info->dwSignature != 0xfeef04bd) {
-    return {};
-  }
-  std::wostringstream version;
-  version << HIWORD(info->dwFileVersionMS) << L'.'
-          << LOWORD(info->dwFileVersionMS) << L'.'
-          << HIWORD(info->dwFileVersionLS);
-  const WORD revision = LOWORD(info->dwFileVersionLS);
-  if (revision) version << L'.' << revision;
-  return version.str();
-}
 
 std::vector<uint8_t> ReadFileBytes(
     const fs::path& path, uint64_t maximum = 64ull * 1024ull * 1024ull) {

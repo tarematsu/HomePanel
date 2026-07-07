@@ -14,6 +14,7 @@
 113 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/canvas-transparency.js"
 114 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/spotify-panel-runtime.js"
 115 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/runtime-performance.js"
+137 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/playback-shared.js"
 117 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/homepanel-core.js"
 118 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/homepanel-clock.js"
 119 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/homepanel-news.js"
