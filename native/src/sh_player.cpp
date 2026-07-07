@@ -1,6 +1,7 @@
 #include "sh.h"
 #include "mn_automation.h"
 #include "shared_webview_environment.h"
+#include "sh_shared.h"
 #include <psapi.h>
 #include <winrt/Windows.Data.Json.h>
 
@@ -433,6 +434,7 @@ void StationheadPlayer::ConfigureWebView() {
     ComPtr<ICoreWebView2Settings3> settings3;
     if (SUCCEEDED(settings.As(&settings3))) settings3->put_AreBrowserAcceleratorKeysEnabled(FALSE);
   }
+  ApplyStationheadResourceBlocking(environment_.Get(), webview_.Get(), config_, resourceRequestedToken_);
   webview_->add_NavigationCompleted(
       Callback<ICoreWebView2NavigationCompletedEventHandler>(
           [this](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
@@ -627,11 +629,13 @@ void StationheadPlayer::CloseWebView() {
     if (newWindowToken_.value) webview_->remove_NewWindowRequested(newWindowToken_);
     if (webMessageToken_.value) webview_->remove_WebMessageReceived(webMessageToken_);
     if (processFailedToken_.value) webview_->remove_ProcessFailed(processFailedToken_);
+    if (resourceRequestedToken_.value) webview_->remove_WebResourceRequested(resourceRequestedToken_);
   }
   navigationToken_ = {};
   newWindowToken_ = {};
   webMessageToken_ = {};
   processFailedToken_ = {};
+  resourceRequestedToken_ = {};
   if (controller_) controller_->Close();
   webview_.Reset();
   controller_.Reset();
@@ -1076,7 +1080,7 @@ void StationheadPlayer::Tick(int64_t nowMs, bool diagnosticsVisible) {
     nextTickAt_ = nowMs + 1'000;
     return;
   }
-  const int64_t reloadInterval = static_cast<int64_t>(config_.reloadIntervalMinutes) * 60'000;
+  const int64_t reloadInterval = StationheadReloadIntervalMs(config_.reloadIntervalMinutes);
   if (reloadInterval > 0 && nowMs - lastReloadAt_ >= reloadInterval) {
     lastReloadAt_ = nowMs;
     NavigatePrimaryUrl(nowMs, L"scheduled reload");

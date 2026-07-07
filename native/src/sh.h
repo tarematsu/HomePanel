@@ -122,6 +122,7 @@ class StationheadPlayer {
   EventRegistrationToken newWindowToken_{};
   EventRegistrationToken webMessageToken_{};
   EventRegistrationToken processFailedToken_{};
+  EventRegistrationToken resourceRequestedToken_{};
   EventRegistrationToken authNavigationToken_{};
   EventRegistrationToken authMessageToken_{};
   EventRegistrationToken authProcessFailedToken_{};

@@ -118,6 +118,7 @@ class SecondaryStationheadPlayer {
   EventRegistrationToken newWindowToken_{};
   EventRegistrationToken messageToken_{};
   EventRegistrationToken processFailedToken_{};
+  EventRegistrationToken resourceRequestedToken_{};
   EventRegistrationToken authNavigationToken_{};
   EventRegistrationToken authMessageToken_{};
   EventRegistrationToken authProcessFailedToken_{};

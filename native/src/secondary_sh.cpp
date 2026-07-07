@@ -1,4 +1,5 @@
 #include "secondary_sh.h"
+#include "sh_shared.h"
 
 namespace hp {
 namespace {
@@ -438,6 +439,7 @@ void SecondaryStationheadPlayer::ConfigureWebView() {
     ComPtr<ICoreWebView2Settings3> settings3;
     if (SUCCEEDED(settings.As(&settings3))) settings3->put_AreBrowserAcceleratorKeysEnabled(FALSE);
   }
+  ApplyStationheadResourceBlocking(environment_.Get(), webview_.Get(), config_, resourceRequestedToken_);
   ComPtr<ICoreWebView2Controller2> controller2;
   if (SUCCEEDED(controller_.As(&controller2))) {
     COREWEBVIEW2_COLOR background{255, 0, 0, 0};
@@ -649,9 +651,9 @@ void SecondaryStationheadPlayer::Tick(int64_t nowMs) {
     ScheduleRetry(L"audio startup timeout", 5'000);
     return;
   }
-  const int reloadMinutes = std::max(5, config_.secondaryReloadIntervalMinutes);
+  const int64_t reloadInterval = StationheadReloadIntervalMs(std::max(5, config_.secondaryReloadIntervalMinutes));
   if (audioPlaying_.load(std::memory_order_relaxed) && lastReloadAt_ > 0 &&
-      nowMs - lastReloadAt_ >= static_cast<int64_t>(reloadMinutes) * 60'000) {
+      nowMs - lastReloadAt_ >= reloadInterval) {
     log_.Info(L"Secondary Stationhead maintenance reload");
     Reconnect();
   }
@@ -675,11 +677,13 @@ void SecondaryStationheadPlayer::CloseWebView() {
     if (newWindowToken_.value) webview_->remove_NewWindowRequested(newWindowToken_);
     if (messageToken_.value) webview_->remove_WebMessageReceived(messageToken_);
     if (processFailedToken_.value) webview_->remove_ProcessFailed(processFailedToken_);
+    if (resourceRequestedToken_.value) webview_->remove_WebResourceRequested(resourceRequestedToken_);
   }
   navigationToken_ = {};
   newWindowToken_ = {};
   messageToken_ = {};
   processFailedToken_ = {};
+  resourceRequestedToken_ = {};
   if (controller_) controller_->Close();
   webview_.Reset();
   controller_.Reset();
