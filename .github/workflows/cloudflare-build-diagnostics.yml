@@ -1,7 +1,15 @@
-name: Cloudflare build diagnostics
+name: Cloudflare diagnostics
 
 on:
+  pull_request:
+    paths:
+      - "cloud/**"
+      - ".github/workflows/cloudflare-build-diagnostics.yml"
+      - ".github/scripts/cloudflare-build-diagnostics.mjs"
+      - ".github/scripts/resolve-cloudflare-config.mjs"
   push:
+    branches:
+      - main
     paths:
       - "cloud/**"
       - ".github/workflows/cloudflare-build-diagnostics.yml"
@@ -15,12 +23,59 @@ permissions:
   issues: write
 
 concurrency:
-  group: cloudflare-build-diagnostics-${{ github.ref }}
+  group: cloudflare-diagnostics-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cloud
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Worker dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Type check
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run check 2>&1 | tee ../cloud-check.log
+
+      - name: Worker tests
+        run: npm test
+
+      - name: Validate local D1 migrations
+        run: npm run migrate:local
+
+      - name: Wrangler dry-run bundle validation
+        shell: bash
+        run: |
+          set -eo pipefail
+          rm -rf .wrangler-ci-output
+          npx wrangler deploy --dry-run --outdir .wrangler-ci-output
+          test -n "$(find .wrangler-ci-output -type f -size +0c -print -quit)"
+
+      - name: Upload cloud validation log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-check-log
+          path: cloud-check.log
+          if-no-files-found: warn
+          retention-days: 7
+
   diagnose:
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[ci full]')
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
