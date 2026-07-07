@@ -126,6 +126,15 @@ void App::StartServices() {
   }
   stationhead_->Start();
   logger_->Info(L"Stationhead startup was prioritized before dashboard WebView creation");
+  // Windows A and B are started together rather than staggering B behind A's
+  // confirmed audio + dashboard settle: both are independent WebView2
+  // profiles, so there is no real startup-burst contention to avoid, and the
+  // user wants both up at the same time.
+  if (secondaryStationhead_) {
+    secondaryStationhead_->Start();
+    secondaryStarted_ = true;
+    logger_->Info(L"Secondary Stationhead started alongside primary");
+  }
 
   const std::wstring deviceToken = LoadProtectedToken(dataDir_ / L"device-token.dat", L"HOMEPANEL_DEVICE_TOKEN");
   const std::wstring actionToken = LoadProtectedToken(dataDir_ / L"action-token.dat", L"HOMEPANEL_ACTION_TOKEN");
@@ -348,6 +357,12 @@ void App::Tick() {
   if (secondaryStarted_ && secondaryStationhead_) secondaryStationhead_->Tick(now);
   const StationheadStatus stationheadStatus = stationhead_->Status();
   renderState_.stationhead = stationheadStatus;
+  // secondaryAudioMuted rides along on the primary status struct so the
+  // dashboard can read both windows' mute state from one object; it was
+  // declared but never populated, so Window B's mute button never reflected
+  // its real state.
+  renderState_.stationhead.secondaryAudioMuted =
+      secondaryStationhead_ && secondaryStationhead_->AudioMuted();
   StartDeferredServices(now, stationheadStatus);
 
   if (cloudStarted_ &&
