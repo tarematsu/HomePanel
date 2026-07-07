@@ -77,6 +77,14 @@ constexpr UiAsset kUiAssets[] = {
     {126, L"homepanel-runtime.js", true},
     {127, L"radar-monochrome.js", true},
     {128, L"sh-audio-controls.css", true},
+    {129, L"vendor/wx-icons/100.svg", true},
+    {130, L"vendor/wx-icons/101.svg", true},
+    {131, L"vendor/wx-icons/200.svg", true},
+    {132, L"vendor/wx-icons/206.svg", true},
+    {133, L"vendor/wx-icons/212.svg", true},
+    {134, L"vendor/wx-icons/300.svg", true},
+    {135, L"vendor/wx-icons/313.svg", true},
+    {136, L"vendor/wx-icons/400.svg", true},
 };
 
 std::string AssetContent(const UiAsset& asset) {

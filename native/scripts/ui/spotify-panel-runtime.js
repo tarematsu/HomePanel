@@ -250,11 +250,11 @@
       }
       while (index < queue.length) {
         const queueItem = normalizedItem(queue[index]);
-        if (!playing || queueItem.durationMs <= 0 || elapsed < queueItem.durationMs) break;
+        if (!playing || queueItem.durationMs <= 0 || elapsed <= queueItem.durationMs) break;
         elapsed -= queueItem.durationMs;
         index += 1;
       }
-      if (index < queue.length && !(playing && queueEndAt > 0 && now >= queueEndAt)) {
+      if (index < queue.length) {
         itemSource = queue[index];
         const queueItem = normalizedItem(itemSource);
         durationMs = queueItem.durationMs;
@@ -274,6 +274,34 @@
     if (!durationMs) durationMs = item.durationMs;
     if (durationMs > 0) progressMs = Math.min(Math.max(0, progressMs), durationMs);
     return { title: item.name, artist: item.artist, artwork: item.artwork, durationMs, progressMs, playing, hasTrack: Boolean(item.name) };
+  }
+
+  function spotifySnapshot(rawValue, now = Date.now()) {
+    const value = asObject(rawValue);
+    const item = normalizedItem(value.item || value.track || {});
+    const durationMs = Math.max(0, Number(value.durationMs ?? item.durationMs ?? 0) || 0);
+    let progressMs = Math.max(0, Number(value.progressMs ?? value.positionMs ?? 0) || 0);
+    const playing = value.playing === true;
+    const sampledAt = Number(value.sampledAt ?? 0) || 0;
+    const expectedEndAt = Number(value.expectedEndAt ?? 0) || 0;
+    if (durationMs > 0 && expectedEndAt > 0) progressMs = durationMs - Math.max(0, expectedEndAt - now);
+    else if (playing && sampledAt > 0) progressMs += Math.max(0, now - sampledAt);
+    if (durationMs > 0) progressMs = Math.min(Math.max(0, progressMs), durationMs);
+    return { title: item.name, artist: item.artist, artwork: item.artwork, durationMs, progressMs, playing, hasTrack: Boolean(item.name) };
+  }
+
+  function mergeSnapshots(primary, fallback) {
+    if (!fallback?.hasTrack) return primary;
+    if (primary?.hasTrack && primary?.artwork) return primary;
+    return {
+      title: primary?.title || fallback.title,
+      artist: primary?.artist || fallback.artist,
+      artwork: primary?.artwork || fallback.artwork,
+      durationMs: primary?.durationMs || fallback.durationMs,
+      progressMs: primary?.progressMs || fallback.progressMs,
+      playing: primary?.playing === true || fallback.playing === true,
+      hasTrack: Boolean(primary?.hasTrack || fallback.hasTrack),
+    };
   }
 
   function renderProgress(prefix, bodySelector, snapshot) {
@@ -352,7 +380,7 @@
     renderStationheadPlayer({ source: sourceA, snapshot: snapshotA, status: sourceStatus(playbackStates.a, snapshotA) });
 
     const sourceB = PLAYBACK_SOURCES.b;
-    const snapshotB = playbackSnapshot(playbackStates.b.value);
+    const snapshotB = mergeSnapshots(playbackSnapshot(playbackStates.b.value), spotifySnapshot(spotifyState));
     const spotifyStatus = spotifyAvailability(spotifyState);
     renderStationheadPlayer({
       source: sourceB,

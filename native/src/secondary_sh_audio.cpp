@@ -47,14 +47,18 @@ void SecondaryStationheadPlayer::ApplyVolume() const noexcept {
     std::wostringstream script;
     script << L"(() => { const v=" << percent << L"/100;"
            << L"window.__homepanelStationheadVolume=v;"
-           << L"const apply=e=>{try{e.volume=v;if(v>0)e.muted=false;}catch(_){}};"
+           << L"const apply=e=>{try{e.volume=v;e.defaultMuted=v<=0;e.muted=v<=0?true:false;}catch(_){}};"
            << L"for(const e of document.querySelectorAll('audio,video'))apply(e);"
            << L"if(!window.__homepanelStationheadVolumeObserver){"
            << L"window.__homepanelStationheadVolumeObserver=new MutationObserver(()=>{"
            << L"const x=Number(window.__homepanelStationheadVolume ?? 1);"
-           << L"for(const e of document.querySelectorAll('audio,video')){try{e.volume=x;if(x>0)e.muted=false;}catch(_){}}"
+           << L"for(const e of document.querySelectorAll('audio,video')){try{e.volume=x;e.defaultMuted=x<=0;e.muted=x<=0?true:false;}catch(_){}}"
            << L"});"
            << L"window.__homepanelStationheadVolumeObserver.observe(document,{childList:true,subtree:true});"
+           << L"window.__homepanelStationheadVolumeApply=()=>{const x=Number(window.__homepanelStationheadVolume ?? 1);for(const e of document.querySelectorAll('audio,video')){try{e.volume=x;e.defaultMuted=x<=0;e.muted=x<=0?true:false;}catch(_){}}};"
+           << L"document.addEventListener('play',window.__homepanelStationheadVolumeApply,true);"
+           << L"document.addEventListener('loadedmetadata',window.__homepanelStationheadVolumeApply,true);"
+           << L"window.__homepanelStationheadVolumeTimer=setInterval(window.__homepanelStationheadVolumeApply,1000);"
            << L"} true; })()";
     view->ExecuteScript(script.str().c_str(), nullptr);
   };

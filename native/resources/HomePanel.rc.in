@@ -26,6 +26,14 @@
 125 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/homepanel-radar.js"
 126 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/homepanel-runtime.js"
 128 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/sh-audio-controls.css"
+129 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/vendor/wx-icons/100.svg"
+130 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/vendor/wx-icons/101.svg"
+131 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/vendor/wx-icons/200.svg"
+132 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/vendor/wx-icons/206.svg"
+133 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/vendor/wx-icons/212.svg"
+134 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/vendor/wx-icons/300.svg"
+135 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/vendor/wx-icons/313.svg"
+136 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/scripts/ui/vendor/wx-icons/400.svg"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION @HOMEPANEL_VERSION_COMMA@

@@ -3,26 +3,36 @@
 
   const root = window.HomePanel;
   const { $, text, finite, number, escapeHtml, statusLabel, hourSuffix, degree } = root.utils;
-  const WX_CLOUD_BASE = 'https://homepanel-cloud.example.invalid';
+  const WX_ICON_BASE = 'vendor/wx-icons';
+  const LOCAL_ICON_CODES = new Set([100, 101, 200, 206, 212, 300, 313, 400]);
 
   function wxYahooCode(iconCode) {
     const c = parseInt(iconCode, 10);
     if (!c) return null;
-    if (c >= 500) return 402;
+    if (c >= 500) return 400;
     if (c >= 400) return 206;
     if (c >= 300) return 300;
-    if (c >= 230) return 203;
-    if (c >= 210) return 256;
+    if (c >= 230) return 212;
+    if (c >= 210) return 206;
     if (c >= 200) return 200;
     if (c >= 130) return 101;
     if (c >= 100) return 100;
     return null;
   }
 
-  function wxIconImg(iconCode) {
+  function localWxCode(iconCode) {
     const yahoo = wxYahooCode(iconCode);
-    if (!yahoo) return '<span class="wx-emoji-fallback">—</span>';
-    return `<img class="wx-icon-img" src="${WX_CLOUD_BASE}/v1/wx-icon/${yahoo}_day.png" alt="" crossorigin="anonymous">`;
+    if (!yahoo) return null;
+    if (LOCAL_ICON_CODES.has(yahoo)) return yahoo;
+    if (yahoo >= 400) return 400;
+    if (yahoo >= 300) return 313;
+    return 200;
+  }
+
+  function wxIconImg(iconCode) {
+    const localCode = localWxCode(iconCode);
+    if (!localCode) return '<span class="wx-emoji-fallback">--</span>';
+    return `<img class="wx-icon-img" src="${WX_ICON_BASE}/${localCode}.svg" alt="">`;
   }
 
   function weatherHours(weather) {
@@ -61,7 +71,7 @@
     const rightHtml = `
       <div class="wx-right">${hours.map(h => {
         const rainMm = finite(h.rainMm) ? Number(h.rainMm) : null;
-        const rainLabel = rainMm !== null ? `${Math.round(rainMm)}mm` : '–';
+        const rainLabel = rainMm !== null ? `${Math.round(rainMm)}mm` : '--';
         return `<div class="wx-hour-card">
           <time>${h.hour}${hourSuffix}</time>
           ${wxIconImg(h.icon)}
