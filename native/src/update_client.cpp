@@ -120,50 +120,66 @@ std::vector<uint8_t> DownloadHttpsFile(const std::wstring& url, size_t maximumBy
   std::wstring resource(path, parts.dwUrlPathLength);
   if (parts.dwExtraInfoLength && parts.lpszExtraInfo) resource.append(extra, parts.dwExtraInfoLength);
 
-  InternetHandle session(WinHttpOpen(L"HomePanel-VerifiedUpdate/3.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
-  if (!session.value) throw std::runtime_error("WinHttpOpen failed");
-  WinHttpSetTimeouts(session.value, kHttpTimeoutMs, kHttpTimeoutMs, kHttpTimeoutMs, kHttpTimeoutMs);
-
-  InternetHandle connection(WinHttpConnect(session.value, hostName.c_str(), parts.nPort, 0));
-  if (!connection.value) throw std::runtime_error("WinHttpConnect failed");
-  InternetHandle request(WinHttpOpenRequest(connection.value, L"GET", resource.c_str(), nullptr,
-                                            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                            WINHTTP_FLAG_SECURE));
-  if (!request.value) throw std::runtime_error("WinHttpOpenRequest failed");
-  std::wstring headers;
-  if (!bearerToken.empty()) headers = L"Authorization: Bearer " + bearerToken + L"\r\n";
-  if (!WinHttpSendRequest(request.value,
-                          headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
-                          headers.empty() ? 0 : static_cast<DWORD>(headers.size()),
-                          nullptr, 0, 0, 0) ||
-      !WinHttpReceiveResponse(request.value, nullptr)) {
-    throw std::runtime_error("WinHTTP update download failed");
-  }
-
-  DWORD status = 0;
-  DWORD statusSize = sizeof(status);
-  if (!WinHttpQueryHeaders(request.value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                           WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX)) {
-    throw std::runtime_error("update response status unavailable");
-  }
-
-  std::vector<uint8_t> bytes;
-  while (true) {
-    DWORD available = 0;
-    if (!WinHttpQueryDataAvailable(request.value, &available)) throw std::runtime_error("update read failed");
-    if (!available) break;
-    if (bytes.size() + available > maximumBytes) throw std::runtime_error("update file exceeds size limit");
-    const size_t offset = bytes.size();
-    bytes.resize(offset + available);
-    DWORD read = 0;
-    if (!WinHttpReadData(request.value, bytes.data() + offset, available, &read)) {
-      throw std::runtime_error("update read failed");
+  // Tablets can sit on networks where WPAD/PAC autodetection never resolves,
+  // so try automatic proxy detection first and fall back to a direct
+  // connection instead of failing the update check outright.
+  for (DWORD accessType : {WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_ACCESS_TYPE_NO_PROXY}) {
+    InternetHandle session(WinHttpOpen(L"HomePanel-VerifiedUpdate/3.0", accessType,
+                                       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    if (!session.value) {
+      if (accessType == WINHTTP_ACCESS_TYPE_NO_PROXY) throw std::runtime_error("WinHttpOpen failed");
+      continue;
     }
-    bytes.resize(offset + read);
+    WinHttpSetTimeouts(session.value, kHttpTimeoutMs, kHttpTimeoutMs, kHttpTimeoutMs, kHttpTimeoutMs);
+
+    InternetHandle connection(WinHttpConnect(session.value, hostName.c_str(), parts.nPort, 0));
+    if (!connection.value) {
+      if (accessType == WINHTTP_ACCESS_TYPE_NO_PROXY) throw std::runtime_error("WinHttpConnect failed");
+      continue;
+    }
+    InternetHandle request(WinHttpOpenRequest(connection.value, L"GET", resource.c_str(), nullptr,
+                                              WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                              WINHTTP_FLAG_SECURE));
+    if (!request.value) {
+      if (accessType == WINHTTP_ACCESS_TYPE_NO_PROXY) throw std::runtime_error("WinHttpOpenRequest failed");
+      continue;
+    }
+    std::wstring headers;
+    if (!bearerToken.empty()) headers = L"Authorization: Bearer " + bearerToken + L"\r\n";
+    if (!WinHttpSendRequest(request.value,
+                            headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
+                            headers.empty() ? 0 : static_cast<DWORD>(headers.size()),
+                            nullptr, 0, 0, 0) ||
+        !WinHttpReceiveResponse(request.value, nullptr)) {
+      if (accessType == WINHTTP_ACCESS_TYPE_NO_PROXY) throw std::runtime_error("WinHTTP update download failed");
+      continue;
+    }
+
+    DWORD status = 0;
+    DWORD statusSize = sizeof(status);
+    if (!WinHttpQueryHeaders(request.value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                             WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX)) {
+      throw std::runtime_error("update response status unavailable");
+    }
+
+    std::vector<uint8_t> bytes;
+    while (true) {
+      DWORD available = 0;
+      if (!WinHttpQueryDataAvailable(request.value, &available)) throw std::runtime_error("update read failed");
+      if (!available) break;
+      if (bytes.size() + available > maximumBytes) throw std::runtime_error("update file exceeds size limit");
+      const size_t offset = bytes.size();
+      bytes.resize(offset + available);
+      DWORD read = 0;
+      if (!WinHttpReadData(request.value, bytes.data() + offset, available, &read)) {
+        throw std::runtime_error("update read failed");
+      }
+      bytes.resize(offset + read);
+    }
+    if (status != 200 || bytes.empty()) throw std::runtime_error("update file HTTP " + std::to_string(status));
+    return bytes;
   }
-  if (status != 200 || bytes.empty()) throw std::runtime_error("update file HTTP " + std::to_string(status));
-  return bytes;
+  throw std::runtime_error("WinHTTP update download failed");
 }
 
 bool IsVersionNewer(const std::wstring& candidate, const std::wstring& current) {
