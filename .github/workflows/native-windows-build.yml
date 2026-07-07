@@ -174,7 +174,7 @@ jobs:
         id: resolve
         shell: pwsh
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
           HOMEPANEL_UPDATE_BUCKET: ${{ vars.HOMEPANEL_UPDATE_BUCKET }}
         run: |
           node .github/scripts/resolve-cloudflare-config.mjs
@@ -183,12 +183,12 @@ jobs:
         if: github.ref == 'refs/heads/main'
         shell: pwsh
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
           HOMEPANEL_UPDATE_BUCKET: ${{ steps.resolve.outputs.update_bucket }}
           HOMEPANEL_BUILD_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if (-not $env:CLOUDFLARE_API_TOKEN) { throw "CLOUDFLARE_API_TOKEN is required." }
+          if (-not $env:CLOUDFLARE_API_TOKEN) { throw "CLOUDFLARE_API_TOKEN or CLOUDFLARE_BUILDS_API_TOKEN is required." }
           if (-not $env:CLOUDFLARE_ACCOUNT_ID) { throw "CLOUDFLARE_ACCOUNT_ID is required." }
           if (-not $env:HOMEPANEL_UPDATE_BUCKET) { throw "HOMEPANEL_UPDATE_BUCKET is required." }
 
