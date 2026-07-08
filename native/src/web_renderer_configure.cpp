@@ -151,6 +151,7 @@ void Renderer::ConfigureWebView() {
     return;
   }
   controllerVisible_ = true;
+  ApplyDashboardHostBounds();
   // The dashboard controller is created after Stationhead startup and can become the
   // newest child window. Re-run the normal workspace layout so an active login or
   // recovery surface is restored above it without inventing a second Z-order system.

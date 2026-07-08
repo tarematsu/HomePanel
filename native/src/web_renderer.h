@@ -64,6 +64,7 @@ class Renderer {
   void SetBounds(const RECT& bounds);
   void SetVisible(bool visible);
   bool IsUiReady() const noexcept { return ready_ && uiReady_; }
+  HWND DashboardHostWindow() const noexcept { return dashboardHost_; }
   bool LoadDashboard(const fs::path& jsonPath, bool* changed = nullptr);
   bool TickPlayback(int64_t nowMs);
   int NewsCount() const { return newsCount_; }
@@ -132,6 +133,9 @@ class Renderer {
   void CreateWebView();
   void ConfigureWebView();
   void CloseWebView();
+  bool EnsureDashboardHostWindow();
+  void ApplyDashboardHostBounds();
+  void DestroyDashboardHostWindow();
   void QueueAction(UiAction action, float seekFraction = 0.0f);
   std::wstring BuildStateJson(const RenderState& state, bool full = false);
   std::wstring BuildCachedStateJson(uint32_t changedSlices, bool full) const;
@@ -151,6 +155,7 @@ class Renderer {
   StationheadStatus ResolveStationhead(const StationheadStatus& local, int64_t nowMs) const;
 
   HWND window_{};
+  HWND dashboardHost_{};
   int width_ = 0;
   int height_ = 0;
   RECT bounds_{};
