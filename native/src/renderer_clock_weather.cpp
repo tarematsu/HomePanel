@@ -10,6 +10,7 @@ constexpr int kNativeControlsId = 103;
 constexpr int kNativeNewsId = 104;
 constexpr int kNativeWeatherId = 105;
 constexpr int kNativeEnergyId = 106;
+constexpr int kNativeStationheadId = 107;
 
 struct DashboardGrid {
   int left = 0;
@@ -82,6 +83,10 @@ RECT NativeWeatherRectFromBounds(const RECT& bounds) {
 
 RECT NativeEnergyRectFromBounds(const RECT& bounds) {
   return NativePanelRectFromBounds(bounds, 2, 0);
+}
+
+RECT NativeStationheadRectFromBounds(const RECT& bounds) {
+  return NativePanelRectFromBounds(bounds, 0, 1);
 }
 
 HFONT CreateUiFont(int height, int weight) {
@@ -249,9 +254,18 @@ bool Renderer::EnsureNativeStaticWindows() {
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kNativeEnergyId)),
         GetModuleHandleW(nullptr), this);
   }
+  if (!nativeStationheadWindow_ || !IsWindow(nativeStationheadWindow_)) {
+    const RECT rect = NativeStationheadRectFromBounds(bounds_);
+    nativeStationheadWindow_ = CreateWindowExW(0, kStaticClassName, L"HomePanelNativeStationhead",
+        WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE,
+        rect.left, rect.top, std::max(1L, rect.right - rect.left),
+        std::max(1L, rect.bottom - rect.top), window_,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kNativeStationheadId)),
+        GetModuleHandleW(nullptr), this);
+  }
   ApplyNativeStaticBounds();
   return nativeAirWindow_ && nativeAirHistoryWindow_ && nativeControlsWindow_ && nativeNewsWindow_ &&
-         nativeWeatherWindow_ && nativeEnergyWindow_;
+         nativeWeatherWindow_ && nativeEnergyWindow_ && nativeStationheadWindow_;
 }
 
 void Renderer::ApplyNativeStaticBounds() {
@@ -297,6 +311,13 @@ void Renderer::ApplyNativeStaticBounds() {
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     InvalidateRect(nativeEnergyWindow_, nullptr, FALSE);
   }
+  if (nativeStationheadWindow_ && IsWindow(nativeStationheadWindow_)) {
+    const RECT rect = NativeStationheadRectFromBounds(bounds_);
+    SetWindowPos(nativeStationheadWindow_, HWND_TOP, rect.left, rect.top,
+                 std::max(1L, rect.right - rect.left), std::max(1L, rect.bottom - rect.top),
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    InvalidateRect(nativeStationheadWindow_, nullptr, FALSE);
+  }
 }
 
 void Renderer::DestroyNativeStaticWindows() {
@@ -306,17 +327,20 @@ void Renderer::DestroyNativeStaticWindows() {
   if (nativeNewsWindow_ && IsWindow(nativeNewsWindow_)) DestroyWindow(nativeNewsWindow_);
   if (nativeWeatherWindow_ && IsWindow(nativeWeatherWindow_)) DestroyWindow(nativeWeatherWindow_);
   if (nativeEnergyWindow_ && IsWindow(nativeEnergyWindow_)) DestroyWindow(nativeEnergyWindow_);
+  if (nativeStationheadWindow_ && IsWindow(nativeStationheadWindow_)) DestroyWindow(nativeStationheadWindow_);
   nativeAirWindow_ = nullptr;
   nativeAirHistoryWindow_ = nullptr;
   nativeControlsWindow_ = nullptr;
   nativeNewsWindow_ = nullptr;
   nativeWeatherWindow_ = nullptr;
   nativeEnergyWindow_ = nullptr;
+  nativeStationheadWindow_ = nullptr;
 }
 
 void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   nativeSensors_ = state.sensors;
   nativeAirHistory_ = state.airHistory;
+  nativeStationhead_ = state.stationhead;
   nativeAppVersion_ = state.appVersion;
   nativeNewsIndex_ = state.newsIndex;
   if (!EnsureNativeStaticWindows()) return;
@@ -326,6 +350,7 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   InvalidateRect(nativeNewsWindow_, nullptr, FALSE);
   InvalidateRect(nativeWeatherWindow_, nullptr, FALSE);
   InvalidateRect(nativeEnergyWindow_, nullptr, FALSE);
+  InvalidateRect(nativeStationheadWindow_, nullptr, FALSE);
 }
 
 void Renderer::ApplyNativeClockBounds() {
@@ -410,6 +435,16 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
         else if (PtInRect(&restartRect, point)) QueueAction(UiAction::Restart);
         return 0;
       }
+      if (GetDlgCtrlID(hwnd) == kNativeStationheadId) {
+        RECT bounds{};
+        GetClientRect(hwnd, &bounds);
+        const POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        RECT firstButton{bounds.right - 108, bounds.top + 48, bounds.right - 16, bounds.top + 78};
+        RECT secondButton{bounds.right - 108, bounds.top + 142, bounds.right - 16, bounds.top + 172};
+        if (PtInRect(&firstButton, point)) QueueAction(UiAction::StationheadAudioToggleA);
+        else if (PtInRect(&secondButton, point)) QueueAction(UiAction::StationheadAudioToggleB);
+        return 0;
+      }
       break;
     case WM_PAINT:
       if (GetDlgCtrlID(hwnd) == kNativeAirId) PaintNativeAir(hwnd);
@@ -417,7 +452,8 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
       else if (GetDlgCtrlID(hwnd) == kNativeControlsId) PaintNativeControls(hwnd);
       else if (GetDlgCtrlID(hwnd) == kNativeNewsId) PaintNativeNews(hwnd);
       else if (GetDlgCtrlID(hwnd) == kNativeWeatherId) PaintNativeWeather(hwnd);
-      else PaintNativeEnergy(hwnd);
+      else if (GetDlgCtrlID(hwnd) == kNativeEnergyId) PaintNativeEnergy(hwnd);
+      else PaintNativeStationhead(hwnd);
       return 0;
     case WM_NCDESTROY:
       if (nativeAirWindow_ == hwnd) nativeAirWindow_ = nullptr;
@@ -426,6 +462,7 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
       if (nativeNewsWindow_ == hwnd) nativeNewsWindow_ = nullptr;
       if (nativeWeatherWindow_ == hwnd) nativeWeatherWindow_ = nullptr;
       if (nativeEnergyWindow_ == hwnd) nativeEnergyWindow_ = nullptr;
+      if (nativeStationheadWindow_ == hwnd) nativeStationheadWindow_ = nullptr;
       SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
       break;
   }
@@ -945,6 +982,108 @@ void Renderer::PaintNativeEnergy(HWND hwnd) {
 
   DeleteObject(labelFont);
   DeleteObject(valueFont);
+  SelectObject(memoryDc, previousBrush);
+  SelectObject(memoryDc, previousPen);
+  DeleteObject(card);
+  DeleteObject(border);
+
+  BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
+  SelectObject(memoryDc, previousBitmap);
+  DeleteObject(bitmap);
+  DeleteDC(memoryDc);
+  EndPaint(hwnd, &paint);
+}
+
+void Renderer::PaintNativeStationhead(HWND hwnd) {
+  PAINTSTRUCT paint{};
+  HDC dc = BeginPaint(hwnd, &paint);
+  if (!dc) return;
+
+  RECT bounds{};
+  GetClientRect(hwnd, &bounds);
+  HDC memoryDc = CreateCompatibleDC(dc);
+  HBITMAP bitmap = CreateCompatibleBitmap(dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
+  HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
+  FillRect(memoryDc, &bounds, background);
+  DeleteObject(background);
+  SetBkMode(memoryDc, TRANSPARENT);
+
+  HFONT headerFont = CreateUiFont(13, FW_NORMAL);
+  HGDIOBJ previousFont = SelectObject(memoryDc, headerFont);
+  SetTextColor(memoryDc, RGB(255, 255, 255));
+  RECT header{bounds.left + 12, bounds.top + 8, bounds.right - 12, bounds.top + 31};
+  DrawTextInRect(memoryDc, L"Spotify WebView2", header, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+  SelectObject(memoryDc, previousFont);
+  DeleteObject(headerFont);
+
+  HPEN border = CreatePen(PS_SOLID, 1, RGB(43, 51, 63));
+  HBRUSH card = CreateSolidBrush(RGB(18, 27, 38));
+  HGDIOBJ previousPen = SelectObject(memoryDc, border);
+  HGDIOBJ previousBrush = SelectObject(memoryDc, card);
+  HFONT labelFont = CreateUiFont(11, FW_NORMAL);
+  HFONT titleFont = CreateUiFont(18, FW_SEMIBOLD);
+  HFONT artistFont = CreateUiFont(12, FW_NORMAL);
+  HFONT buttonFont = CreateUiFont(12, FW_SEMIBOLD);
+
+  const auto drawRow = [&](int row, const std::wstring& label, bool muted,
+                           const std::wstring& title, const std::wstring& artist,
+                           const std::wstring& detail) {
+    const int top = bounds.top + 38 + row * 94;
+    RECT rowRect{bounds.left + 12, top, bounds.right - 12, top + 82};
+    RoundRect(memoryDc, rowRect.left, rowRect.top, rowRect.right, rowRect.bottom, 8, 8);
+
+    RECT art{rowRect.left + 10, rowRect.top + 10, rowRect.left + 70, rowRect.bottom - 10};
+    HBRUSH artBrush = CreateSolidBrush(RGB(26, 39, 54));
+    HGDIOBJ oldBrush = SelectObject(memoryDc, artBrush);
+    RoundRect(memoryDc, art.left, art.top, art.right, art.bottom, 10, 10);
+    SelectObject(memoryDc, oldBrush);
+    DeleteObject(artBrush);
+
+    SetTextColor(memoryDc, RGB(184, 195, 208));
+    previousFont = SelectObject(memoryDc, labelFont);
+    RECT labelRect{art.right + 12, rowRect.top + 8, rowRect.right - 112, rowRect.top + 25};
+    DrawTextInRect(memoryDc, label, labelRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+
+    SetTextColor(memoryDc, RGB(245, 248, 252));
+    SelectObject(memoryDc, titleFont);
+    RECT titleRect{art.right + 12, rowRect.top + 27, rowRect.right - 112, rowRect.top + 52};
+    DrawTextInRect(memoryDc, title.empty() ? L"--" : title, titleRect,
+                   DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
+
+    SetTextColor(memoryDc, RGB(184, 195, 208));
+    SelectObject(memoryDc, artistFont);
+    RECT artistRect{art.right + 12, rowRect.top + 54, rowRect.right - 112, rowRect.bottom - 8};
+    DrawTextInRect(memoryDc, artist.empty() ? detail : artist, artistRect,
+                   DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
+
+    HBRUSH buttonBrush = CreateSolidBrush(muted ? RGB(42, 33, 35) : RGB(24, 46, 34));
+    oldBrush = SelectObject(memoryDc, buttonBrush);
+    RECT button{rowRect.right - 96, rowRect.top + 10, rowRect.right - 8, rowRect.top + 40};
+    RoundRect(memoryDc, button.left, button.top, button.right, button.bottom, 7, 7);
+    SelectObject(memoryDc, oldBrush);
+    DeleteObject(buttonBrush);
+    SetTextColor(memoryDc, muted ? RGB(255, 128, 140) : RGB(114, 224, 162));
+    SelectObject(memoryDc, buttonFont);
+    DrawTextInRect(memoryDc, muted ? L"音声OFF" : L"音声ON", button,
+                   DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  };
+
+  const std::wstring detail = nativeStationhead_.loginRequired ? L"ログイン待ち"
+      : nativeStationhead_.processFailed ? L"WebView再起動待ち"
+      : nativeStationhead_.audioPlaying ? L"再生中"
+      : nativeStationhead_.created ? L"接続中"
+      : L"起動待ち";
+  drawRow(0, L"StationheadウインドウA", nativeStationhead_.audioMuted,
+          nativeStationhead_.trackTitle, nativeStationhead_.trackArtist, detail);
+  drawRow(1, L"StationheadウインドウB", nativeStationhead_.secondaryAudioMuted,
+          L"Buddy46", L"", nativeStationhead_.secondaryAudioMuted ? L"音声OFF" : L"音声ON");
+
+  SelectObject(memoryDc, previousFont);
+  DeleteObject(labelFont);
+  DeleteObject(titleFont);
+  DeleteObject(artistFont);
+  DeleteObject(buttonFont);
   SelectObject(memoryDc, previousBrush);
   SelectObject(memoryDc, previousPen);
   DeleteObject(card);

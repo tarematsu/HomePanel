@@ -941,6 +941,8 @@ button:disabled { opacity: .38; cursor: default; }
   flex-direction: column;
   padding: 10px 12px;
 }
+.spotify-panel > header,
+.stationhead-dual-list { visibility: hidden; }
 .spotify-panel > header { flex: 0 0 auto; }
 .stationhead-dual-list {
   display: grid;

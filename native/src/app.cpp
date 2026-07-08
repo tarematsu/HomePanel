@@ -474,6 +474,12 @@ void App::HandleAction(UiAction action, float seekFraction) {
     case UiAction::StationheadReconnect:
       stationhead_->Reconnect();
       break;
+    case UiAction::StationheadAudioToggleA:
+      ToggleStationheadAudioA();
+      break;
+    case UiAction::StationheadAudioToggleB:
+      ToggleStationheadAudioB();
+      break;
     case UiAction::ClearCache:
       ClearDisplayCache();
       break;
