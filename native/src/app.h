@@ -202,13 +202,12 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
     ApplyBounds();
   }
 
-  // selectedTab_ here only reflects tab changes made through this wrapper's
-  // own SelectTab(); internal transitions such as ShowForLogin() change the
-  // player's visibility without going through it, leaving selectedTab_ stale
-  // at None and sending the host to the bottom even while a login prompt or
-  // auth flow is actively shown. Use the player's live status instead.
+  // The primary player can temporarily mark its content host as visible while
+  // it bootstraps, navigates, or confirms playback. That must not promote the
+  // content host above the dashboard. Only an app-selected Stationhead/auth tab
+  // or an actual login/auth prompt should raise it.
   bool IsInteractive(const StationheadStatus& status) const noexcept {
-    return status.visible || status.loginRequired || status.authAvailable;
+    return selectedTab_ != StationheadTabKind::None || status.loginRequired || status.authAvailable;
   }
 
  private:
