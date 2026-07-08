@@ -62,6 +62,14 @@ std::wstring StringValue(const JsonObject& object, const wchar_t* name) {
   return {};
 }
 
+std::wstring JsonTextValue(const JsonObject& object, const wchar_t* name) {
+  try {
+    if (object.HasKey(name)) return object.GetNamedValue(name).Stringify().c_str();
+  } catch (...) {
+  }
+  return {};
+}
+
 double NumberValue(const JsonObject& object, const wchar_t* name, double fallback = 0) {
   try {
     if (object.HasKey(name) && object.GetNamedValue(name).ValueType() == JsonValueType::Number) {
@@ -441,7 +449,7 @@ bool LoadNativePlaybackSnapshot(const fs::path& dataDir, const wchar_t* source,
     const std::string text((std::istreambuf_iterator<char>(input)), {});
     if (text.empty()) return false;
     const JsonObject root = JsonObject::Parse(Utf8ToWide(text));
-    const std::wstring payload = StringValue(root, L"payload");
+    const std::wstring payload = JsonTextValue(root, L"payload");
     const std::wstring error = StringValue(root, L"error");
     const int64_t fetchedAt = static_cast<int64_t>(std::max(
         0.0, NumberValue(root, L"fetchedAt")));

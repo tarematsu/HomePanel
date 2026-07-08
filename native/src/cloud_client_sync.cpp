@@ -53,6 +53,11 @@ std::vector<uint8_t> CloudClient::LocalizeRadarTiles(const std::vector<uint8_t>&
   const auto localUrlFor = [](const std::wstring& url) {
     return L"https://data.homepanel/radar-cache" + (url.empty() || url.front() == L'/' ? url : L"/" + url);
   };
+  const auto remoteUrlFor = [this](const std::wstring& url) {
+    std::wstring base = config_.cloudflareBaseUrl;
+    while (!base.empty() && base.back() == L'/') base.pop_back();
+    return base + (url.empty() || url.front() == L'/' ? url : L"/" + url);
+  };
   const auto localizeTile = [&](JsonObject item) {
     const std::wstring url = item.GetNamedString(L"url", L"").c_str();
     if (url.empty() || url.front() != L'/') return;
@@ -61,9 +66,16 @@ std::vector<uint8_t> CloudClient::LocalizeRadarTiles(const std::vector<uint8_t>&
     if (!fs::exists(target, error) || fs::file_size(target, error) == 0) {
       const auto response = Request(L"GET", url, deviceToken_);
       if (response.status != 200 || response.body.empty()) {
-        throw std::runtime_error("radar tile fetch HTTP " + std::to_string(response.status));
+        log_.Warn(L"Radar tile cache fetch failed; using remote tile URL: HTTP " +
+                  std::to_wstring(response.status));
+        item.SetNamedValue(L"url", JsonValue::CreateStringValue(remoteUrlFor(url)));
+        return;
       }
-      if (!AtomicWriteBytes(target, response.body)) throw std::runtime_error("radar tile cache write failed");
+      if (!AtomicWriteBytes(target, response.body)) {
+        log_.Warn(L"Radar tile cache write failed; using remote tile URL");
+        item.SetNamedValue(L"url", JsonValue::CreateStringValue(remoteUrlFor(url)));
+        return;
+      }
     }
     item.SetNamedValue(L"url", JsonValue::CreateStringValue(localUrlFor(url)));
   };

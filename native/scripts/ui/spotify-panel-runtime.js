@@ -371,10 +371,10 @@
     playbackStates[key].fetchedAt = Number(message.fetchedAt) || Date.now();
     playbackStates[key].error = String(message.error || '');
     playbackStates[key].revision += 1;
-    playbackStates[key].value = message.resolved && typeof message.resolved === 'object'
-      ? message.resolved
-      : message.payload && typeof message.payload === 'object'
-        ? normalizePlaybackPayload(unwrapPlaybackPayload(message.payload), playbackStates[key].fetchedAt)
+    playbackStates[key].value = message.payload && typeof message.payload === 'object'
+      ? normalizePlaybackPayload(unwrapPlaybackPayload(message.payload), playbackStates[key].fetchedAt)
+      : message.resolved && typeof message.resolved === 'object'
+        ? message.resolved
         : {};
     renderAll();
   }
