@@ -78,7 +78,7 @@
     setButtonText('#maintenance-log', translate('controls.showLog'));
     setButtonText('#app-update', translate('controls.appUpdate'));
     setButtonText('#restart', translate('controls.restart'));
-    setButtonText('#maintenance-button', translate('controls.diagnostics') || translate('controls.maintenance'));
+    setButtonText('#maintenance-button', translate('controls.maintenance'));
     setButtonText('#exit', translate('controls.exit'));
   }
 

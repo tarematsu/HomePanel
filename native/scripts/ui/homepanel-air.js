@@ -32,22 +32,6 @@
     text('#room-state', `${value.light ? T('air.room.lightOn') : T('air.room.lightOff')}${middleDot}${value.motion ? T('air.room.motionOn') : T('air.room.motionOff')}`);
   }
 
-  function renderDiagnostics(value = {}, sensors = {}) {
-    const grid = $('#diagnostic-grid');
-    if (!grid) return;
-    const rows = [
-      [T('diagnostics.app'), mb(value.appWorkingSet)],
-      [T('diagnostics.webview'), mb(value.webViewWorkingSet)],
-      [T('diagnostics.memory'), mb(value.availablePhysical)],
-      [T('diagnostics.cpu'), `${number(value.cpuPercent, 0)}%`],
-      [T('diagnostics.cloudflare'), value.cloudLastSuccess || fallbackCloudUpdated],
-      [T('diagnostics.version'), value.appVersion || '--'],
-      [T('diagnostics.worker'), value.workerVersion || '--'],
-      [T('diagnostics.outbox'), String(sensors.outboxCount ?? 0)],
-    ];
-    grid.innerHTML = rows.map(([name, val]) => `<div class="diagnostic"><span>${escapeHtml(name)}</span><b>${escapeHtml(val)}</b></div>`).join('');
-  }
-
   root.panels = root.panels || {};
-  root.panels.air = { renderAir, renderDiagnostics };
+  root.panels.air = { renderAir };
 })();

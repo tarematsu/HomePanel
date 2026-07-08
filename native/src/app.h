@@ -136,9 +136,9 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
     ApplyAudioState();
     ApplyBounds();
   }
-  void Tick(int64_t nowMs, bool diagnosticsVisible = false) {
+  void Tick(int64_t nowMs) {
     if (!player_) return;
-    player_->Tick(nowMs, diagnosticsVisible);
+    player_->Tick(nowMs);
     ApplyAudioState();
     ApplyBounds();
   }
@@ -321,6 +321,7 @@ class App {
         ? L"Stationhead A 音声OFF"
         : L"Stationhead A 音声ON";
     toastUntil_ = UnixMillis() + 3000;
+    MarkRenderStateDirty();
     InvalidateAll();
   }
   void ToggleStationheadAudioB() {
@@ -333,6 +334,7 @@ class App {
       renderState_.toast = L"Stationhead B は未設定です";
     }
     toastUntil_ = UnixMillis() + 3000;
+    MarkRenderStateDirty();
     InvalidateAll();
   }
   void SetStationheadVolumeA(double volume) noexcept {
@@ -391,6 +393,8 @@ class App {
   void StopServices();
   void Tick();
   void Draw();
+  void MarkRenderStateDirty() noexcept { renderStateDirty_ = true; }
+  void ScheduleNextTick(uint32_t milliseconds);
   void PublishRenderState();
   void InvalidateAll();
   void Invalidate(const RECT& rect);
@@ -401,13 +405,9 @@ class App {
   void LayoutWorkspace();
   void ProcessRemoteCommands();
   void SendTelemetryAsync();
-  void RefreshDiagnostics();
   void ClearDisplayCache();
   void CheckForUpdateAsync(bool install);
   bool LaunchVerifiedUpdater(const std::wstring& version, const std::string& manifestJson);
-  static std::wstring FormatTimestamp(int64_t timestamp);
-  static size_t ProcessWorkingSet(DWORD pid);
-  static double ProcessCpuPercent();
 
   HINSTANCE instance_{};
   HWND window_{};
@@ -437,14 +437,14 @@ class App {
   bool cloudStarted_ = false;
   bool startupUpdateScheduled_ = false;
   int64_t lastTelemetryAt_ = 0;
-  int64_t lastDiagnosticAt_ = 0;
-  int64_t lastPerformanceLogAt_ = 0;
   uint64_t lastRadarFrameStamp_ = 0;
   int64_t toastUntil_ = 0;
+  int64_t nextAppTickAt_ = 0;
   // News rotation managed by native timer; index sent to WebView in state JSON
   int newsIndex_ = 0;
   int newsCount_ = 0;
   int64_t lastNewsRotateAt_ = 0;
+  bool renderStateDirty_ = true;
   WorkspaceTab selectedTab_ = WorkspaceTab::Main;
   RECT workspaceBounds_{0, 0, 1, 1};
   inline static App* current_ = nullptr;

@@ -16,7 +16,7 @@
   }
 
   function renderControls(state = {}) {
-    const version = String(state.diagnostics?.appVersion || '').trim();
+    const version = String(state.appVersion || '').trim();
     text('#controls-status', version ? `v${version}` : '');
   }
 
@@ -58,19 +58,13 @@
       panels.news?.renderNews(root.state.dashboard.news || {}, runtime.newsIndex || 0);
     }
 
-    const diagnosticsChanged = revisionChanged('diagnostics', runtime);
     const sensorsChanged = revisionChanged('sensors', runtime);
     const historyChanged = revisionChanged('airHistory', runtime);
 
-    if (diagnosticsChanged) {
-      renderControls(runtime);
-    }
+    renderControls(runtime);
     if (sensorsChanged) panels.air?.renderAir(runtime.sensors || {});
     if (dashboardChanged || historyChanged) {
       window.dispatchEvent(new CustomEvent('homepanel:air-history', { detail: airHistorySource() }));
-    }
-    if (diagnosticsChanged || sensorsChanged) {
-      panels.air?.renderDiagnostics(runtime.diagnostics || {}, runtime.sensors || {});
     }
 
     setHidden($('#maintenance'), !runtime.maintenance);

@@ -2,7 +2,6 @@
 #include "cloud_config.h"
 #include "version.h"
 #include <winrt/Windows.Data.Json.h>
-#include <powrprof.h>
 
 namespace hp {
 namespace {
@@ -11,6 +10,8 @@ constexpr UINT_PTR kCentralTimer = 1;
 constexpr UINT WM_HP_UPDATE_RESULT = WM_APP + 20;
 constexpr int kRestartExitCode = 42;
 constexpr int64_t kSecondaryDashboardSettleMs = 15'000;
+constexpr uint32_t kFastTickMs = 1000;
+constexpr uint32_t kIdleTickMs = 5000;
 
 std::wstring Quote(const fs::path& path) { return L"\"" + path.wstring() + L"\""; }
 
@@ -95,7 +96,7 @@ void App::CreateMainWindow(int showCommand) {
   if (!window_) ThrowIfFailed(HRESULT_FROM_WIN32(GetLastError()), "CreateWindowEx");
   ShowWindow(window_, showCommand == SW_HIDE ? SW_SHOW : showCommand);
   UpdateWindow(window_);
-  SetTimer(window_, kCentralTimer, 1000, nullptr);
+  ScheduleNextTick(kFastTickMs);
 }
 
 void App::StartServices() {
@@ -146,9 +147,9 @@ void App::StartServices() {
   renderState_.sensors = sensors_->Snapshot();
   UpdateAirHistory(renderState_.sensors);
   renderState_.stationhead = stationhead_->Status();
-  renderState_.diagnostics.appVersion = kVersion;
+  renderState_.appVersion = kVersion;
   lastTelemetryAt_ = startupAt_;
-  lastDiagnosticAt_ = startupAt_;
+  MarkRenderStateDirty();
   InvalidateAll();
 }
 
@@ -253,9 +254,11 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_KEYDOWN:
       if (wParam == VK_F12) {
         renderState_.maintenance = !renderState_.maintenance;
+        MarkRenderStateDirty();
         InvalidateAll();
       } else if (wParam == VK_ESCAPE && renderState_.maintenance) {
         renderState_.maintenance = false;
+        MarkRenderStateDirty();
         InvalidateAll();
       }
       return 0;
@@ -269,6 +272,7 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
       renderState_.toast = L"表示データを更新しました";
       const int64_t now = UnixMillis();
       toastUntil_ = now + 4000;
+      MarkRenderStateDirty();
 
       const int count = renderer_->NewsCount();
       if (count != newsCount_) {
@@ -276,6 +280,7 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         newsIndex_ = 0;
         lastNewsRotateAt_ = count > 1 ? now : 0;
         renderState_.newsIndex = 0;
+        MarkRenderStateDirty();
       }
 
       const std::wstring monitorHandle = renderer_->MonitorHostHandle();
@@ -290,11 +295,13 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_HP_SWITCHBOT_UPDATED:
       sensors_->ApplyCloudSwitchBot(dataDir_ / L"switchbot.json");
       renderState_.sensors = sensors_->Snapshot();
+      MarkRenderStateDirty();
       InvalidateAll();
       return 0;
     case WM_HP_SENSOR_UPDATED:
       renderState_.sensors = sensors_->Snapshot();
       UpdateAirHistory(renderState_.sensors);
+      MarkRenderStateDirty();
       InvalidateAll();
       return 0;
     case WM_HP_STATIONHEAD_CHANGED: {
@@ -316,12 +323,14 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
       }
       if (layoutChanged) LayoutWorkspace();
       renderState_.stationhead = stationhead_->Status();
+      MarkRenderStateDirty();
       Invalidate(renderer_->StationheadRect());
       return 0;
     }
     case WM_HP_CONFIG_UPDATED:
       renderState_.toast = L"クラウド設定を保存しました。再起動時に適用します";
       toastUntil_ = UnixMillis() + 5000;
+      MarkRenderStateDirty();
       InvalidateAll();
       return 0;
     case WM_HP_COMMANDS_UPDATED:
@@ -332,6 +341,7 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
       if (updateMessage && updateMessage[0] != L'\0') {
         renderState_.toast = updateMessage.get();
         toastUntil_ = UnixMillis() + 7000;
+        MarkRenderStateDirty();
         InvalidateAll();
       }
       return 0;
@@ -350,7 +360,7 @@ void App::Tick() {
   if (!renderer_ || !sensors_ || !stationhead_ || !radar_ || !cloud_) return;
   const int64_t now = UnixMillis();
 
-  stationhead_->Tick(now, renderState_.maintenance);
+  stationhead_->Tick(now);
   if (secondaryStarted_ && secondaryStationhead_) secondaryStationhead_->Tick(now);
   const StationheadStatus stationheadStatus = stationhead_->Status();
   renderState_.stationhead = stationheadStatus;
@@ -360,6 +370,7 @@ void App::Tick() {
   // its real state.
   renderState_.stationhead.secondaryAudioMuted =
       secondaryStationhead_ && secondaryStationhead_->AudioMuted();
+  MarkRenderStateDirty();
   StartDeferredServices(now, stationheadStatus);
 
   if (cloudStarted_ &&
@@ -367,29 +378,30 @@ void App::Tick() {
     lastTelemetryAt_ = now;
     SendTelemetryAsync();
   }
-  const int64_t diagnosticInterval = renderState_.maintenance ? 5'000 : 30 * 60'000;
-  if (now - lastDiagnosticAt_ >= diagnosticInterval) {
-    lastDiagnosticAt_ = now;
-    RefreshDiagnostics();
-    if (renderState_.maintenance) InvalidateAll();
-  }
   if (toastUntil_ && now >= toastUntil_) {
     toastUntil_ = 0;
     renderState_.toast.clear();
+    MarkRenderStateDirty();
     InvalidateAll();
   }
   if (newsCount_ > 1 && lastNewsRotateAt_ > 0 && now - lastNewsRotateAt_ >= 30'000) {
     lastNewsRotateAt_ = now;
     newsIndex_ = (newsIndex_ + 1) % newsCount_;
     renderState_.newsIndex = newsIndex_;
+    MarkRenderStateDirty();
     InvalidateAll();
   }
+  const bool fastTick = !rendererStarted_ || renderState_.maintenance || toastUntil_ > 0 ||
+                        (newsCount_ > 1 && lastNewsRotateAt_ > 0) ||
+                        StationheadNeedsForeground(renderState_.stationhead);
+  ScheduleNextTick(fastTick ? kFastTickMs : kIdleTickMs);
 }
 
 void App::Draw() {
   PAINTSTRUCT paint{};
   BeginPaint(window_, &paint);
   if (renderer_) {
+    PublishRenderState();
     // Message handlers own state updates. Avoid sensor locks and Stationhead status
     // reconstruction on every incidental WM_PAINT.
     renderer_->Render(paint.rcPaint, renderState_);
@@ -432,20 +444,30 @@ void App::LayoutWorkspace() {
       break;
   }
   renderState_.workspaceTab = static_cast<int>(selectedTab_);
+  MarkRenderStateDirty();
   InvalidateAll();
 }
 
 void App::PublishRenderState() {
-  if (renderer_) renderer_->UpdateState(renderState_);
+  if (!renderer_ || !renderStateDirty_) return;
+  renderer_->UpdateState(renderState_);
+  renderStateDirty_ = false;
+}
+
+void App::ScheduleNextTick(uint32_t milliseconds) {
+  if (!window_) return;
+  const uint32_t clamped = std::max<uint32_t>(1, milliseconds);
+  if (nextAppTickAt_ == static_cast<int64_t>(clamped)) return;
+  KillTimer(window_, kCentralTimer);
+  SetTimer(window_, kCentralTimer, clamped, nullptr);
+  nextAppTickAt_ = clamped;
 }
 
 void App::InvalidateAll() {
-  PublishRenderState();
   ::InvalidateRect(window_, nullptr, FALSE);
 }
 
 void App::Invalidate(const RECT& rect) {
-  PublishRenderState();
   ::InvalidateRect(window_, &rect, FALSE);
 }
 
@@ -538,6 +560,7 @@ void App::UpdateAirHistory(const SensorSnapshot& sensors) {
   }), history.end());
   if (history.size() > maxSamples) history.erase(history.begin(), history.end() - maxSamples);
   SaveAirHistory();
+  MarkRenderStateDirty();
 }
 
 void App::HandleAction(UiAction action, float seekFraction) {
@@ -553,6 +576,7 @@ void App::HandleAction(UiAction action, float seekFraction) {
       } else {
         renderState_.toast = L"認証タブが開いていません";
         toastUntil_ = UnixMillis() + 3000;
+        MarkRenderStateDirty();
         InvalidateAll();
       }
       break;
@@ -560,6 +584,7 @@ void App::HandleAction(UiAction action, float seekFraction) {
       renderState_.toast = cloud_->RequestRemoteRefresh()
         ? L"Cloudflareへ更新を要求しました" : L"更新要求に失敗しました";
       toastUntil_ = UnixMillis() + 4000;
+      MarkRenderStateDirty();
       InvalidateAll();
       break;
     case UiAction::AppUpdate:
@@ -571,6 +596,7 @@ void App::HandleAction(UiAction action, float seekFraction) {
       break;
     case UiAction::Maintenance:
       renderState_.maintenance = !renderState_.maintenance;
+      MarkRenderStateDirty();
       InvalidateAll();
       break;
     case UiAction::StationheadReconnect:
@@ -585,6 +611,7 @@ void App::HandleAction(UiAction action, float seekFraction) {
       break;
     case UiAction::CloseMaintenance:
       renderState_.maintenance = false;
+      MarkRenderStateDirty();
       InvalidateAll();
       break;
     case UiAction::RadarToggle:
@@ -660,31 +687,13 @@ void App::ProcessRemoteCommands() {
 void App::SendTelemetryAsync() {
   if (telemetryBusy_.exchange(true)) return;
   if (telemetryThread_.joinable()) telemetryThread_.join();
-  const double cpuPercent = renderState_.diagnostics.cpuPercent;
-  telemetryThread_ = std::thread([this, cpuPercent] {
+  telemetryThread_ = std::thread([this] {
     try {
       const auto sensor = sensors_->Snapshot();
       const auto station = stationhead_->Status();
       const size_t count = std::min<size_t>(500, sensor.outboxCount);
       std::string body = sensors_->BuildTelemetryPayload(
           config_.deviceId, WideToUtf8(kVersion), station.playing, count);
-      MEMORYSTATUSEX memory{sizeof(memory)};
-      GlobalMemoryStatusEx(&memory);
-      if (!body.empty() && body.back() == '}') body.pop_back();
-      std::ostringstream diagnostics;
-      diagnostics << ",\"diagnostics\":{" 
-        << "\"appWorkingSet\":" << ProcessWorkingSet(GetCurrentProcessId()) << ','
-        << "\"webViewWorkingSet\":" << station.processWorkingSet << ','
-        << "\"webViewCpuPercent\":" << std::fixed << std::setprecision(2) << station.processCpuPercent << ','
-        << "\"availablePhysical\":" << memory.ullAvailPhys << ','
-        << "\"cpuPercent\":" << std::fixed << std::setprecision(2) << cpuPercent << ','
-        << "\"co2Connected\":" << (sensor.co2Connected ? "true" : "false") << ','
-        << "\"lastCo2At\":" << sensor.observedAt << ','
-        << "\"stationheadPlaying\":" << (station.playing ? "true" : "false") << ','
-        << "\"lastStationheadAt\":" << station.lastPlaybackConfirmedAt << ','
-        << "\"cloudFailures\":" << cloud_->ConsecutiveFailures()
-        << "}}";
-      body += diagnostics.str();
       if (cloud_->SendTelemetry(body) && count) sensors_->AcknowledgeTelemetry(count);
     } catch (const std::exception& error) {
       if (logger_) logger_->Warn(L"Telemetry worker failed: " + Utf8ToWide(error.what()));
@@ -693,32 +702,6 @@ void App::SendTelemetryAsync() {
     }
     telemetryBusy_ = false;
   });
-}
-
-void App::RefreshDiagnostics() {
-  MEMORYSTATUSEX memory{sizeof(memory)};
-  GlobalMemoryStatusEx(&memory);
-  renderState_.diagnostics.appWorkingSet = ProcessWorkingSet(GetCurrentProcessId());
-  renderState_.diagnostics.webViewWorkingSet = stationhead_ ? stationhead_->Status().processWorkingSet : 0;
-  renderState_.diagnostics.availablePhysical = memory.ullAvailPhys;
-  renderState_.diagnostics.cpuPercent = ProcessCpuPercent();
-  renderState_.diagnostics.cloudLastSuccess = cloud_ ? cloud_->LastSuccessText() : L"";
-  renderState_.diagnostics.workerVersion = cloud_ ? cloud_->WorkerVersion() : L"";
-  renderState_.diagnostics.appVersion = kVersion;
-  renderState_.diagnostics.co2LastTime = FormatTimestamp(sensors_ ? sensors_->Snapshot().observedAt : 0);
-  renderState_.diagnostics.stationheadLastTime = FormatTimestamp(
-      stationhead_ ? stationhead_->Status().lastPlaybackConfirmedAt : 0);
-  const int64_t now = UnixMillis();
-  if (logger_ && now - lastPerformanceLogAt_ >= 5 * 60'000) {
-    lastPerformanceLogAt_ = now;
-    std::wostringstream metric;
-    metric << L"Performance appWS=" << renderState_.diagnostics.appWorkingSet / 1048576.0
-           << L"MB webviewWS=" << renderState_.diagnostics.webViewWorkingSet / 1048576.0
-           << L"MB available=" << renderState_.diagnostics.availablePhysical / 1048576.0
-           << L"MB cpu=" << std::fixed << std::setprecision(2)
-           << renderState_.diagnostics.cpuPercent << L"%";
-    logger_->Info(metric.str());
-  }
 }
 
 void App::ClearDisplayCache() {
@@ -730,6 +713,7 @@ void App::ClearDisplayCache() {
   cloud_->RefreshNow();
   renderState_.toast = L"表示キャッシュを削除しました。ログイン情報と履歴は保持しています";
   toastUntil_ = UnixMillis() + 5000;
+  MarkRenderStateDirty();
   InvalidateAll();
   logger_->Info(L"Display cache cleared; WebView user data and telemetry outbox preserved");
 }
@@ -739,6 +723,7 @@ void App::CheckForUpdateAsync(bool install) {
     if (install) {
       renderState_.toast = L"更新確認はすでに実行中です";
       toastUntil_ = UnixMillis() + 4000;
+      MarkRenderStateDirty();
       InvalidateAll();
     }
     return;
@@ -747,6 +732,7 @@ void App::CheckForUpdateAsync(bool install) {
   if (install) {
     renderState_.toast = L"署名・ハッシュを確認して更新を準備しています";
     toastUntil_ = UnixMillis() + 15'000;
+    MarkRenderStateDirty();
     InvalidateAll();
   }
 
@@ -829,51 +815,6 @@ bool App::LaunchVerifiedUpdater(const std::wstring& version, const std::string& 
   CloseHandle(process.hThread);
   CloseHandle(process.hProcess);
   return true;
-}
-
-std::wstring App::FormatTimestamp(int64_t timestamp) {
-  if (!timestamp) return L"-";
-  __time64_t seconds = timestamp / 1000;
-  tm local{};
-  _localtime64_s(&local, &seconds);
-  wchar_t output[64]{};
-  wcsftime(output, _countof(output), L"%Y-%m-%d %H:%M:%S", &local);
-  return output;
-}
-
-size_t App::ProcessWorkingSet(DWORD pid) {
-  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-  if (!process) return 0;
-  PROCESS_MEMORY_COUNTERS_EX counters{sizeof(counters)};
-  size_t value = 0;
-  if (GetProcessMemoryInfo(process, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters))) {
-    value = counters.WorkingSetSize;
-  }
-  CloseHandle(process);
-  return value;
-}
-
-double App::ProcessCpuPercent() {
-  static ULARGE_INTEGER previousKernel{}, previousUser{};
-  static int64_t previousWall = 0;
-  FILETIME creation{}, exit{}, kernel{}, user{};
-  if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) return 0;
-  ULARGE_INTEGER currentKernel{kernel.dwLowDateTime, kernel.dwHighDateTime};
-  ULARGE_INTEGER currentUser{user.dwLowDateTime, user.dwHighDateTime};
-  const int64_t now = UnixMillis();
-  double result = 0;
-  if (previousWall) {
-    const uint64_t cpu100ns =
-        (currentKernel.QuadPart - previousKernel.QuadPart) + (currentUser.QuadPart - previousUser.QuadPart);
-    SYSTEM_INFO system{};
-    GetSystemInfo(&system);
-    result = (cpu100ns / 10000.0) / std::max<int64_t>(1, now - previousWall) * 100.0 /
-             std::max<DWORD>(1, system.dwNumberOfProcessors);
-  }
-  previousKernel = currentKernel;
-  previousUser = currentUser;
-  previousWall = now;
-  return result;
 }
 
 void App::LogUnhandled(DWORD code, void* address) {

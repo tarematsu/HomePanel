@@ -40,19 +40,4 @@ std::wstring Player(const StationheadStatus& value) {
        << L",\"url\":" << Quote(value.url) << L"}";
   return json.str();
 }
-
-std::wstring Diagnostics(const DiagnosticsState& value) {
-  std::wostringstream json;
-  json << L"{\"appVersion\":" << Quote(value.appVersion)
-       << L",\"workerVersion\":" << Quote(value.workerVersion)
-       << L",\"cloudLastSuccess\":" << Quote(value.cloudLastSuccess)
-       << L",\"co2LastTime\":" << Quote(value.co2LastTime)
-       << L",\"stationheadLastTime\":" << Quote(value.stationheadLastTime)
-       << L",\"appWorkingSet\":" << value.appWorkingSet
-       << L",\"webViewWorkingSet\":" << value.webViewWorkingSet
-       << L",\"availablePhysical\":" << value.availablePhysical
-       << L",\"cpuPercent\":" << value.cpuPercent
-       << L"}";
-  return json.str();
-}
 }  // namespace hp::statejson

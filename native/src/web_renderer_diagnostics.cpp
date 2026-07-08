@@ -2,6 +2,8 @@
 
 namespace hp {
 namespace {
+constexpr int64_t kDiagnosticRepeatSuppressMs = 60'000;
+
 std::wstring HResultText(HRESULT result) {
   std::wostringstream output;
   output << L"0x" << std::uppercase << std::hex << std::setw(8) << std::setfill(L'0')
@@ -21,13 +23,24 @@ std::wstring TimeText() {
 
 void Renderer::AppendWebViewDiagnostic(const std::wstring& message) const {
   std::lock_guard lock(diagnosticMutex_);
+  const int64_t now = UnixMillis();
+  if (message == lastDiagnosticMessage_ &&
+      now - lastDiagnosticLoggedAt_ < kDiagnosticRepeatSuppressMs) {
+    return;
+  }
+  if (!diagnosticDirectoryEnsured_) {
+    std::error_code ignored;
+    fs::create_directories(dataDir_, ignored);
+    diagnosticDirectoryEnsured_ = true;
+  }
   std::error_code ignored;
-  fs::create_directories(dataDir_, ignored);
   std::wofstream log(dataDir_ / L"webview2-dashboard.log", std::ios::app);
   if (!log) return;
   log << L"[" << TimeText() << L"] " << message;
   if (!runtimeVersion_.empty()) log << L" | runtime=" << runtimeVersion_;
   log << L"\n";
+  lastDiagnosticMessage_ = message;
+  lastDiagnosticLoggedAt_ = now;
 }
 
 void Renderer::SetWebViewError(const std::wstring& stage, HRESULT result) {

@@ -55,7 +55,7 @@ class StationheadPlayer {
   ~StationheadPlayer();
   void Start();
   void Stop();
-  void Tick(int64_t nowMs, bool diagnosticsVisible = false);
+  void Tick(int64_t nowMs);
   void Reconnect();
   void RefreshSpotifyState(bool notify = true);
   void RefreshLocalMetadata(int64_t) noexcept {}

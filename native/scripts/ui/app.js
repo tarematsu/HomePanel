@@ -34,10 +34,15 @@
     if (queuedState) renderRuntime(queuedState);
     window.chrome?.webview?.postMessage({ type: 'ready' });
 
+    const updateClock = () => {
+      if (document.hidden) return;
+      panels.clock?.updateClock();
+    };
+    updateClock();
+    setInterval(updateClock, 1000);
     setInterval(() => {
-      if (!document.hidden) panels.clock?.updateClock();
-    }, 1000);
-    setInterval(() => panels.radar?.refreshRadar(), panels.radar?.refreshMs || 5 * 60 * 1000);
+      if (!document.hidden) panels.radar?.refreshRadar();
+    }, panels.radar?.refreshMs || 5 * 60 * 1000);
 
     window.addEventListener('online', () => panels.radar?.refreshRadar());
     window.addEventListener('resize', () => {

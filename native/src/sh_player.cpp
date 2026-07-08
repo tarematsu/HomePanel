@@ -342,7 +342,7 @@ void StationheadPlayer::ReleaseCompletedAuth() {
 
 void StationheadPlayer::RefreshSpotifyState(bool) {}
 
-void StationheadPlayer::Tick(int64_t nowMs, bool diagnosticsVisible) {
+void StationheadPlayer::Tick(int64_t nowMs) {
   if (shuttingDown_) return;
   if (nowMs < nextTickAt_ && !recreating_.load(std::memory_order_relaxed)) return;
   nextTickAt_ = nowMs + 60'000;
@@ -394,7 +394,7 @@ void StationheadPlayer::Tick(int64_t nowMs, bool diagnosticsVisible) {
     std::lock_guard lock(mutex_);
     if (status_.navigating || status_.created) status_.detail = L"起動していません";
   }
-  const int64_t memoryCheckInterval = diagnosticsVisible ? 15'000 : 60 * 60'000;
+  const int64_t memoryCheckInterval = 60 * 60'000;
   if (nowMs - lastMemoryCheckAt_ >= memoryCheckInterval) {
     lastMemoryCheckAt_ = nowMs;
     const size_t memory = MeasureProcessWorkingSet();

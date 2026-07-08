@@ -32,22 +32,10 @@ struct AirHistorySample {
   double humidity = 0;
 };
 
-struct DiagnosticsState {
-  std::wstring appVersion;
-  std::wstring workerVersion;
-  std::wstring cloudLastSuccess;
-  std::wstring co2LastTime;
-  std::wstring stationheadLastTime;
-  size_t appWorkingSet = 0;
-  size_t webViewWorkingSet = 0;
-  uint64_t availablePhysical = 0;
-  double cpuPercent = 0;
-};
-
 struct RenderState {
   SensorSnapshot sensors;
   StationheadStatus stationhead;
-  DiagnosticsState diagnostics;
+  std::wstring appVersion;
   std::vector<AirHistorySample> airHistory;
   int workspaceTab = 0;
   std::wstring toast;
@@ -92,11 +80,10 @@ class Renderer {
     std::wstring airHistory = L"[]";
     std::wstring sensors = L"{}";
     std::wstring stationhead = L"{}";
-    std::wstring diagnostics = L"{}";
     std::wstring toast;
+    std::wstring appVersion;
     SensorSnapshot sensorsSource;
     StationheadStatus stationheadSource;
-    DiagnosticsState diagnosticsSource;
     uint64_t dashboardSourceRevision = 0;
     uint64_t spotifySourceRevision = 0;
     size_t airHistorySourceCount = 0;
@@ -106,7 +93,7 @@ class Renderer {
     uint64_t airHistoryRevision = 0;
     uint64_t sensorsRevision = 0;
     uint64_t stationheadRevision = 0;
-    uint64_t diagnosticsRevision = 0;
+    uint64_t appVersionRevision = 0;
     uint64_t newsRevision = 0;
     int workspaceTab = 0;
     int newsIndex = 0;
@@ -171,6 +158,9 @@ class Renderer {
   std::wstring runtimeVersion_;
   std::wstring webViewError_;
   int64_t webViewStartedAt_ = 0;
+  mutable bool diagnosticDirectoryEnsured_ = false;
+  mutable std::wstring lastDiagnosticMessage_;
+  mutable int64_t lastDiagnosticLoggedAt_ = 0;
   int newsCount_ = 0;
   std::wstring monitorHostHandle_;
   mutable std::mutex actionMutex_;

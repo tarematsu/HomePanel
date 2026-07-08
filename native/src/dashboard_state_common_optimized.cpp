@@ -4,7 +4,6 @@ namespace hp {
 namespace statejson {
 std::wstring Sensors(const SensorSnapshot& value);
 std::wstring Player(const StationheadStatus& value);
-std::wstring Diagnostics(const DiagnosticsState& value);
 }
 namespace {
 constexpr uint32_t kDashboardSlice = 1u << 0;
@@ -12,13 +11,14 @@ constexpr uint32_t kAirHistorySlice = 1u << 1;
 constexpr uint32_t kSensorsSlice = 1u << 2;
 constexpr uint32_t kStationheadSlice = 1u << 3;
 constexpr uint32_t kSpotifySlice = 1u << 4;
-constexpr uint32_t kDiagnosticsSlice = 1u << 5;
+constexpr uint32_t kAppVersionScalar = 1u << 19;
 constexpr uint32_t kAllSlices = kDashboardSlice | kAirHistorySlice | kSensorsSlice |
-                                   kStationheadSlice | kSpotifySlice | kDiagnosticsSlice;
+                                   kStationheadSlice | kSpotifySlice;
 constexpr uint32_t kWorkspaceScalar = 1u << 16;
 constexpr uint32_t kNewsIndexScalar = 1u << 17;
 constexpr uint32_t kToastScalar = 1u << 18;
-constexpr uint32_t kAllScalars = kWorkspaceScalar | kNewsIndexScalar | kToastScalar;
+constexpr uint32_t kAllScalars = kWorkspaceScalar | kNewsIndexScalar | kToastScalar |
+                                 kAppVersionScalar;
 constexpr uint32_t kAllStateFields = kAllSlices | kAllScalars;
 
 std::wstring Quote(const std::wstring& value) {
@@ -67,18 +67,6 @@ bool SameStationhead(const StationheadStatus& left, const StationheadStatus& rig
          left.artworkUrl == right.artworkUrl &&
          left.url == right.url;
 }
-
-bool SameDiagnostics(const DiagnosticsState& left, const DiagnosticsState& right) {
-  return left.appVersion == right.appVersion &&
-         left.workerVersion == right.workerVersion &&
-         left.cloudLastSuccess == right.cloudLastSuccess &&
-         left.co2LastTime == right.co2LastTime &&
-         left.stationheadLastTime == right.stationheadLastTime &&
-         left.appWorkingSet == right.appWorkingSet &&
-         left.webViewWorkingSet == right.webViewWorkingSet &&
-         left.availablePhysical == right.availablePhysical &&
-         left.cpuPercent == right.cpuPercent;
-}
 }
 
 std::wstring Renderer::AirHistoryJson(const std::vector<AirHistorySample>& history) const {
@@ -123,7 +111,7 @@ std::wstring Renderer::BuildCachedStateJson(uint32_t changedFields, bool full) c
     if (include(kSensorsSlice)) appendRevision(L"sensors", stateJsonCache_.sensorsRevision);
     if (include(kStationheadSlice)) appendRevision(L"stationhead", stateJsonCache_.stationheadRevision);
     if (include(kSpotifySlice)) appendRevision(L"spotify", stateJsonCache_.spotifyRevision);
-    if (include(kDiagnosticsSlice)) appendRevision(L"diagnostics", stateJsonCache_.diagnosticsRevision);
+    if (include(kAppVersionScalar)) appendRevision(L"appVersion", stateJsonCache_.appVersionRevision);
     if (include(kNewsIndexScalar)) appendRevision(L"news", stateJsonCache_.newsRevision);
     json << L"}";
   }
@@ -131,12 +119,12 @@ std::wstring Renderer::BuildCachedStateJson(uint32_t changedFields, bool full) c
   if (include(kWorkspaceScalar)) json << L",\"workspaceTab\":" << stateJsonCache_.workspaceTab;
   if (include(kNewsIndexScalar)) json << L",\"newsIndex\":" << stateJsonCache_.newsIndex;
   if (include(kToastScalar)) json << L",\"toast\":" << Quote(stateJsonCache_.toast);
+  if (include(kAppVersionScalar)) json << L",\"appVersion\":" << Quote(stateJsonCache_.appVersion);
   if (include(kDashboardSlice)) json << L",\"dashboard\":" << stateJsonCache_.dashboard;
   if (include(kSpotifySlice)) json << L",\"spotify\":" << stateJsonCache_.spotify;
   if (include(kAirHistorySlice)) json << L",\"airHistory\":" << stateJsonCache_.airHistory;
   if (include(kSensorsSlice)) json << L",\"sensors\":" << stateJsonCache_.sensors;
   if (include(kStationheadSlice)) json << L",\"stationhead\":" << stateJsonCache_.stationhead;
-  if (include(kDiagnosticsSlice)) json << L",\"diagnostics\":" << stateJsonCache_.diagnostics;
   json << L"}";
   return json.str();
 }

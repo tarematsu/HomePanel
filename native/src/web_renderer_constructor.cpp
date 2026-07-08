@@ -23,9 +23,6 @@ Renderer::Renderer(HWND window, int width, int height, RadarManager& radar)
   uiDir_ = rootDir_ / L"ui";
   userDataDir_ = dataDir_ / L"webview2-stationhead";
   bounds_ = RECT{0, 0, width_, height_};
-  // Start HTTP playback collection before the dashboard WebView is allowed to
-  // start. The results are cached and flushed once the UI announces readiness.
-  StartNativePlaybackBridge();
 }
 
 Renderer::~Renderer() {

@@ -27,7 +27,6 @@ UiAction Renderer::HitTest(POINT, float* seekFraction) {
 void Renderer::UpdateState(const RenderState& state) {
   const std::wstring json = BuildStateJson(state);
   PostState(json);
-  FlushNativePlaybackMessages();
   statePublishedForPendingPaint_ = !json.empty();
 }
 
@@ -42,7 +41,6 @@ void Renderer::PostFullState() {
   const std::wstring json = BuildCachedStateJson(0, true);
   if (!json.empty()) postedState_.clear();
   PostState(json);
-  FlushNativePlaybackMessages();
 }
 
 RECT Renderer::ClockRect() const { return ClientBounds(); }

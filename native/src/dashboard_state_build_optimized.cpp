@@ -45,14 +45,6 @@ std::wstring Renderer::BuildStateJson(const RenderState& state, bool full) {
     changedFields |= kStationheadSlice;
   }
 
-  if (firstState ||
-      !SameDiagnostics(stateJsonCache_.diagnosticsSource, state.diagnostics)) {
-    stateJsonCache_.diagnosticsSource = state.diagnostics;
-    stateJsonCache_.diagnostics = statejson::Diagnostics(state.diagnostics);
-    ++stateJsonCache_.diagnosticsRevision;
-    changedFields |= kDiagnosticsSlice;
-  }
-
   if (firstState || stateJsonCache_.workspaceTab != state.workspaceTab) {
     changedFields |= kWorkspaceScalar;
   }
@@ -62,6 +54,11 @@ std::wstring Renderer::BuildStateJson(const RenderState& state, bool full) {
   }
   if (firstState || stateJsonCache_.toast != state.toast) {
     changedFields |= kToastScalar;
+  }
+  if (firstState || stateJsonCache_.appVersion != state.appVersion) {
+    stateJsonCache_.appVersion = state.appVersion;
+    ++stateJsonCache_.appVersionRevision;
+    changedFields |= kAppVersionScalar;
   }
 
   stateJsonCache_.workspaceTab = state.workspaceTab;
