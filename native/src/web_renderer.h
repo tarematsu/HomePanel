@@ -176,6 +176,11 @@ class Renderer {
     HBITMAP bitmap = nullptr;
     uint64_t lastUsed = 0;
   };
+  struct NativeBackBuffer {
+    HBITMAP bitmap = nullptr;
+    int width = 0;
+    int height = 0;
+  };
 
   bool EnsureNativeClockWindow();
   void ApplyNativeClockBounds();
@@ -197,6 +202,8 @@ class Renderer {
   void PaintNativeEnergy(HWND hwnd);
   void PaintNativeStationhead(HWND hwnd);
   void PaintNativeRadar(HWND hwnd);
+  HBITMAP NativePanelBackBuffer(HWND hwnd, HDC dc, int width, int height);
+  void ReleaseNativePanelBackBuffer(HWND hwnd);
   void QueueAction(UiAction action, float seekFraction = 0.0f);
   void StartNativePlaybackBridge();
   void StopNativePlaybackBridge() noexcept;
@@ -258,6 +265,7 @@ class Renderer {
   std::array<NativePlaybackUpdate, 2> nativePlaybackUpdates_{};
   std::map<std::wstring, ArtworkBitmapCacheEntry> nativeArtworkBitmaps_;
   uint64_t nativeArtworkUseCounter_ = 0;
+  std::map<HWND, NativeBackBuffer> nativeBackBuffers_;
   std::atomic<uint64_t> nativePlaybackRevision_{0};
   std::atomic<bool> nativePlaybackStarted_{false};
   std::atomic<bool> nativePlaybackStopping_{false};

@@ -405,6 +405,10 @@ void Renderer::DestroyNativeStaticWindows() {
     DestroyWindow(nativeStationheadWindow_);
   }
   if (nativeRadarWindow_ && IsWindow(nativeRadarWindow_)) DestroyWindow(nativeRadarWindow_);
+  for (auto& [hwnd, buffer] : nativeBackBuffers_) {
+    if (buffer.bitmap) DeleteObject(buffer.bitmap);
+  }
+  nativeBackBuffers_.clear();
   for (auto& [key, entry] : nativeArtworkBitmaps_) {
     if (entry.bitmap) DeleteObject(entry.bitmap);
   }
@@ -463,6 +467,24 @@ void Renderer::TickNativePanels(int64_t nowMs) {
   }
 }
 
+HBITMAP Renderer::NativePanelBackBuffer(HWND hwnd, HDC dc, int width, int height) {
+  if (!hwnd || !dc || width <= 0 || height <= 0) return nullptr;
+  NativeBackBuffer& buffer = nativeBackBuffers_[hwnd];
+  if (buffer.bitmap && buffer.width == width && buffer.height == height) return buffer.bitmap;
+  if (buffer.bitmap) DeleteObject(buffer.bitmap);
+  buffer.bitmap = CreateCompatibleBitmap(dc, width, height);
+  buffer.width = buffer.bitmap ? width : 0;
+  buffer.height = buffer.bitmap ? height : 0;
+  return buffer.bitmap;
+}
+
+void Renderer::ReleaseNativePanelBackBuffer(HWND hwnd) {
+  const auto found = nativeBackBuffers_.find(hwnd);
+  if (found == nativeBackBuffers_.end()) return;
+  if (found->second.bitmap) DeleteObject(found->second.bitmap);
+  nativeBackBuffers_.erase(found);
+}
+
 void Renderer::ApplyNativeClockBounds() {
   if (!nativeClockWindow_ || !IsWindow(nativeClockWindow_)) return;
   const RECT rect = ComputeNativeDashboardLayout(bounds_).clock;
@@ -507,6 +529,7 @@ LRESULT Renderer::HandleNativeClockMessage(HWND hwnd, UINT message, WPARAM wpara
       PaintNativeClock(hwnd);
       return 0;
     case WM_NCDESTROY:
+      ReleaseNativePanelBackBuffer(hwnd);
       if (nativeClockWindow_ == hwnd) nativeClockWindow_ = nullptr;
       SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
       break;
@@ -549,6 +572,7 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
       else PaintNativeStationhead(hwnd);
       return 0;
     case WM_NCDESTROY:
+      ReleaseNativePanelBackBuffer(hwnd);
       if (nativeAirWindow_ == hwnd) nativeAirWindow_ = nullptr;
       if (nativeAirHistoryWindow_ == hwnd) nativeAirHistoryWindow_ = nullptr;
       if (nativeControlsWindow_ == hwnd) nativeControlsWindow_ = nullptr;
@@ -571,7 +595,7 @@ void Renderer::PaintNativeClock(HWND hwnd) {
   RECT bounds{};
   GetClientRect(hwnd, &bounds);
   HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = CreateCompatibleBitmap(dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
   HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
   FillRect(memoryDc, &bounds, background);
@@ -607,7 +631,6 @@ void Renderer::PaintNativeClock(HWND hwnd) {
 
   BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
   SelectObject(memoryDc, previousBitmap);
-  DeleteObject(bitmap);
   DeleteDC(memoryDc);
   EndPaint(hwnd, &paint);
 }
@@ -620,7 +643,7 @@ void Renderer::PaintNativeAir(HWND hwnd) {
   RECT bounds{};
   GetClientRect(hwnd, &bounds);
   HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = CreateCompatibleBitmap(dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
   HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
   FillRect(memoryDc, &bounds, background);
@@ -663,7 +686,6 @@ void Renderer::PaintNativeAir(HWND hwnd) {
 
   BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
   SelectObject(memoryDc, previousBitmap);
-  DeleteObject(bitmap);
   DeleteDC(memoryDc);
   EndPaint(hwnd, &paint);
 }
@@ -676,7 +698,7 @@ void Renderer::PaintNativeAirHistory(HWND hwnd) {
   RECT bounds{};
   GetClientRect(hwnd, &bounds);
   HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = CreateCompatibleBitmap(dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
   HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
   FillRect(memoryDc, &bounds, background);
@@ -756,7 +778,6 @@ void Renderer::PaintNativeAirHistory(HWND hwnd) {
 
   BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
   SelectObject(memoryDc, previousBitmap);
-  DeleteObject(bitmap);
   DeleteDC(memoryDc);
   EndPaint(hwnd, &paint);
 }
@@ -769,7 +790,7 @@ void Renderer::PaintNativeControls(HWND hwnd) {
   RECT bounds{};
   GetClientRect(hwnd, &bounds);
   HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = CreateCompatibleBitmap(dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
   HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
   FillRect(memoryDc, &bounds, background);
@@ -824,7 +845,6 @@ void Renderer::PaintNativeControls(HWND hwnd) {
 
   BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
   SelectObject(memoryDc, previousBitmap);
-  DeleteObject(bitmap);
   DeleteDC(memoryDc);
   EndPaint(hwnd, &paint);
 }
@@ -837,7 +857,7 @@ void Renderer::PaintNativeNews(HWND hwnd) {
   RECT bounds{};
   GetClientRect(hwnd, &bounds);
   HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = CreateCompatibleBitmap(dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
   HBRUSH background = CreateSolidBrush(RGB(15, 22, 32));
   FillRect(memoryDc, &bounds, background);
@@ -880,7 +900,6 @@ void Renderer::PaintNativeNews(HWND hwnd) {
 
   BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
   SelectObject(memoryDc, previousBitmap);
-  DeleteObject(bitmap);
   DeleteDC(memoryDc);
   EndPaint(hwnd, &paint);
 }
@@ -893,7 +912,7 @@ void Renderer::PaintNativeWeather(HWND hwnd) {
   RECT bounds{};
   GetClientRect(hwnd, &bounds);
   HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = CreateCompatibleBitmap(dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
   HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
   FillRect(memoryDc, &bounds, background);
@@ -962,7 +981,6 @@ void Renderer::PaintNativeWeather(HWND hwnd) {
 
   BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
   SelectObject(memoryDc, previousBitmap);
-  DeleteObject(bitmap);
   DeleteDC(memoryDc);
   EndPaint(hwnd, &paint);
 }
@@ -975,7 +993,7 @@ void Renderer::PaintNativeEnergy(HWND hwnd) {
   RECT bounds{};
   GetClientRect(hwnd, &bounds);
   HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = CreateCompatibleBitmap(dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
   HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
   FillRect(memoryDc, &bounds, background);
@@ -1089,7 +1107,6 @@ void Renderer::PaintNativeEnergy(HWND hwnd) {
 
   BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
   SelectObject(memoryDc, previousBitmap);
-  DeleteObject(bitmap);
   DeleteDC(memoryDc);
   EndPaint(hwnd, &paint);
 }
@@ -1102,7 +1119,7 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
   RECT bounds{};
   GetClientRect(hwnd, &bounds);
   HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = CreateCompatibleBitmap(dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
   HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
   FillRect(memoryDc, &bounds, background);
@@ -1234,7 +1251,6 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
 
   BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
   SelectObject(memoryDc, previousBitmap);
-  DeleteObject(bitmap);
   DeleteDC(memoryDc);
   EndPaint(hwnd, &paint);
 }
@@ -1247,7 +1263,7 @@ void Renderer::PaintNativeRadar(HWND hwnd) {
   RECT bounds{};
   GetClientRect(hwnd, &bounds);
   HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = CreateCompatibleBitmap(dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
   HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
   FillRect(memoryDc, &bounds, background);
@@ -1298,7 +1314,6 @@ void Renderer::PaintNativeRadar(HWND hwnd) {
   DeleteObject(headerFont);
   BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
   SelectObject(memoryDc, previousBitmap);
-  DeleteObject(bitmap);
   DeleteDC(memoryDc);
   EndPaint(hwnd, &paint);
 }

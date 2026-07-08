@@ -52,6 +52,9 @@
 - The browser-side second pulse has been removed; no browser panel performs local interpolation.
 - All panel scripts have been removed from the dashboard page; do not reintroduce browser-side dashboard DOM updates for native-owned surfaces.
 - Runtime-installed dashboard browser assets have been removed. The native installer only deploys the radar base images that native radar composition still reads from disk.
+- Native dashboard panel updates are diffed so routine state changes invalidate only the affected child windows.
+- Native panel timers are centralized through the app tick; individual clock/playback child-window timers are not used.
+- Native panel back buffers and Stationhead artwork bitmaps are bounded/reused to reduce paint-time allocations.
 
 ## Radar
 
