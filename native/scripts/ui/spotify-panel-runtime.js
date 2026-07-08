@@ -4,6 +4,7 @@
   const PLAYBACK_STALE_MS = 6 * 60 * 1000;
   const SPOTIFY_STALE_GRACE_MS = 90 * 1000;
   const SPOTIFY_POLL_MS = 5 * 60 * 1000;
+  const TRACK_TRANSITION_HOLD_MS = 1000;
 
   const PLAYBACK_SOURCES = Object.freeze({
     a: Object.freeze({ channel: 'buddies', prefix: 'stationhead-a', rowSelector: '.stationhead-player-row[aria-label="StationheadウインドウA"]' }),
@@ -266,7 +267,7 @@
       }
       while (index < queue.length) {
         const queueItem = normalizedItem(queue[index]);
-        if (!playing || queueItem.durationMs <= 0 || elapsed <= queueItem.durationMs) break;
+        if (!playing || queueItem.durationMs <= 0 || elapsed < queueItem.durationMs + TRACK_TRANSITION_HOLD_MS) break;
         elapsed -= queueItem.durationMs;
         index += 1;
       }
@@ -274,7 +275,7 @@
         itemSource = queue[index];
         const queueItem = normalizedItem(itemSource);
         durationMs = queueItem.durationMs;
-        progressMs = Math.max(0, elapsed);
+        progressMs = Math.min(queueItem.durationMs, Math.max(0, elapsed));
       } else {
         itemSource = {};
         durationMs = 0;
@@ -282,7 +283,9 @@
       }
     } else {
       const expectedEndAt = Number(value.expectedEndAt ?? 0) || 0;
-      if (durationMs > 0 && expectedEndAt > 0) progressMs = durationMs - Math.max(0, expectedEndAt - now);
+      if (durationMs > 0 && expectedEndAt > 0) {
+        progressMs = durationMs - Math.max(0, expectedEndAt + TRACK_TRANSITION_HOLD_MS - now);
+      }
       else if (playing && sampledAt > 0) progressMs += Math.max(0, now - sampledAt);
     }
 
@@ -300,7 +303,9 @@
     const playing = value.playing === true;
     const sampledAt = Number(value.sampledAt ?? 0) || 0;
     const expectedEndAt = Number(value.expectedEndAt ?? 0) || 0;
-    if (durationMs > 0 && expectedEndAt > 0) progressMs = durationMs - Math.max(0, expectedEndAt - now);
+    if (durationMs > 0 && expectedEndAt > 0) {
+      progressMs = durationMs - Math.max(0, expectedEndAt + TRACK_TRANSITION_HOLD_MS - now);
+    }
     else if (playing && sampledAt > 0) progressMs += Math.max(0, now - sampledAt);
     if (durationMs > 0) progressMs = Math.min(Math.max(0, progressMs), durationMs);
     return { title: item.name, artist: item.artist, artwork: item.artwork, durationMs, progressMs, playing, hasTrack: Boolean(item.name) };

@@ -6,6 +6,7 @@ namespace hp {
 namespace {
 constexpr int64_t kNativePlaybackPollMs = 60 * 60'000;
 constexpr size_t kMaxPlaybackResponseBytes = 4 * 1024 * 1024;
+constexpr int64_t kPlaybackTransitionHoldMs = 1'000;
 using winrt::Windows::Data::Json::JsonArray;
 using winrt::Windows::Data::Json::JsonObject;
 using winrt::Windows::Data::Json::JsonValue;
@@ -215,9 +216,9 @@ std::wstring ResolvePlaybackPayload(const fs::path& dataDir, const std::wstring&
         itemSource = queue.GetAt(index).GetObject();
         JsonObject normalized = NormalizeItem(dataDir, itemSource);
         const int64_t queueDuration = static_cast<int64_t>(NumberValue(normalized, L"durationMs"));
-        if (!playing || queueDuration <= 0 || elapsed <= queueDuration) {
+        if (!playing || queueDuration <= 0 || elapsed < queueDuration + kPlaybackTransitionHoldMs) {
           durationMs = queueDuration;
-          progressMs = std::max<int64_t>(0, elapsed);
+          progressMs = std::min<int64_t>(queueDuration, std::max<int64_t>(0, elapsed));
           break;
         }
         elapsed -= queueDuration;
@@ -231,7 +232,9 @@ std::wstring ResolvePlaybackPayload(const fs::path& dataDir, const std::wstring&
       }
     } else {
       const int64_t expectedEndAt = static_cast<int64_t>(std::max(0.0, NumberValue(value, L"expectedEndAt")));
-      if (durationMs > 0 && expectedEndAt > 0) progressMs = durationMs - std::max<int64_t>(0, expectedEndAt - fetchedAt);
+      if (durationMs > 0 && expectedEndAt > 0) {
+        progressMs = durationMs - std::max<int64_t>(0, expectedEndAt + kPlaybackTransitionHoldMs - fetchedAt);
+      }
       else if (playing && sampledAt > 0) progressMs += std::max<int64_t>(0, fetchedAt - sampledAt);
     }
 
