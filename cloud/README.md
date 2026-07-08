@@ -1,19 +1,20 @@
 # HomePanel Cloud
 
-HomePanel 用の Cloudflare Workers / D1 構成です。  
-このディレクトリには公開可能なテンプレートだけを置き、環境固有の値は外に出します。
+Cloudflare Workers and D1 backend for HomePanel.
 
-## 先に変更する項目
+## Configure
 
-- `wrangler.jsonc` の `name`
-- `wrangler.jsonc` の `d1_databases[0].database_name`
-- GitHub / Cloudflare 側の Secrets と Variables
+Set these in `wrangler.jsonc` or the deploy environment:
 
-`database_id` はゼロ UUID のままで構いません。デプロイスクリプトは次の順で実 ID を解決します。
+- Worker `name`
+- `d1_databases[0].database_name`
+- Cloudflare and GitHub secrets/variables
 
-1. `HOMEPANEL_D1_DATABASE_ID` または `D1_DATABASE_ID`
-2. `wrangler.jsonc` の実 UUID
-3. `wrangler d1 list --json` で見つかった一致名
+`database_id` may stay as the placeholder in source control. The deploy script resolves the real value in this order:
+
+1. `HOMEPANEL_D1_DATABASE_ID` or `D1_DATABASE_ID`
+2. A real UUID already stored in `wrangler.jsonc`
+3. `wrangler d1 list --json`
 
 ## Cloudflare Variables
 
@@ -53,12 +54,12 @@ SPOTIFY_TOKEN_ENCRYPTION_KEY
 
 ## R2
 
-- Cloudflare Dashboard で最初に R2 を有効化
-- 既定の更新配信用バケット名は `homepanel-updates`
-- GitHub Variables に `HOMEPANEL_UPDATE_BUCKET` を設定
-- ワーカーは `updates/latest/update-manifest.json` を読み、実ファイルは `updates/releases/<yymmddhhmm>/` から配信
+- Create an R2 bucket in Cloudflare, typically `homepanel-updates`.
+- Set `HOMEPANEL_UPDATE_BUCKET` in CI if the bucket name differs from source defaults.
+- Store the current manifest at `updates/latest/update-manifest.json`.
+- Store release files under `updates/releases/<yymmddhhmm>/`.
 
-## ローカル検証
+## Local checks
 
 ```powershell
 cd cloud
@@ -68,17 +69,16 @@ npm test
 npm run migrate:local
 ```
 
-## GitHub Actions 側で必要なもの
+## CI secrets
 
-- Secret: `CLOUDFLARE_API_TOKEN`
-- Secret: `HOMEPANEL_D1_DATABASE_ID`
-- Secret: `CLOUDFLARE_BUILDS_API_TOKEN`
-- Variable: `HOMEPANEL_UPDATE_BUCKET`
+- `CLOUDFLARE_API_TOKEN`
+- `HOMEPANEL_D1_DATABASE_ID`
+- `CLOUDFLARE_BUILDS_API_TOKEN`
+- `HOMEPANEL_UPDATE_BUCKET`
 
-`CLOUDFLARE_ACCOUNT_ID` は、トークンから参照できるアカウントが1つだけなら自動解決されます。複数アカウントが見えるトークンを使う場合だけ、追加で `CLOUDFLARE_ACCOUNT_ID` を設定してください。
+Set `CLOUDFLARE_ACCOUNT_ID` when the token cannot resolve a single account automatically.
 
-## 公開チェック
+## Notes
 
-- 実 URL、実メールアドレス、実アカウント ID をコミットしない
-- `.env`、`.dev.vars`、ローカル DB、ログを Git に含めない
-- Secrets は設定画面だけに置く
+- Keep production URLs, email addresses, and account identifiers out of source control.
+- Do not rely on local `.env` or `.dev.vars` files for production credentials.

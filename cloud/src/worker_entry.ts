@@ -6,7 +6,7 @@ import {
   cachedMetaEtag,
   invalidateStateCaches,
 } from "./dashboard_cache";
-import worker from "./index";
+import worker from "./worker_core";
 import { etagResponse, suppliedEtags, unauthorized } from "./response";
 import { WORKER_VERSION } from "./snapshot";
 import type { Env } from "./sources";

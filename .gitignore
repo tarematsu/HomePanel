@@ -40,8 +40,6 @@ update-manifest.json
 HomePanel.exe
 HomePanelUpdater.exe
 WebView2Loader.dll
-build.bat
-register-homepanel-startup-task.ps1
 .codex-remote-attachments/
 
 # Editors/OS

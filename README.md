@@ -1,19 +1,21 @@
 # HomePanel
 
-このリポジトリは HomePanel の単一リポジトリ構成です。
+HomePanel is split into two deployable parts.
 
-- `cloud/`
-  Cloudflare Workers / D1 側
-- `native/`
-  Windows ネイティブアプリ側
+- `cloud/`: Cloudflare Workers and D1 backend
+- `native/`: Windows native application
 
-## 方針
+## Layout
 
-- 実運用のトークン、鍵、URL、アカウント ID はコミットしません
-- Cloud 側の設定は Cloudflare / GitHub の Secrets と Variables で管理します
-- Native 側の更新は端末認証付きの Cloudflare update endpoint 経由で配布されます
+- `cloud/` serves dashboard data, telemetry ingestion, update manifests, and device control endpoints.
+- `native/` renders the dashboard UI, hosts WebView2, and talks to the cloud endpoints.
 
-## Cloud 開発
+## Requirements
+
+- Cloud credentials and runtime configuration must be stored in Cloudflare or GitHub secrets/variables.
+- Native update checks expect a reachable Cloudflare update endpoint.
+
+## Cloud checks
 
 ```powershell
 cd cloud
@@ -22,11 +24,11 @@ npm run check
 npm test
 ```
 
-## Native 開発
+## Native build
 
 ```powershell
 cmake -S native -B native/build-ci -G "Visual Studio 17 2022" -A x64
 cmake --build native/build-ci --config Release --parallel
 ```
 
-Cloud 側の設定は [cloud/README.md](/C:/HomePanel/cloud/README.md) を参照してください。
+For cloud-specific deployment details, see [cloud/README.md](/C:/HomePanel/cloud/README.md).
