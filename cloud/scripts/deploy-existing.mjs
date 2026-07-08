@@ -15,6 +15,7 @@ const placeholderUpdateBucket = "replace-with-your-r2-bucket-name";
 const productionBranch = process.env.HOMEPANEL_PRODUCTION_BRANCH?.trim() || "main";
 const buildBranch = process.env.WORKERS_CI_BRANCH?.trim() || "";
 const previewBuild = process.env.WORKERS_CI === "1" && Boolean(buildBranch) && buildBranch !== productionBranch;
+const migrateLocal = process.argv.includes("--migrate-local");
 
 function cloudflareEnvironment() {
   const env = { ...process.env, CI: "true" };
@@ -100,8 +101,12 @@ function generatedPath(target) {
   return value.startsWith(".") ? value : `./${value}`;
 }
 
+function isDatabaseId(value) {
+  return typeof value === "string" && databaseIdPattern.test(value);
+}
+
 function isRealDatabaseId(value) {
-  return typeof value === "string" && databaseIdPattern.test(value) && value !== placeholderDatabaseId;
+  return isDatabaseId(value) && value !== placeholderDatabaseId;
 }
 
 function configuredWorkerName(baseConfig) {
@@ -119,6 +124,16 @@ function configuredDatabaseName(baseConfig) {
   throw new Error("Configure a D1 database name in wrangler.jsonc or HOMEPANEL_D1_DATABASE_NAME");
 }
 
+function configuredDatabaseId() {
+  return process.env.HOMEPANEL_D1_DATABASE_ID?.trim()
+    || process.env.D1_DATABASE_ID?.trim()
+    || "";
+}
+
+function declaredDatabaseId(baseConfig) {
+  return baseConfig.d1_databases?.find(entry => entry?.binding === "DB")?.database_id;
+}
+
 function configuredUpdateBucket(baseConfig) {
   const configured = process.env.HOMEPANEL_UPDATE_BUCKET?.trim();
   if (configured) return configured;
@@ -134,9 +149,28 @@ function databaseEntries(payload) {
   return payload && typeof payload === "object" ? [payload] : [];
 }
 
+function resolveLocalDatabaseId(baseConfig) {
+  const configured = configuredDatabaseId();
+  if (configured) {
+    if (!isDatabaseId(configured)) {
+      throw new Error("HOMEPANEL_D1_DATABASE_ID / D1_DATABASE_ID is not a valid D1 UUID");
+    }
+    console.log("Using D1 database ID supplied by the build environment for local migrations");
+    return configured;
+  }
+
+  const declared = declaredDatabaseId(baseConfig);
+  if (isDatabaseId(declared)) {
+    console.log("Using D1 database ID from wrangler.jsonc for local migrations");
+    return declared;
+  }
+
+  console.log("Using placeholder D1 database ID for local migrations; remote lookup skipped");
+  return placeholderDatabaseId;
+}
+
 function resolveDatabaseId(baseConfig, databaseName) {
-  const configured = process.env.HOMEPANEL_D1_DATABASE_ID?.trim()
-    || process.env.D1_DATABASE_ID?.trim();
+  const configured = configuredDatabaseId();
   if (configured) {
     if (!isRealDatabaseId(configured)) {
       throw new Error("HOMEPANEL_D1_DATABASE_ID / D1_DATABASE_ID is not a valid non-placeholder D1 UUID");
@@ -145,7 +179,7 @@ function resolveDatabaseId(baseConfig, databaseName) {
     return configured;
   }
 
-  const declared = baseConfig.d1_databases?.find(entry => entry?.binding === "DB")?.database_id;
+  const declared = declaredDatabaseId(baseConfig);
   if (isRealDatabaseId(declared)) {
     console.log("Using D1 database ID from wrangler.jsonc");
     return declared;
@@ -185,7 +219,9 @@ mkdirSync(generatedDir, { recursive: true });
 const config = parseJsonc(readFileSync(join(root, "wrangler.jsonc"), "utf8"), "wrangler.jsonc");
 const workerName = configuredWorkerName(config);
 const databaseName = configuredDatabaseName(config);
-const databaseId = resolveDatabaseId(config, databaseName);
+const databaseId = migrateLocal
+  ? resolveLocalDatabaseId(config)
+  : resolveDatabaseId(config, databaseName);
 const updateBucket = configuredUpdateBucket(config);
 config.name = workerName;
 config.keep_vars = true;
@@ -215,7 +251,7 @@ console.log(`Generated config paths: main=${config.main}, migrations=${config.d1
 console.log("Local .env files are ignored; runtime credentials remain in Cloudflare secrets");
 
 if (process.argv.includes("--prepare-only")) process.exit(0);
-if (process.argv.includes("--migrate-local")) {
+if (migrateLocal) {
   wrangler(["d1", "migrations", "apply", databaseName, "--local", "--config", generatedConfig]);
   process.exit(0);
 }
