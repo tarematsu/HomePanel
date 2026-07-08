@@ -31,7 +31,7 @@ class StationheadHandleBase {
  public:
   explicit operator bool() const noexcept { return static_cast<bool>(player_); }
   Derived* operator->() noexcept { return static_cast<Derived*>(this); }
-  const Derived* operator->() const noexcept { return static_cast<const Derived*>(this); }
+  const Derived* operator->() const { return static_cast<const Derived*>(this); }
 
   void Stop() { if (player_) player_->Stop(); }
 
@@ -59,6 +59,15 @@ class StationheadHandleBase {
     player_->SetVolume(audioVolume_);
   }
 
+  void BringMainWindowToFront(HWND host) const noexcept {
+    if (!host || !IsWindow(host)) return;
+    HWND root = GetAncestor(host, GA_ROOT);
+    if (!root || !IsWindow(root)) return;
+    SetWindowPos(root, HWND_TOP, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    UpdateWindow(root);
+  }
+
   void RaiseActiveHost() const {
     if (!player_) return;
     HWND host = player_->ActiveHostWindowForAccountSetup();
@@ -75,6 +84,7 @@ class StationheadHandleBase {
     const HWND placement = interactive ? HWND_TOP : HWND_BOTTOM;
     SetWindowPos(host, placement, workspaceBounds_.left, workspaceBounds_.top,
                  width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    BringMainWindowToFront(host);
   }
 
   void ApplyInteractiveBounds() {
