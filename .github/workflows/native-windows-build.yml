@@ -205,7 +205,7 @@ jobs:
           )
 
           foreach ($upload in $uploads) {
-            node $wrangler r2 object put "$bucket/$($upload.key)" --file $upload.file --content-type $upload.type
+            node $wrangler r2 object put "$bucket/$($upload.key)" --remote --file $upload.file --content-type $upload.type
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
