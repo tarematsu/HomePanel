@@ -21,7 +21,8 @@
           queuedState = event.data;
           return;
         }
-        renderRuntime(event.data);
+        if (event.data?.type === 'radar-updated') panels.radar?.refreshRadar();
+        else renderRuntime(event.data);
       });
     }
 
@@ -32,7 +33,8 @@
     panels.energy?.drawEnergyChart();
 
     initialized = true;
-    if (queuedState) renderRuntime(queuedState);
+    if (queuedState?.type === 'radar-updated') panels.radar?.refreshRadar();
+    else if (queuedState) renderRuntime(queuedState);
     window.chrome?.webview?.postMessage({ type: 'ready' });
 
     const updateClock = () => {
@@ -55,10 +57,6 @@
 
     updateClock();
     scheduleSecondPulse();
-    setInterval(() => {
-      if (!document.hidden) panels.radar?.refreshRadar();
-    }, panels.radar?.refreshMs || 5 * 60 * 1000);
-
     window.addEventListener('online', () => panels.radar?.refreshRadar());
     window.addEventListener('resize', () => {
       panels.energy?.drawEnergyChart();
@@ -68,7 +66,7 @@
       if (!document.hidden) {
         panels.clock?.updateClock();
         panels.energy?.drawEnergyChart();
-        panels.radar?.refreshRadar();
+        panels.radar?.presentRadar();
       }
     });
   }

@@ -93,6 +93,7 @@ void Renderer::ConfigureWebView() {
                 if (ready_) {
                   postedState_.clear();
                   PostFullState();
+                  if (radarUpdatePending_) NotifyRadarUpdated();
                 }
                 return S_OK;
               }

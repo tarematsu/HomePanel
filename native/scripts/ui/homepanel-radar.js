@@ -6,7 +6,6 @@
 
   const RADAR_WIDTH = 800;
   const RADAR_HEIGHT = 520;
-  const RADAR_REFRESH_MS = 5 * 60 * 1000;
   const RADAR_DATA_URL = 'https://data.homepanel/radar.json';
   const RADAR_BASE_SATELLITE_URL = 'radar-satellite.png';
   const RADAR_BASE_MAP_URL = 'radar-map.png';
@@ -182,5 +181,5 @@
   }
 
   root.panels = root.panels || {};
-  root.panels.radar = { refreshRadar, presentRadar, refreshMs: RADAR_REFRESH_MS };
+  root.panels.radar = { refreshRadar, presentRadar };
 })();

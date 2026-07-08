@@ -58,6 +58,7 @@ class Renderer {
   std::wstring MonitorHostHandle() const { return monitorHostHandle_; }
   void Render(const RECT& dirty, const RenderState& state);
   void UpdateState(const RenderState& state);
+  void NotifyRadarUpdated();
   UiAction HitTest(POINT point, float* seekFraction = nullptr);
   RECT ClockRect() const;
   RECT SensorRect() const;
@@ -147,6 +148,7 @@ class Renderer {
   bool statePublishedForPendingPaint_ = false;
   bool controllerVisible_ = false;
   bool controllerBoundsValid_ = false;
+  bool radarUpdatePending_ = false;
   RECT appliedControllerBounds_{};
   std::string dashboardUtf8_;
   std::wstring dashboardJson_ = L"{}";

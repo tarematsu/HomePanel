@@ -15,4 +15,11 @@ void Renderer::Render(const RECT& dirty, const RenderState& state) {
   }
   FlushNativePlaybackMessages();
 }
+
+void Renderer::NotifyRadarUpdated() {
+  radarUpdatePending_ = true;
+  if (!ready_ || !uiReady_ || !webview_) return;
+  webview_->PostWebMessageAsJson(L"{\"type\":\"radar-updated\"}");
+  radarUpdatePending_ = false;
+}
 }  // namespace hp

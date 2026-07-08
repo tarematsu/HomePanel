@@ -29,7 +29,6 @@ inline std::wstring StationheadVolumeScript(int percent) {
          << L"window.__homepanelStationheadVolumeObserver.observe(document,{childList:true,subtree:true});"
          << L"document.addEventListener('play',event=>apply(event.target),true);"
          << L"document.addEventListener('loadedmetadata',event=>apply(event.target),true);"
-         << L"window.__homepanelStationheadVolumeTimer=setInterval(window.__homepanelStationheadVolumeApply,5000);"
          << L"} return true; })()";
   return script.str();
 }
@@ -119,9 +118,12 @@ inline void ApplyStationheadResourceBlocking(ICoreWebView2Environment* environme
                                               std::atomic<bool>& armed,
                                               EventRegistrationToken& token) {
   if (!environment || !webview) return;
-  // One filter across every context so the handler can see analytics/social
-  // requests (any context) as well as image/font subresources.
-  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE);
+  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT);
+  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT);
+  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_XML_HTTP_REQUEST);
+  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FETCH);
+  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_PING);
   const bool blockImages = config.blockImagesAfterPlayback;
   const bool blockFonts = config.blockFontsAfterPlayback;
   ComPtr<ICoreWebView2Environment> env = environment;
