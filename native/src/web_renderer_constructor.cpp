@@ -12,7 +12,7 @@ void PrepareParentWindow(HWND window) {
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
   }
 }
-}
+}  // namespace
 
 Renderer::Renderer(HWND window, int width, int height, RadarManager& radar)
     : window_(window), width_(width), height_(height), radar_(radar) {
@@ -40,34 +40,71 @@ void Renderer::Initialize() {
   CreateWebView();
 }
 
+bool Renderer::EnsureDashboardHostWindow() {
+  if (dashboardHost_ && IsWindow(dashboardHost_)) return true;
+  if (!window_ || !IsWindow(window_)) return false;
+  static constexpr wchar_t kDashboardHostClassName[] = L"HomePanelDashboardHost";
+  static std::once_flag classOnce;
+  std::call_once(classOnce, [] {
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = DefWindowProcW;
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = kDashboardHostClassName;
+    windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    RegisterClassW(&windowClass);
+  });
+  const int width = std::max(1L, bounds_.right - bounds_.left);
+  const int height = std::max(1L, bounds_.bottom - bounds_.top);
+  dashboardHost_ = CreateWindowExW(0, kDashboardHostClassName, L"HomePanelDashboardHost",
+      WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+      bounds_.left, bounds_.top, width, height, window_, nullptr,
+      GetModuleHandleW(nullptr), nullptr);
+  if (!dashboardHost_ || !IsWindow(dashboardHost_)) return false;
+  ApplyDashboardHostBounds();
+  return true;
+}
+
+void Renderer::ApplyDashboardHostBounds() {
+  const int width = std::max(1L, bounds_.right - bounds_.left);
+  const int height = std::max(1L, bounds_.bottom - bounds_.top);
+  if (dashboardHost_ && IsWindow(dashboardHost_)) {
+    SetWindowPos(dashboardHost_, HWND_TOP, bounds_.left, bounds_.top, width, height,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+  }
+  const RECT controllerBounds{0, 0, width, height};
+  if (controller_ && (!controllerBoundsValid_ || !EqualRect(&appliedControllerBounds_, &controllerBounds))) {
+    if (SUCCEEDED(controller_->put_Bounds(controllerBounds))) {
+      appliedControllerBounds_ = controllerBounds;
+      controllerBoundsValid_ = true;
+    }
+  }
+}
+
+void Renderer::DestroyDashboardHostWindow() {
+  if (dashboardHost_ && IsWindow(dashboardHost_)) DestroyWindow(dashboardHost_);
+  dashboardHost_ = nullptr;
+}
+
 void Renderer::Resize(int width, int height) {
   width_ = std::max(1, width);
   height_ = std::max(1, height);
   bounds_.right = std::max(bounds_.left + 1L, bounds_.left + width_);
   bounds_.bottom = std::max(bounds_.top + 1L, bounds_.top + height_);
-
-  if (controller_ && (!controllerBoundsValid_ || !EqualRect(&appliedControllerBounds_, &bounds_))) {
-    if (SUCCEEDED(controller_->put_Bounds(bounds_))) {
-      appliedControllerBounds_ = bounds_;
-      controllerBoundsValid_ = true;
-    }
-  }
+  ApplyDashboardHostBounds();
 }
 
 void Renderer::SetBounds(const RECT& bounds) {
   bounds_ = bounds;
   width_ = std::max(1L, bounds.right - bounds.left);
   height_ = std::max(1L, bounds.bottom - bounds.top);
-
-  if (controller_ && (!controllerBoundsValid_ || !EqualRect(&appliedControllerBounds_, &bounds_))) {
-    if (SUCCEEDED(controller_->put_Bounds(bounds_))) {
-      appliedControllerBounds_ = bounds_;
-      controllerBoundsValid_ = true;
-    }
-  }
+  ApplyDashboardHostBounds();
 }
 
 void Renderer::SetVisible(bool visible) {
+  if (dashboardHost_ && IsWindow(dashboardHost_)) {
+    if (visible) ApplyDashboardHostBounds();
+    else ShowWindow(dashboardHost_, SW_HIDE);
+  }
   if (!controller_ || controllerVisible_ == visible) return;
   if (SUCCEEDED(controller_->put_IsVisible(visible ? TRUE : FALSE))) {
     controllerVisible_ = visible;
