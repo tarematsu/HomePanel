@@ -30,10 +30,6 @@ struct Arguments {
   std::wstring expectedVersion;
 };
 
-std::wstring Quote(const fs::path& path) {
-  return L"\"" + path.wstring() + L"\"";
-}
-
 std::wstring InstalledFileVersion(const fs::path& executable) {
   DWORD handle = 0;
   const DWORD size = GetFileVersionInfoSizeW(executable.c_str(), &handle);
@@ -153,7 +149,7 @@ void ReplaceOne(const fs::path& source, const fs::path& target) {
 
 void RestartHomePanel(const fs::path& root) {
   const fs::path executable = root / L"HomePanel.exe";
-  std::wstring command = Quote(executable);
+  std::wstring command = QuotePath(executable);
   std::vector<wchar_t> buffer(command.begin(), command.end());
   buffer.push_back(L'\0');
   STARTUPINFOW startup{sizeof(startup)};
@@ -253,9 +249,9 @@ bool LaunchRunner(const fs::path& root, const fs::path& manifest, const std::wst
   fs::create_directories(runnerDirectory, ignored);
   if (ignored || !CopyFileW(installedUpdater.c_str(), runner.c_str(), FALSE)) return false;
 
-  std::wstring command = Quote(runner) + L" --pid " + std::to_wstring(GetCurrentProcessId());
+  std::wstring command = QuotePath(runner) + L" --pid " + std::to_wstring(GetCurrentProcessId());
   if (appPid) command += L" --app-pid " + std::to_wstring(appPid);
-  command += L" --root " + Quote(root) + L" --manifest " + Quote(manifest) + L" --version " + version;
+  command += L" --root " + QuotePath(root) + L" --manifest " + QuotePath(manifest) + L" --version " + version;
   std::vector<wchar_t> buffer(command.begin(), command.end());
   buffer.push_back(L'\0');
   STARTUPINFOW startup{sizeof(startup)};

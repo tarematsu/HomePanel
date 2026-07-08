@@ -1,7 +1,7 @@
 // Part of app.cpp's translation unit (see the #include at the end of that
 // file). Self-update: async manifest check and launching the verified,
-// signature/hash-checked HomePanelUpdater. Uses the InstalledHomePanelVersion /
-// Quote helpers from app.cpp.
+// signature/hash-checked HomePanelUpdater. Uses the InstalledHomePanelVersion
+// helper from app.cpp plus shared quoting helpers from common.h.
 #include "app.h"
 
 namespace hp {
@@ -93,8 +93,8 @@ bool App::LaunchVerifiedUpdater(const std::wstring& version, const std::string& 
     return false;
   }
 
-  std::wstring command = Quote(runner) + L" --pid " + std::to_wstring(GetCurrentProcessId()) +
-      L" --root " + Quote(rootDir_) + L" --manifest " + Quote(pending) + L" --version " + version;
+  std::wstring command = QuotePath(runner) + L" --pid " + std::to_wstring(GetCurrentProcessId()) +
+      L" --root " + QuotePath(rootDir_) + L" --manifest " + QuotePath(pending) + L" --version " + version;
   std::vector<wchar_t> buffer(command.begin(), command.end());
   buffer.push_back(L'\0');
   STARTUPINFOW startup{sizeof(startup)};

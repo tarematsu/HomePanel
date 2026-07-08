@@ -1,22 +1,7 @@
 #include "web_renderer.h"
 
 namespace hp::statejson {
-namespace {
-std::wstring Quote(const std::wstring& value) {
-  std::wstring output = L"\"";
-  for (wchar_t c : value) {
-    if (c == L'\\' || c == L'\"') output.push_back(L'\\');
-    if (c == L'\n') output += L"\\n";
-    else if (c != L'\r') output.push_back(c);
-  }
-  return output + L"\"";
-}
-}
-
 std::wstring Player(const StationheadStatus& value) {
-  auto quote = [](const std::wstring& text) {
-    return Quote(text);
-  };
   std::wostringstream json;
   json << L"{\"created\":" << (value.created ? L"true" : L"false")
        << L",\"navigating\":" << (value.navigating ? L"true" : L"false")
@@ -34,12 +19,12 @@ std::wstring Player(const StationheadStatus& value) {
        << L",\"sampledAt\":" << value.sampledAt
        << L",\"expectedEndAt\":" << value.expectedEndAt
        << L",\"trackDurationMs\":" << value.trackDurationMs
-       << L",\"detail\":" << Quote(value.detail)
-       << L",\"trackTitle\":" << quote(value.trackTitle)
-       << L",\"trackArtist\":" << quote(value.trackArtist)
-       << L",\"deviceName\":" << quote(value.deviceName)
-       << L",\"artworkUrl\":" << quote(value.artworkUrl)
-       << L",\"url\":" << Quote(value.url) << L"}";
+       << L",\"detail\":" << JsonQuote(value.detail)
+       << L",\"trackTitle\":" << JsonQuote(value.trackTitle)
+       << L",\"trackArtist\":" << JsonQuote(value.trackArtist)
+       << L",\"deviceName\":" << JsonQuote(value.deviceName)
+       << L",\"artworkUrl\":" << JsonQuote(value.artworkUrl)
+       << L",\"url\":" << JsonQuote(value.url) << L"}";
   return json.str();
 }
 }  // namespace hp::statejson

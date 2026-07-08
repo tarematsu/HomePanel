@@ -16,8 +16,6 @@ constexpr uint32_t kFastTickMs = 1000;
 constexpr uint32_t kIdleTickMs = 5000;
 constexpr uint32_t kMaxIdleTickMs = 30'000;
 
-std::wstring Quote(const fs::path& path) { return L"\"" + path.wstring() + L"\""; }
-
 std::wstring InstalledHomePanelVersion(const fs::path& executable) {
   DWORD handle = 0;
   const DWORD size = GetFileVersionInfoSizeW(executable.c_str(), &handle);
@@ -469,7 +467,7 @@ void App::HandleAction(UiAction action, float seekFraction) {
       ClearDisplayCache();
       break;
     case UiAction::ShowLog:
-      ShellExecuteW(window_, L"open", L"notepad.exe", Quote(dataDir_ / L"homepanel.log").c_str(),
+      ShellExecuteW(window_, L"open", L"notepad.exe", QuotePath(dataDir_ / L"homepanel.log").c_str(),
                     rootDir_.c_str(), SW_SHOWNORMAL);
       break;
     case UiAction::CloseMaintenance:

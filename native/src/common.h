@@ -99,6 +99,26 @@ inline std::string WideToUtf8(const std::wstring& value) {
   WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), output.data(), size, nullptr, nullptr);
   return output;
 }
+inline std::wstring QuotePath(const fs::path& path) {
+  return L"\"" + path.wstring() + L"\"";
+}
+inline std::wstring JsonQuote(const std::wstring& value) {
+  std::wstring output = L"\"";
+  for (wchar_t c : value) {
+    switch (c) {
+      case L'\\': output += L"\\\\"; break;
+      case L'\"': output += L"\\\""; break;
+      case L'\n': output += L"\\n"; break;
+      case L'\r': break;
+      case L'\t': output += L"\\t"; break;
+      default:
+        if (c >= 0x20) output.push_back(c);
+        break;
+    }
+  }
+  output.push_back(L'\"');
+  return output;
+}
 inline int64_t UnixMillis() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }

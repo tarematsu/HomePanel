@@ -26,24 +26,6 @@ struct NativeHttpHandle {
   operator HINTERNET() const noexcept { return value; }
 };
 
-std::wstring JsonQuote(const std::wstring& value) {
-  std::wstring output = L"\"";
-  for (wchar_t c : value) {
-    switch (c) {
-      case L'\\': output += L"\\\\"; break;
-      case L'\"': output += L"\\\""; break;
-      case L'\n': output += L"\\n"; break;
-      case L'\r': break;
-      case L'\t': output += L"\\t"; break;
-      default:
-        if (c >= 0x20) output.push_back(c);
-        break;
-    }
-  }
-  output.push_back(L'\"');
-  return output;
-}
-
 std::wstring ShortError(const std::string& value) {
   std::wstring output = Utf8ToWide(value);
   if (output.size() > 160) output.resize(160);

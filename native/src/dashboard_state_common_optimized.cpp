@@ -21,17 +21,6 @@ constexpr uint32_t kAllScalars = kWorkspaceScalar | kNewsIndexScalar | kToastSca
                                  kAppVersionScalar;
 constexpr uint32_t kAllStateFields = kAllSlices | kAllScalars;
 
-std::wstring Quote(const std::wstring& value) {
-  std::wstring output = L"\"";
-  for (wchar_t c : value) {
-    if (c == L'\\' || c == L'\"') output.push_back(L'\\');
-    if (c == L'\n') output += L"\\n";
-    else if (c != L'\r') output.push_back(c);
-  }
-  output.push_back(L'\"');
-  return output;
-}
-
 bool SameSensors(const SensorSnapshot& left, const SensorSnapshot& right) {
   return left.co2Connected == right.co2Connected &&
          left.co2 == right.co2 &&
@@ -118,8 +107,8 @@ std::wstring Renderer::BuildCachedStateJson(uint32_t changedFields, bool full) c
 
   if (include(kWorkspaceScalar)) json << L",\"workspaceTab\":" << stateJsonCache_.workspaceTab;
   if (include(kNewsIndexScalar)) json << L",\"newsIndex\":" << stateJsonCache_.newsIndex;
-  if (include(kToastScalar)) json << L",\"toast\":" << Quote(stateJsonCache_.toast);
-  if (include(kAppVersionScalar)) json << L",\"appVersion\":" << Quote(stateJsonCache_.appVersion);
+  if (include(kToastScalar)) json << L",\"toast\":" << JsonQuote(stateJsonCache_.toast);
+  if (include(kAppVersionScalar)) json << L",\"appVersion\":" << JsonQuote(stateJsonCache_.appVersion);
   if (include(kDashboardSlice)) json << L",\"dashboard\":" << stateJsonCache_.dashboard;
   if (include(kSpotifySlice)) json << L",\"spotify\":" << stateJsonCache_.spotify;
   if (include(kAirHistorySlice)) json << L",\"airHistory\":" << stateJsonCache_.airHistory;
