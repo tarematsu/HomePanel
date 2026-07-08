@@ -3,10 +3,6 @@
 
 namespace hp {
 namespace {
-constexpr UINT_PTR kClockTimerId = 1;
-constexpr UINT kClockTimerMs = 1000;
-constexpr UINT_PTR kPlaybackTimerId = 2;
-constexpr UINT kPlaybackTimerMs = 1000;
 constexpr int kNativeAirId = 101;
 constexpr int kNativeAirHistoryId = 102;
 constexpr int kNativeControlsId = 103;
@@ -156,6 +152,68 @@ double RangeMax(const std::vector<double>& values, double fallback) {
   return values.empty() ? fallback : *std::max_element(values.begin(), values.end());
 }
 
+bool SameSensorSnapshot(const SensorSnapshot& left, const SensorSnapshot& right) {
+  return left.co2Connected == right.co2Connected &&
+         left.co2 == right.co2 &&
+         left.temperatureRaw == right.temperatureRaw &&
+         left.humidityRaw == right.humidityRaw &&
+         left.temperatureCorrected == right.temperatureCorrected &&
+         left.humidityCorrected == right.humidityCorrected &&
+         left.observedAt == right.observedAt &&
+         left.presence == right.presence &&
+         left.light == right.light &&
+         left.motion == right.motion &&
+         left.doorOpen == right.doorOpen &&
+         left.outboxCount == right.outboxCount &&
+         left.lastError == right.lastError;
+}
+
+bool SameAirHistory(const std::vector<AirHistorySample>& left,
+                    const std::vector<AirHistorySample>& right) {
+  if (left.size() != right.size()) return false;
+  for (size_t index = 0; index < left.size(); ++index) {
+    const AirHistorySample& a = left[index];
+    const AirHistorySample& b = right[index];
+    if (a.timestamp != b.timestamp || a.co2 != b.co2 ||
+        a.temperature != b.temperature || a.humidity != b.humidity) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool SameNativeStationhead(const StationheadStatus& left, const StationheadStatus& right) {
+  return left.created == right.created &&
+         left.navigating == right.navigating &&
+         left.playing == right.playing &&
+         left.loginRequired == right.loginRequired &&
+         left.spotifyAuthorization == right.spotifyAuthorization &&
+         left.apiAuthorization == right.apiAuthorization &&
+         left.lightweight == right.lightweight &&
+         left.visible == right.visible &&
+         left.processFailed == right.processFailed &&
+         left.spotifyConfigured == right.spotifyConfigured &&
+         left.authAvailable == right.authAvailable &&
+         left.audioPlaying == right.audioPlaying &&
+         left.audioSilent == right.audioSilent &&
+         left.audioMuted == right.audioMuted &&
+         left.secondaryAudioMuted == right.secondaryAudioMuted &&
+         left.healthMisses == right.healthMisses &&
+         left.lastPlaybackConfirmedAt == right.lastPlaybackConfirmedAt &&
+         left.processWorkingSet == right.processWorkingSet &&
+         left.processCpuPercent == right.processCpuPercent &&
+         left.blockedResources == right.blockedResources &&
+         left.url == right.url &&
+         left.detail == right.detail &&
+         left.trackTitle == right.trackTitle &&
+         left.trackArtist == right.trackArtist &&
+         left.deviceName == right.deviceName &&
+         left.artworkUrl == right.artworkUrl &&
+         left.sampledAt == right.sampledAt &&
+         left.expectedEndAt == right.expectedEndAt &&
+         left.trackDurationMs == right.trackDurationMs;
+}
+
 void DrawHistoryLine(HDC dc, const std::vector<AirHistorySample>& samples, const RECT& plot,
                      int64_t cutoff, int64_t spanMs, double minValue, double maxValue,
                      COLORREF color, int width,
@@ -205,7 +263,6 @@ bool Renderer::EnsureNativeClockWindow() {
       std::max(1L, rect.bottom - rect.top), window_, nullptr,
       GetModuleHandleW(nullptr), this);
   if (!nativeClockWindow_ || !IsWindow(nativeClockWindow_)) return false;
-  SetTimer(nativeClockWindow_, kClockTimerId, kClockTimerMs, nullptr);
   ApplyNativeClockBounds();
   return true;
 }
@@ -286,9 +343,6 @@ bool Renderer::EnsureNativeStaticWindows() {
         std::max(1L, rect.bottom - rect.top), window_,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kNativeStationheadId)),
         GetModuleHandleW(nullptr), this);
-    if (nativeStationheadWindow_ && IsWindow(nativeStationheadWindow_)) {
-      SetTimer(nativeStationheadWindow_, kPlaybackTimerId, kPlaybackTimerMs, nullptr);
-    }
   }
   if (!nativeRadarWindow_ || !IsWindow(nativeRadarWindow_)) {
     const RECT rect = NativeRadarRectFromBounds(bounds_);
@@ -348,14 +402,14 @@ void Renderer::DestroyNativeStaticWindows() {
   if (nativeWeatherWindow_ && IsWindow(nativeWeatherWindow_)) DestroyWindow(nativeWeatherWindow_);
   if (nativeEnergyWindow_ && IsWindow(nativeEnergyWindow_)) DestroyWindow(nativeEnergyWindow_);
   if (nativeStationheadWindow_ && IsWindow(nativeStationheadWindow_)) {
-    KillTimer(nativeStationheadWindow_, kPlaybackTimerId);
     DestroyWindow(nativeStationheadWindow_);
   }
   if (nativeRadarWindow_ && IsWindow(nativeRadarWindow_)) DestroyWindow(nativeRadarWindow_);
-  for (auto& [key, bitmap] : nativeArtworkBitmaps_) {
-    if (bitmap) DeleteObject(bitmap);
+  for (auto& [key, entry] : nativeArtworkBitmaps_) {
+    if (entry.bitmap) DeleteObject(entry.bitmap);
   }
   nativeArtworkBitmaps_.clear();
+  nativeArtworkUseCounter_ = 0;
   {
     std::lock_guard lock(radarFrameMutex_);
     if (radarFrameBitmap_) DeleteObject(radarFrameBitmap_);
@@ -372,21 +426,41 @@ void Renderer::DestroyNativeStaticWindows() {
 }
 
 void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
+  const bool sensorsChanged = !SameSensorSnapshot(nativeSensors_, state.sensors);
+  const bool historyChanged = !SameAirHistory(nativeAirHistory_, state.airHistory);
+  const bool stationheadChanged = !SameNativeStationhead(nativeStationhead_, state.stationhead);
+  const bool controlsChanged = nativeAppVersion_ != state.appVersion || nativeToast_ != state.toast;
+  const bool newsChanged = nativeNewsIndex_ != state.newsIndex;
+  const bool dashboardChanged = nativeRenderedDashboardRevision_ != dashboardSourceRevision_;
+
   nativeSensors_ = state.sensors;
   nativeAirHistory_ = state.airHistory;
   nativeStationhead_ = state.stationhead;
   nativeAppVersion_ = state.appVersion;
   nativeToast_ = state.toast;
   nativeNewsIndex_ = state.newsIndex;
+  nativeRenderedDashboardRevision_ = dashboardSourceRevision_;
   if (!EnsureNativeStaticWindows()) return;
-  InvalidateRect(nativeAirWindow_, nullptr, FALSE);
-  InvalidateRect(nativeAirHistoryWindow_, nullptr, FALSE);
-  InvalidateRect(nativeControlsWindow_, nullptr, FALSE);
-  InvalidateRect(nativeNewsWindow_, nullptr, FALSE);
-  InvalidateRect(nativeWeatherWindow_, nullptr, FALSE);
-  InvalidateRect(nativeEnergyWindow_, nullptr, FALSE);
-  InvalidateRect(nativeStationheadWindow_, nullptr, FALSE);
-  InvalidateRect(nativeRadarWindow_, nullptr, FALSE);
+  if (sensorsChanged) InvalidateRect(nativeAirWindow_, nullptr, FALSE);
+  if (sensorsChanged || historyChanged) InvalidateRect(nativeAirHistoryWindow_, nullptr, FALSE);
+  if (controlsChanged) InvalidateRect(nativeControlsWindow_, nullptr, FALSE);
+  if (dashboardChanged || newsChanged) InvalidateRect(nativeNewsWindow_, nullptr, FALSE);
+  if (dashboardChanged) {
+    InvalidateRect(nativeWeatherWindow_, nullptr, FALSE);
+    InvalidateRect(nativeEnergyWindow_, nullptr, FALSE);
+  }
+  if (stationheadChanged) InvalidateRect(nativeStationheadWindow_, nullptr, FALSE);
+}
+
+void Renderer::TickNativePanels(int64_t nowMs) {
+  if (!nativeDashboardVisible_) return;
+  if (nativeClockWindow_ && IsWindow(nativeClockWindow_) && IsWindowVisible(nativeClockWindow_)) {
+    InvalidateRect(nativeClockWindow_, nullptr, FALSE);
+  }
+  if (nativeStationheadWindow_ && IsWindow(nativeStationheadWindow_) &&
+      IsWindowVisible(nativeStationheadWindow_) && NativePlaybackActive(nowMs)) {
+    InvalidateRect(nativeStationheadWindow_, nullptr, FALSE);
+  }
 }
 
 void Renderer::ApplyNativeClockBounds() {
@@ -398,7 +472,6 @@ void Renderer::ApplyNativeClockBounds() {
 
 void Renderer::DestroyNativeClockWindow() {
   if (nativeClockWindow_ && IsWindow(nativeClockWindow_)) {
-    KillTimer(nativeClockWindow_, kClockTimerId);
     DestroyWindow(nativeClockWindow_);
   }
   nativeClockWindow_ = nullptr;
@@ -430,17 +503,10 @@ LRESULT Renderer::HandleNativeClockMessage(HWND hwnd, UINT message, WPARAM wpara
   switch (message) {
     case WM_ERASEBKGND:
       return 1;
-    case WM_TIMER:
-      if (wparam == kClockTimerId) {
-        InvalidateRect(hwnd, nullptr, FALSE);
-        return 0;
-      }
-      break;
     case WM_PAINT:
       PaintNativeClock(hwnd);
       return 0;
     case WM_NCDESTROY:
-      KillTimer(hwnd, kClockTimerId);
       if (nativeClockWindow_ == hwnd) nativeClockWindow_ = nullptr;
       SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
       break;
@@ -472,14 +538,6 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
         return 0;
       }
       break;
-    case WM_TIMER:
-      if (wparam == kPlaybackTimerId) {
-        if (GetDlgCtrlID(hwnd) == kNativeStationheadId && NativePlaybackActive(UnixMillis())) {
-          InvalidateRect(hwnd, nullptr, FALSE);
-        }
-        return 0;
-      }
-      break;
     case WM_PAINT:
       if (GetDlgCtrlID(hwnd) == kNativeAirId) PaintNativeAir(hwnd);
       else if (GetDlgCtrlID(hwnd) == kNativeAirHistoryId) PaintNativeAirHistory(hwnd);
@@ -491,7 +549,6 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
       else PaintNativeStationhead(hwnd);
       return 0;
     case WM_NCDESTROY:
-      if (nativeStationheadWindow_ == hwnd) KillTimer(hwnd, kPlaybackTimerId);
       if (nativeAirWindow_ == hwnd) nativeAirWindow_ = nullptr;
       if (nativeAirHistoryWindow_ == hwnd) nativeAirHistoryWindow_ = nullptr;
       if (nativeControlsWindow_ == hwnd) nativeControlsWindow_ = nullptr;
@@ -1254,8 +1311,11 @@ HBITMAP Renderer::NativeArtworkBitmap(const std::wstring& url, int width, int he
   std::wostringstream keyStream;
   keyStream << url << L'#' << width << L'x' << height;
   const std::wstring key = keyStream.str();
-  const auto found = nativeArtworkBitmaps_.find(key);
-  if (found != nativeArtworkBitmaps_.end()) return found->second;
+  auto found = nativeArtworkBitmaps_.find(key);
+  if (found != nativeArtworkBitmaps_.end()) {
+    found->second.lastUsed = ++nativeArtworkUseCounter_;
+    return found->second.bitmap;
+  }
 
   std::wstring relative = url.substr(std::size(kDataHostPrefix) - 1);
   if (relative.empty() || relative.find(L"..") != std::wstring::npos) return nullptr;
@@ -1266,12 +1326,14 @@ HBITMAP Renderer::NativeArtworkBitmap(const std::wstring& url, int width, int he
   HBITMAP bitmap = DecodeImageFileToBitmap(dataDir_ / relative, width, height);
   if (!bitmap) return nullptr;
   if (nativeArtworkBitmaps_.size() >= 48) {
-    for (auto& [cachedKey, cachedBitmap] : nativeArtworkBitmaps_) {
-      if (cachedBitmap) DeleteObject(cachedBitmap);
+    auto oldest = nativeArtworkBitmaps_.begin();
+    for (auto item = nativeArtworkBitmaps_.begin(); item != nativeArtworkBitmaps_.end(); ++item) {
+      if (item->second.lastUsed < oldest->second.lastUsed) oldest = item;
     }
-    nativeArtworkBitmaps_.clear();
+    if (oldest->second.bitmap) DeleteObject(oldest->second.bitmap);
+    nativeArtworkBitmaps_.erase(oldest);
   }
-  nativeArtworkBitmaps_[key] = bitmap;
+  nativeArtworkBitmaps_[key] = ArtworkBitmapCacheEntry{bitmap, ++nativeArtworkUseCounter_};
   return bitmap;
 }
 }  // namespace hp

@@ -154,6 +154,7 @@ class Renderer {
   std::wstring MonitorHostHandle() const { return monitorHostHandle_; }
   void Render(const RECT& dirty, const RenderState& state);
   void UpdateState(const RenderState& state);
+  void TickNativePanels(int64_t nowMs);
   void NotifyRadarUpdated();
   UiAction HitTest(POINT point, float* seekFraction = nullptr);
   RECT ClockRect() const;
@@ -170,6 +171,10 @@ class Renderer {
     int64_t fetchedAt = 0;
     uint64_t revision = 0;
     bool hasPayload = false;
+  };
+  struct ArtworkBitmapCacheEntry {
+    HBITMAP bitmap = nullptr;
+    uint64_t lastUsed = 0;
   };
 
   bool EnsureNativeClockWindow();
@@ -224,6 +229,7 @@ class Renderer {
   std::wstring nativeAppVersion_;
   std::wstring nativeToast_;
   int nativeNewsIndex_ = 0;
+  uint64_t nativeRenderedDashboardRevision_ = 0;
   int width_ = 0;
   int height_ = 0;
   RECT bounds_{};
@@ -250,7 +256,8 @@ class Renderer {
   std::mutex nativePlaybackWakeMutex_;
   mutable std::mutex nativePlaybackMutex_;
   std::array<NativePlaybackUpdate, 2> nativePlaybackUpdates_{};
-  std::map<std::wstring, HBITMAP> nativeArtworkBitmaps_;
+  std::map<std::wstring, ArtworkBitmapCacheEntry> nativeArtworkBitmaps_;
+  uint64_t nativeArtworkUseCounter_ = 0;
   std::atomic<uint64_t> nativePlaybackRevision_{0};
   std::atomic<bool> nativePlaybackStarted_{false};
   std::atomic<bool> nativePlaybackStopping_{false};

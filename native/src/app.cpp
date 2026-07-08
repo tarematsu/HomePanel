@@ -315,8 +315,10 @@ void App::Tick() {
     MarkRenderStateDirty();
     InvalidateAll();
   }
+  if (rendererStarted_) renderer_->TickNativePanels(now);
   uint32_t nextTickMs = kMaxIdleTickMs;
-  if (!rendererStarted_ || renderState_.maintenance || StationheadNeedsForeground(renderState_.stationhead)) {
+  if (!rendererStarted_ || selectedTab_ == WorkspaceTab::Main ||
+      renderState_.maintenance || StationheadNeedsForeground(renderState_.stationhead)) {
     nextTickMs = kFastTickMs;
   } else {
     nextTickMs = std::min(nextTickMs, NextDelayFromDeadline(now, stationhead_->NextWakeAt(), kMaxIdleTickMs));
