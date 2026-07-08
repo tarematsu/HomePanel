@@ -39,6 +39,13 @@
 - Reapply the oversized bounds after controller creation, navigation recovery and Stationhead reconnect.
 - The purpose is to keep vertically distant Stationhead controls/content instantiated without showing the full browser surface.
 
+## Native dashboard migration
+
+- Migrate static dashboard panels incrementally before replacing the full dashboard WebView.
+- The clock/date surface is native-owned and drawn in a sibling child window above the dashboard WebView.
+- Keep the browser-side second pulse only for panels that still need local interpolation, such as Spotify progress.
+- Do not reintroduce browser-side clock DOM updates once a static surface has moved to native rendering.
+
 ## Radar
 
 - Remove previous, play/pause, next and seek controls.

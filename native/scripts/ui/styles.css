@@ -320,6 +320,7 @@ button:disabled { opacity: .38; cursor: default; }
   justify-content: center;
   min-height: 0;
   gap: 4px;
+  visibility: hidden;
 }
 .date {
   color: #eef5ff;

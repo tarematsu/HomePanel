@@ -29,10 +29,12 @@ Renderer::~Renderer() {
   shuttingDown_ = true;
   StopNativePlaybackBridge();
   CloseWebView();
+  DestroyNativeClockWindow();
 }
 
 void Renderer::Initialize() {
   PrepareParentWindow(window_);
+  EnsureNativeClockWindow();
   StartNativePlaybackBridge();
   CreateWebView();
 }
@@ -69,6 +71,7 @@ void Renderer::ApplyDashboardHostBounds() {
     if (controllerVisible_) flags |= SWP_SHOWWINDOW;
     SetWindowPos(dashboardHost_, HWND_TOP, bounds_.left, bounds_.top, width, height, flags);
   }
+  ApplyNativeClockBounds();
   const RECT controllerBounds{0, 0, width, height};
   if (controller_ && (!controllerBoundsValid_ || !EqualRect(&appliedControllerBounds_, &controllerBounds))) {
     if (SUCCEEDED(controller_->put_Bounds(controllerBounds))) {
@@ -107,6 +110,10 @@ void Renderer::SetVisible(bool visible) {
   if (dashboardHost_ && IsWindow(dashboardHost_)) {
     if (visible) ApplyDashboardHostBounds();
     else ShowWindow(dashboardHost_, SW_HIDE);
+  }
+  if (nativeClockWindow_ && IsWindow(nativeClockWindow_)) {
+    ShowWindow(nativeClockWindow_, visible ? SW_SHOWNA : SW_HIDE);
+    if (visible) ApplyNativeClockBounds();
   }
 }
 
