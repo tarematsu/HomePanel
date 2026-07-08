@@ -420,11 +420,66 @@ void SaveNativePlaybackSnapshot(const fs::path& dataDir, const wchar_t* source,
   AtomicWriteText(dataDir / (std::wstring(L"native-playback-") + source + L".json"),
                   WideToUtf8(json.str()));
 }
+
+struct NativePlaybackSnapshot {
+  std::wstring source;
+  std::wstring payload;
+  std::wstring resolved;
+  std::wstring error;
+  int64_t fetchedAt = 0;
+  bool hasPayload = false;
+};
+
+bool LoadNativePlaybackSnapshot(const fs::path& dataDir, const wchar_t* source,
+                                NativePlaybackSnapshot* snapshot) {
+  if (!source || !*source || !snapshot) return false;
+  try {
+    std::ifstream input(
+        dataDir / (std::wstring(L"native-playback-") + source + L".json"),
+        std::ios::binary);
+    if (!input) return false;
+    const std::string text((std::istreambuf_iterator<char>(input)), {});
+    if (text.empty()) return false;
+    const JsonObject root = JsonObject::Parse(Utf8ToWide(text));
+    const std::wstring payload = StringValue(root, L"payload");
+    const std::wstring error = StringValue(root, L"error");
+    const int64_t fetchedAt = static_cast<int64_t>(std::max(
+        0.0, NumberValue(root, L"fetchedAt")));
+    snapshot->source = source;
+    snapshot->payload = payload;
+    snapshot->error = error;
+    snapshot->fetchedAt = fetchedAt;
+    snapshot->resolved =
+        payload.empty() ? L"{}" : ResolvePlaybackPayload(dataDir, payload, fetchedAt);
+    snapshot->hasPayload = error.empty() && !payload.empty();
+    return snapshot->hasPayload || !error.empty();
+  } catch (...) {
+    return false;
+  }
+}
 }  // namespace
 
 void Renderer::StartNativePlaybackBridge() {
   if (nativePlaybackStarted_.exchange(true, std::memory_order_acq_rel)) return;
   nativePlaybackStopping_ = false;
+  {
+    std::lock_guard lock(nativePlaybackMutex_);
+    for (size_t index = 0; index < std::size(kPlaybackEndpoints); ++index) {
+      NativePlaybackSnapshot loaded;
+      if (!LoadNativePlaybackSnapshot(
+              dataDir_, kPlaybackEndpoints[index].source, &loaded)) {
+        continue;
+      }
+      auto& update = nativePlaybackUpdates_[index];
+      update.source = std::move(loaded.source);
+      update.payload = std::move(loaded.payload);
+      update.error = std::move(loaded.error);
+      update.fetchedAt = loaded.fetchedAt;
+      update.resolved = std::move(loaded.resolved);
+      update.hasPayload = loaded.hasPayload;
+      update.revision = ++nativePlaybackRevision_;
+    }
+  }
   nativePlaybackThread_ = std::thread([this] { NativePlaybackLoop(); });
 }
 
