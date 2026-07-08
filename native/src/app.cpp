@@ -756,7 +756,9 @@ void App::CheckForUpdateAsync(bool install) {
       const std::string manifestJson = cloud_->FetchUpdateManifest();
       const UpdateManifest manifest = ParseUpdateManifest(manifestJson);
       if (!IsVersionNewer(manifest.version, kVersion)) {
-        if (install) message = L"HomePanelは最新版です";
+        if (install) {
+          message = L"すでに最新バージョンです (v" + std::wstring(kVersion) + L")";
+        }
       } else if (!install) {
         message = L"HomePanel " + manifest.version + L" が利用できます";
       } else if (LaunchVerifiedUpdater(manifest.version, manifestJson)) {

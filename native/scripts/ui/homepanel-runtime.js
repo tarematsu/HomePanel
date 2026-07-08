@@ -16,7 +16,8 @@
   }
 
   function renderControls(state = {}) {
-    text('#controls-status', state.diagnostics?.appVersion || '');
+    const version = String(state.diagnostics?.appVersion || '').trim();
+    text('#controls-status', version ? `v${version}` : '');
   }
 
   function airHistorySource() {
@@ -63,7 +64,6 @@
 
     if (diagnosticsChanged) {
       renderControls(runtime);
-      text('#version', runtime.diagnostics?.appVersion || '');
     }
     if (sensorsChanged) panels.air?.renderAir(runtime.sensors || {});
     if (dashboardChanged || historyChanged) {
