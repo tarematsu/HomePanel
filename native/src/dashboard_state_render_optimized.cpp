@@ -2,13 +2,15 @@
 
 namespace hp {
 void Renderer::Render(const RECT& dirty, const RenderState& state) {
+  (void)dirty;
   (void)state;
-  if (!ready_) {
-    statePublishedForPendingPaint_ = false;
-    DrawStartupFallback(dirty);
-    return;
-  }
-  statePublishedForPendingPaint_ = false;
+  if (!window_) return;
+  HDC dc = GetDC(window_);
+  if (!dc) return;
+  RECT bounds{};
+  GetClientRect(window_, &bounds);
+  FillRect(dc, &bounds, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+  ReleaseDC(window_, dc);
 }
 
 void Renderer::NotifyRadarUpdated() {

@@ -1,1 +1,1 @@
-// Runtime rendering is handled by the WebView2 dashboard host.
+// Runtime rendering is handled by native dashboard child windows.

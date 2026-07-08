@@ -194,7 +194,7 @@ void App::StartServices() {
     LayoutWorkspace();
   }
   stationhead_->Start();
-  logger_->Info(L"Stationhead startup was prioritized before dashboard WebView creation");
+  logger_->Info(L"Stationhead startup was prioritized before native dashboard initialization");
   // Windows A and B are started together rather than staggering B behind A's
   // confirmed audio + dashboard settle: both are independent WebView2
   // profiles, so there is no real startup-burst contention to avoid, and the
@@ -231,8 +231,8 @@ void App::StartDeferredServices(int64_t now, const StationheadStatus& stationhea
     renderer_->Initialize();
     rendererStarted_ = true;
     logger_->Info(audioReady
-        ? L"Dashboard WebView started after Stationhead audio confirmation"
-        : L"Dashboard WebView started after startup fallback deadline");
+        ? L"Native dashboard started after Stationhead audio confirmation"
+        : L"Native dashboard started after startup fallback deadline");
   }
 
   if (!cloudStarted_ && (audioReady || startupDeadlineReached)) {
@@ -243,7 +243,7 @@ void App::StartDeferredServices(int64_t now, const StationheadStatus& stationhea
         : L"Cloud synchronization started after startup fallback deadline");
   }
 
-  // Do not compete with the primary player or dashboard WebView during their
+  // Do not compete with the primary player or native dashboard during their
   // startup burst. The secondary player is armed only after primary audio has
   // been confirmed and the dashboard has had time to finish its own launch.
   const bool dashboardSettled = rendererStarted_ && playbackReadyAt_ > 0 &&

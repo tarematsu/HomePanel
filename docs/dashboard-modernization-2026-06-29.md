@@ -41,8 +41,8 @@
 
 ## Native dashboard migration
 
-- Migrate static dashboard panels incrementally before replacing the full dashboard WebView.
-- The clock/date surface is native-owned and drawn in a sibling child window above the dashboard WebView.
+- The dashboard WebView has been removed; dashboard surfaces are native-owned child windows.
+- The clock/date surface is native-owned and drawn in a sibling child window.
 - News headline and hourly weather summary surfaces are native-owned and read from the parsed dashboard snapshot.
 - Air current metrics and the 24-hour air history chart are native-owned.
 - Octopus Energy summary and history chart are native-owned and read from the parsed dashboard snapshot.
@@ -50,8 +50,7 @@
 - Controls are native-owned and dispatch the existing update/restart actions through the renderer action queue.
 - Toast feedback is native-owned and drawn in the controls panel.
 - The browser-side second pulse has been removed; no browser panel performs local interpolation.
-- All panel scripts have been removed from the dashboard page; the WebView only hosts the wallpaper backdrop and the ready handshake.
-- Do not reintroduce browser-side clock DOM updates once a static surface has moved to native rendering.
+- All panel scripts have been removed from the dashboard page; do not reintroduce browser-side dashboard DOM updates for native-owned surfaces.
 
 ## Radar
 
