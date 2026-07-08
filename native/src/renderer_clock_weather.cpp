@@ -30,12 +30,14 @@ DashboardGrid NativeDashboardGridFromBounds(const RECT& bounds) {
   const int clientWidth = std::max(1L, bounds.right - bounds.left);
   const int clientHeight = std::max(1L, bounds.bottom - bounds.top);
   DashboardGrid grid;
-  grid.width = std::min(static_cast<int>(clientWidth * 99LL / 100), 1660);
-  grid.height = std::min(static_cast<int>(clientHeight * 99LL / 100), 940);
+  const int margin = clientWidth >= 1200 && clientHeight >= 700 ? 12 : 6;
+  grid.gap = clientWidth >= 1200 && clientHeight >= 700 ? 8 : 4;
+  grid.width = std::max(1, clientWidth - margin * 2);
+  grid.height = std::max(1, clientHeight - margin * 2);
   grid.columnWidth = (grid.width - grid.gap * 2) / 3;
   grid.rowHeight = (grid.height - grid.gap) / 2;
-  grid.left = bounds.left + (clientWidth - grid.width) / 2;
-  grid.top = bounds.top + (clientHeight - grid.height) / 2;
+  grid.left = bounds.left + margin;
+  grid.top = bounds.top + margin;
   return grid;
 }
 

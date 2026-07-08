@@ -366,15 +366,14 @@ void App::LayoutWorkspace() {
   GetClientRect(window_, &client);
   workspaceBounds_ = client;
   renderer_->SetBounds(workspaceBounds_);
-  renderer_->SetVisible(true);
+  renderer_->SetVisible(selectedTab_ == WorkspaceTab::Main);
 
   const int clientWidth = std::max(1L, client.right - client.left);
   const int clientHeight = std::max(1L, client.bottom - client.top);
-  const int split = client.left + clientWidth / 2;
-  stationhead_->SetBounds(RECT{client.left, client.top, split, client.top + clientHeight});
+  const RECT fullBounds{client.left, client.top, client.left + clientWidth, client.top + clientHeight};
+  stationhead_->SetBounds(fullBounds);
   if (secondaryStationhead_) {
-    secondaryStationhead_->SetBounds(
-        RECT{split, client.top, client.left + clientWidth, client.top + clientHeight});
+    secondaryStationhead_->SetBounds(fullBounds);
   }
 
 
