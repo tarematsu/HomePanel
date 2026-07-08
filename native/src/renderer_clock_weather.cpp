@@ -5,10 +5,11 @@ namespace {
 constexpr UINT_PTR kClockTimerId = 1;
 constexpr UINT kClockTimerMs = 1000;
 constexpr int kNativeAirId = 101;
-constexpr int kNativeControlsId = 102;
-constexpr int kNativeNewsId = 103;
-constexpr int kNativeWeatherId = 104;
-constexpr int kNativeEnergyId = 105;
+constexpr int kNativeAirHistoryId = 102;
+constexpr int kNativeControlsId = 103;
+constexpr int kNativeNewsId = 104;
+constexpr int kNativeWeatherId = 105;
+constexpr int kNativeEnergyId = 106;
 
 struct DashboardGrid {
   int left = 0;
@@ -57,6 +58,11 @@ RECT NativeClockRectFromBounds(const RECT& bounds) {
 RECT NativeAirRectFromBounds(const RECT& bounds) {
   const RECT panel = NativePanelRectFromBounds(bounds, 0, 0);
   return RECT{panel.left + 10, panel.top + 34, panel.right - 10, panel.top + 104};
+}
+
+RECT NativeAirHistoryRectFromBounds(const RECT& bounds) {
+  const RECT panel = NativePanelRectFromBounds(bounds, 0, 0);
+  return RECT{panel.left + 10, panel.top + 112, panel.right - 10, panel.bottom - 10};
 }
 
 RECT NativeControlsRectFromBounds(const RECT& bounds) {
@@ -112,6 +118,40 @@ std::wstring NumberOrDash(double value, int digits = 0) {
   if (!std::isfinite(value)) return L"--";
   return Fixed(value, digits);
 }
+
+double RangeMin(const std::vector<double>& values, double fallback) {
+  return values.empty() ? fallback : *std::min_element(values.begin(), values.end());
+}
+
+double RangeMax(const std::vector<double>& values, double fallback) {
+  return values.empty() ? fallback : *std::max_element(values.begin(), values.end());
+}
+
+void DrawHistoryLine(HDC dc, const std::vector<AirHistorySample>& samples, const RECT& plot,
+                     int64_t cutoff, int64_t spanMs, double minValue, double maxValue,
+                     COLORREF color, int width,
+                     const std::function<double(const AirHistorySample&)>& valueOf) {
+  if (samples.empty() || maxValue <= minValue) return;
+  HPEN pen = CreatePen(PS_SOLID, width, color);
+  HGDIOBJ previousPen = SelectObject(dc, pen);
+  bool started = false;
+  for (const auto& sample : samples) {
+    const double value = valueOf(sample);
+    if (!std::isfinite(value) || sample.timestamp < cutoff) continue;
+    const double xRatio = std::clamp(static_cast<double>(sample.timestamp - cutoff) / spanMs, 0.0, 1.0);
+    const double yRatio = std::clamp((value - minValue) / (maxValue - minValue), 0.0, 1.0);
+    const int x = plot.left + static_cast<int>((plot.right - plot.left) * xRatio);
+    const int y = plot.bottom - static_cast<int>((plot.bottom - plot.top) * yRatio);
+    if (!started) {
+      MoveToEx(dc, x, y, nullptr);
+      started = true;
+    } else {
+      LineTo(dc, x, y);
+    }
+  }
+  SelectObject(dc, previousPen);
+  DeleteObject(pen);
+}
 }  // namespace
 
 bool Renderer::EnsureNativeClockWindow() {
@@ -164,6 +204,15 @@ bool Renderer::EnsureNativeStaticWindows() {
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kNativeAirId)),
         GetModuleHandleW(nullptr), this);
   }
+  if (!nativeAirHistoryWindow_ || !IsWindow(nativeAirHistoryWindow_)) {
+    const RECT rect = NativeAirHistoryRectFromBounds(bounds_);
+    nativeAirHistoryWindow_ = CreateWindowExW(0, kStaticClassName, L"HomePanelNativeAirHistory",
+        WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE,
+        rect.left, rect.top, std::max(1L, rect.right - rect.left),
+        std::max(1L, rect.bottom - rect.top), window_,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kNativeAirHistoryId)),
+        GetModuleHandleW(nullptr), this);
+  }
   if (!nativeControlsWindow_ || !IsWindow(nativeControlsWindow_)) {
     const RECT rect = NativeControlsRectFromBounds(bounds_);
     nativeControlsWindow_ = CreateWindowExW(0, kStaticClassName, L"HomePanelNativeControls",
@@ -201,7 +250,8 @@ bool Renderer::EnsureNativeStaticWindows() {
         GetModuleHandleW(nullptr), this);
   }
   ApplyNativeStaticBounds();
-  return nativeAirWindow_ && nativeControlsWindow_ && nativeNewsWindow_ && nativeWeatherWindow_ && nativeEnergyWindow_;
+  return nativeAirWindow_ && nativeAirHistoryWindow_ && nativeControlsWindow_ && nativeNewsWindow_ &&
+         nativeWeatherWindow_ && nativeEnergyWindow_;
 }
 
 void Renderer::ApplyNativeStaticBounds() {
@@ -211,6 +261,13 @@ void Renderer::ApplyNativeStaticBounds() {
                  std::max(1L, rect.right - rect.left), std::max(1L, rect.bottom - rect.top),
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     InvalidateRect(nativeAirWindow_, nullptr, FALSE);
+  }
+  if (nativeAirHistoryWindow_ && IsWindow(nativeAirHistoryWindow_)) {
+    const RECT rect = NativeAirHistoryRectFromBounds(bounds_);
+    SetWindowPos(nativeAirHistoryWindow_, HWND_TOP, rect.left, rect.top,
+                 std::max(1L, rect.right - rect.left), std::max(1L, rect.bottom - rect.top),
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    InvalidateRect(nativeAirHistoryWindow_, nullptr, FALSE);
   }
   if (nativeControlsWindow_ && IsWindow(nativeControlsWindow_)) {
     const RECT rect = NativeControlsRectFromBounds(bounds_);
@@ -244,11 +301,13 @@ void Renderer::ApplyNativeStaticBounds() {
 
 void Renderer::DestroyNativeStaticWindows() {
   if (nativeAirWindow_ && IsWindow(nativeAirWindow_)) DestroyWindow(nativeAirWindow_);
+  if (nativeAirHistoryWindow_ && IsWindow(nativeAirHistoryWindow_)) DestroyWindow(nativeAirHistoryWindow_);
   if (nativeControlsWindow_ && IsWindow(nativeControlsWindow_)) DestroyWindow(nativeControlsWindow_);
   if (nativeNewsWindow_ && IsWindow(nativeNewsWindow_)) DestroyWindow(nativeNewsWindow_);
   if (nativeWeatherWindow_ && IsWindow(nativeWeatherWindow_)) DestroyWindow(nativeWeatherWindow_);
   if (nativeEnergyWindow_ && IsWindow(nativeEnergyWindow_)) DestroyWindow(nativeEnergyWindow_);
   nativeAirWindow_ = nullptr;
+  nativeAirHistoryWindow_ = nullptr;
   nativeControlsWindow_ = nullptr;
   nativeNewsWindow_ = nullptr;
   nativeWeatherWindow_ = nullptr;
@@ -257,10 +316,12 @@ void Renderer::DestroyNativeStaticWindows() {
 
 void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   nativeSensors_ = state.sensors;
+  nativeAirHistory_ = state.airHistory;
   nativeAppVersion_ = state.appVersion;
   nativeNewsIndex_ = state.newsIndex;
   if (!EnsureNativeStaticWindows()) return;
   InvalidateRect(nativeAirWindow_, nullptr, FALSE);
+  InvalidateRect(nativeAirHistoryWindow_, nullptr, FALSE);
   InvalidateRect(nativeControlsWindow_, nullptr, FALSE);
   InvalidateRect(nativeNewsWindow_, nullptr, FALSE);
   InvalidateRect(nativeWeatherWindow_, nullptr, FALSE);
@@ -352,6 +413,7 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
       break;
     case WM_PAINT:
       if (GetDlgCtrlID(hwnd) == kNativeAirId) PaintNativeAir(hwnd);
+      else if (GetDlgCtrlID(hwnd) == kNativeAirHistoryId) PaintNativeAirHistory(hwnd);
       else if (GetDlgCtrlID(hwnd) == kNativeControlsId) PaintNativeControls(hwnd);
       else if (GetDlgCtrlID(hwnd) == kNativeNewsId) PaintNativeNews(hwnd);
       else if (GetDlgCtrlID(hwnd) == kNativeWeatherId) PaintNativeWeather(hwnd);
@@ -359,6 +421,7 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
       return 0;
     case WM_NCDESTROY:
       if (nativeAirWindow_ == hwnd) nativeAirWindow_ = nullptr;
+      if (nativeAirHistoryWindow_ == hwnd) nativeAirHistoryWindow_ = nullptr;
       if (nativeControlsWindow_ == hwnd) nativeControlsWindow_ = nullptr;
       if (nativeNewsWindow_ == hwnd) nativeNewsWindow_ = nullptr;
       if (nativeWeatherWindow_ == hwnd) nativeWeatherWindow_ = nullptr;
@@ -466,6 +529,99 @@ void Renderer::PaintNativeAir(HWND hwnd) {
   SelectObject(memoryDc, previousPen);
   DeleteObject(card);
   DeleteObject(border);
+
+  BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
+  SelectObject(memoryDc, previousBitmap);
+  DeleteObject(bitmap);
+  DeleteDC(memoryDc);
+  EndPaint(hwnd, &paint);
+}
+
+void Renderer::PaintNativeAirHistory(HWND hwnd) {
+  PAINTSTRUCT paint{};
+  HDC dc = BeginPaint(hwnd, &paint);
+  if (!dc) return;
+
+  RECT bounds{};
+  GetClientRect(hwnd, &bounds);
+  HDC memoryDc = CreateCompatibleDC(dc);
+  HBITMAP bitmap = CreateCompatibleBitmap(dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
+  HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
+  FillRect(memoryDc, &bounds, background);
+  DeleteObject(background);
+  SetBkMode(memoryDc, TRANSPARENT);
+
+  HPEN border = CreatePen(PS_SOLID, 1, RGB(43, 51, 63));
+  HBRUSH card = CreateSolidBrush(RGB(13, 20, 30));
+  HGDIOBJ previousPen = SelectObject(memoryDc, border);
+  HGDIOBJ previousBrush = SelectObject(memoryDc, card);
+  RoundRect(memoryDc, bounds.left, bounds.top, bounds.right, bounds.bottom, 8, 8);
+  SelectObject(memoryDc, previousBrush);
+  SelectObject(memoryDc, previousPen);
+  DeleteObject(card);
+  DeleteObject(border);
+
+  const int64_t now = UnixMillis();
+  constexpr int64_t kWindowMs = 24LL * 60 * 60 * 1000;
+  const int64_t cutoff = now - kWindowMs;
+  std::vector<AirHistorySample> samples;
+  std::vector<double> co2Values;
+  std::vector<double> temperatureValues;
+  std::vector<double> humidityValues;
+  for (const auto& sample : nativeAirHistory_) {
+    if (sample.timestamp < cutoff || sample.co2 < 250 || sample.co2 > 10000 ||
+        sample.temperature < -40 || sample.temperature > 85 ||
+        sample.humidity < 0 || sample.humidity > 100) {
+      continue;
+    }
+    samples.push_back(sample);
+    co2Values.push_back(sample.co2);
+    temperatureValues.push_back(sample.temperature);
+    humidityValues.push_back(sample.humidity);
+  }
+
+  HFONT font = CreateUiFont(11, FW_NORMAL);
+  HGDIOBJ previousFont = SelectObject(memoryDc, font);
+  SetTextColor(memoryDc, RGB(184, 195, 208));
+  RECT legend{bounds.left + 8, bounds.top + 5, bounds.right - 8, bounds.top + 23};
+  DrawTextInRect(memoryDc, L"CO2   温度   湿度", legend, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+
+  RECT plot{bounds.left + 34, bounds.top + 28, bounds.right - 10, bounds.bottom - 22};
+  HPEN gridPen = CreatePen(PS_SOLID, 1, RGB(30, 39, 52));
+  previousPen = SelectObject(memoryDc, gridPen);
+  for (int i = 0; i < 4; ++i) {
+    const int y = plot.top + (plot.bottom - plot.top) * i / 3;
+    MoveToEx(memoryDc, plot.left, y, nullptr);
+    LineTo(memoryDc, plot.right, y);
+  }
+  SelectObject(memoryDc, previousPen);
+  DeleteObject(gridPen);
+
+  if (!samples.empty() && plot.bottom > plot.top + 4) {
+    const double co2Min = RangeMin(co2Values, 400) - 80;
+    const double co2Max = RangeMax(co2Values, 1000) + 80;
+    const double tempMin = RangeMin(temperatureValues, 20) - 0.5;
+    const double tempMax = RangeMax(temperatureValues, 28) + 0.5;
+    const double humMin = RangeMin(humidityValues, 30) - 2;
+    const double humMax = RangeMax(humidityValues, 80) + 2;
+    DrawHistoryLine(memoryDc, samples, plot, cutoff, kWindowMs, co2Min, co2Max, RGB(57, 211, 83), 2,
+                    [](const AirHistorySample& s) { return static_cast<double>(s.co2); });
+    DrawHistoryLine(memoryDc, samples, plot, cutoff, kWindowMs, tempMin, tempMax, RGB(255, 184, 48), 1,
+                    [](const AirHistorySample& s) { return s.temperature; });
+    DrawHistoryLine(memoryDc, samples, plot, cutoff, kWindowMs, humMin, humMax, RGB(74, 179, 244), 1,
+                    [](const AirHistorySample& s) { return s.humidity; });
+  } else {
+    RECT empty{bounds.left, bounds.top, bounds.right, bounds.bottom};
+    DrawTextInRect(memoryDc, L"履歴を取得中", empty, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  }
+
+  SetTextColor(memoryDc, RGB(130, 142, 156));
+  RECT axis{bounds.left + 8, bounds.bottom - 20, bounds.right - 8, bounds.bottom - 4};
+  DrawTextInRect(memoryDc, L"24時間前", axis, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+  DrawTextInRect(memoryDc, L"現在", axis, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+  SelectObject(memoryDc, previousFont);
+  DeleteObject(font);
 
   BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
   SelectObject(memoryDc, previousBitmap);

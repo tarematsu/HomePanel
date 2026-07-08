@@ -122,6 +122,7 @@ class Renderer {
   LRESULT HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   void PaintNativeClock(HWND hwnd);
   void PaintNativeAir(HWND hwnd);
+  void PaintNativeAirHistory(HWND hwnd);
   void PaintNativeControls(HWND hwnd);
   void PaintNativeNews(HWND hwnd);
   void PaintNativeWeather(HWND hwnd);
@@ -146,11 +147,13 @@ class Renderer {
   HWND dashboardHost_{};
   HWND nativeClockWindow_{};
   HWND nativeAirWindow_{};
+  HWND nativeAirHistoryWindow_{};
   HWND nativeControlsWindow_{};
   HWND nativeNewsWindow_{};
   HWND nativeWeatherWindow_{};
   HWND nativeEnergyWindow_{};
   SensorSnapshot nativeSensors_{};
+  std::vector<AirHistorySample> nativeAirHistory_;
   DashboardSnapshot nativeDashboard_{};
   std::wstring nativeAppVersion_;
   int nativeNewsIndex_ = 0;
