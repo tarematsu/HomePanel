@@ -61,6 +61,7 @@ void Renderer::SetBounds(const RECT& bounds) {
 }
 
 void Renderer::SetVisible(bool visible) {
+  nativeDashboardVisible_ = visible;
   if (nativeClockWindow_ && IsWindow(nativeClockWindow_)) {
     ShowWindow(nativeClockWindow_, visible ? SW_SHOWNA : SW_HIDE);
     if (visible) ApplyNativeClockBounds();

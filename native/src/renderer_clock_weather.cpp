@@ -16,87 +16,48 @@ constexpr int kNativeEnergyId = 106;
 constexpr int kNativeStationheadId = 107;
 constexpr int kNativeRadarId = 108;
 
-struct DashboardGrid {
-  int left = 0;
-  int top = 0;
-  int width = 1;
-  int height = 1;
-  int columnWidth = 1;
-  int rowHeight = 1;
-  int gap = 8;
-};
-
-DashboardGrid NativeDashboardGridFromBounds(const RECT& bounds) {
-  const int clientWidth = std::max(1L, bounds.right - bounds.left);
-  const int clientHeight = std::max(1L, bounds.bottom - bounds.top);
-  DashboardGrid grid;
-  const int margin = clientWidth >= 1200 && clientHeight >= 700 ? 12 : 6;
-  grid.gap = clientWidth >= 1200 && clientHeight >= 700 ? 8 : 4;
-  grid.width = std::max(1, clientWidth - margin * 2);
-  grid.height = std::max(1, clientHeight - margin * 2);
-  grid.columnWidth = (grid.width - grid.gap * 2) / 3;
-  grid.rowHeight = (grid.height - grid.gap) / 2;
-  grid.left = bounds.left + margin;
-  grid.top = bounds.top + margin;
-  return grid;
-}
-
-RECT NativePanelRectFromBounds(const RECT& bounds, int column, int row) {
-  const DashboardGrid grid = NativeDashboardGridFromBounds(bounds);
-  const int left = grid.left + column * (grid.columnWidth + grid.gap);
-  const int top = grid.top + row * (grid.rowHeight + grid.gap);
-  return RECT{left, top, left + grid.columnWidth, top + grid.rowHeight};
-}
-
 RECT NativeClockRectFromBounds(const RECT& bounds) {
-  const RECT panel = NativePanelRectFromBounds(bounds, 1, 0);
-
-  RECT rect{
-      panel.left + 12,
-      panel.top + 34,
-      panel.right - 12,
-      panel.top + std::max(96L, panel.bottom - panel.top - 94),
-  };
-  if (rect.right <= rect.left) rect.right = rect.left + 1;
-  if (rect.bottom <= rect.top) rect.bottom = rect.top + 1;
-  return rect;
+  return ComputeNativeDashboardLayout(bounds).clock;
 }
 
 RECT NativeAirRectFromBounds(const RECT& bounds) {
-  const RECT panel = NativePanelRectFromBounds(bounds, 0, 0);
-  return RECT{panel.left + 10, panel.top + 34, panel.right - 10, panel.top + 104};
+  return ComputeNativeDashboardLayout(bounds).air;
 }
 
 RECT NativeAirHistoryRectFromBounds(const RECT& bounds) {
-  const RECT panel = NativePanelRectFromBounds(bounds, 0, 0);
-  return RECT{panel.left + 10, panel.top + 112, panel.right - 10, panel.bottom - 10};
+  return ComputeNativeDashboardLayout(bounds).airHistory;
 }
 
 RECT NativeControlsRectFromBounds(const RECT& bounds) {
-  const RECT panel = NativePanelRectFromBounds(bounds, 2, 1);
-  return RECT{panel.left, panel.top, panel.right, panel.bottom};
+  return ComputeNativeDashboardLayout(bounds).controls;
 }
 
 RECT NativeNewsRectFromBounds(const RECT& bounds) {
-  const RECT panel = NativePanelRectFromBounds(bounds, 1, 0);
-  return RECT{panel.left + 12, panel.top + 8, panel.right - 12, panel.top + 92};
+  return ComputeNativeDashboardLayout(bounds).news;
 }
 
 RECT NativeWeatherRectFromBounds(const RECT& bounds) {
-  const RECT panel = NativePanelRectFromBounds(bounds, 1, 0);
-  return RECT{panel.left + 12, panel.bottom - 108, panel.right - 12, panel.bottom - 8};
+  return ComputeNativeDashboardLayout(bounds).weather;
 }
 
 RECT NativeEnergyRectFromBounds(const RECT& bounds) {
-  return NativePanelRectFromBounds(bounds, 2, 0);
+  return ComputeNativeDashboardLayout(bounds).energy;
 }
 
 RECT NativeStationheadRectFromBounds(const RECT& bounds) {
-  return NativePanelRectFromBounds(bounds, 0, 1);
+  return ComputeNativeDashboardLayout(bounds).stationhead;
 }
 
 RECT NativeRadarRectFromBounds(const RECT& bounds) {
-  return NativePanelRectFromBounds(bounds, 1, 1);
+  return ComputeNativeDashboardLayout(bounds).radar;
+}
+
+void PlaceNativeWindow(HWND hwnd, const RECT& rect, bool visible) {
+  SetWindowPos(hwnd, HWND_TOP, rect.left, rect.top,
+               std::max(1L, rect.right - rect.left),
+               std::max(1L, rect.bottom - rect.top),
+               SWP_NOACTIVATE | (visible ? SWP_SHOWWINDOW : SWP_NOOWNERZORDER));
+  ShowWindow(hwnd, visible ? SW_SHOWNA : SW_HIDE);
 }
 
 HFONT CreateUiFont(int height, int weight) {
@@ -312,60 +273,37 @@ bool Renderer::EnsureNativeStaticWindows() {
 }
 
 void Renderer::ApplyNativeStaticBounds() {
+  const NativeDashboardLayout layout = ComputeNativeDashboardLayout(bounds_);
   if (nativeAirWindow_ && IsWindow(nativeAirWindow_)) {
-    const RECT rect = NativeAirRectFromBounds(bounds_);
-    SetWindowPos(nativeAirWindow_, HWND_TOP, rect.left, rect.top,
-                 std::max(1L, rect.right - rect.left), std::max(1L, rect.bottom - rect.top),
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    PlaceNativeWindow(nativeAirWindow_, layout.air, nativeDashboardVisible_);
     InvalidateRect(nativeAirWindow_, nullptr, FALSE);
   }
   if (nativeAirHistoryWindow_ && IsWindow(nativeAirHistoryWindow_)) {
-    const RECT rect = NativeAirHistoryRectFromBounds(bounds_);
-    SetWindowPos(nativeAirHistoryWindow_, HWND_TOP, rect.left, rect.top,
-                 std::max(1L, rect.right - rect.left), std::max(1L, rect.bottom - rect.top),
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    PlaceNativeWindow(nativeAirHistoryWindow_, layout.airHistory, nativeDashboardVisible_);
     InvalidateRect(nativeAirHistoryWindow_, nullptr, FALSE);
   }
   if (nativeControlsWindow_ && IsWindow(nativeControlsWindow_)) {
-    const RECT rect = NativeControlsRectFromBounds(bounds_);
-    SetWindowPos(nativeControlsWindow_, HWND_TOP, rect.left, rect.top,
-                 std::max(1L, rect.right - rect.left), std::max(1L, rect.bottom - rect.top),
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    PlaceNativeWindow(nativeControlsWindow_, layout.controls, nativeDashboardVisible_);
     InvalidateRect(nativeControlsWindow_, nullptr, FALSE);
   }
   if (nativeNewsWindow_ && IsWindow(nativeNewsWindow_)) {
-    const RECT rect = NativeNewsRectFromBounds(bounds_);
-    SetWindowPos(nativeNewsWindow_, HWND_TOP, rect.left, rect.top,
-                 std::max(1L, rect.right - rect.left), std::max(1L, rect.bottom - rect.top),
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    PlaceNativeWindow(nativeNewsWindow_, layout.news, nativeDashboardVisible_);
     InvalidateRect(nativeNewsWindow_, nullptr, FALSE);
   }
   if (nativeWeatherWindow_ && IsWindow(nativeWeatherWindow_)) {
-    const RECT rect = NativeWeatherRectFromBounds(bounds_);
-    SetWindowPos(nativeWeatherWindow_, HWND_TOP, rect.left, rect.top,
-                 std::max(1L, rect.right - rect.left), std::max(1L, rect.bottom - rect.top),
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    PlaceNativeWindow(nativeWeatherWindow_, layout.weather, nativeDashboardVisible_);
     InvalidateRect(nativeWeatherWindow_, nullptr, FALSE);
   }
   if (nativeEnergyWindow_ && IsWindow(nativeEnergyWindow_)) {
-    const RECT rect = NativeEnergyRectFromBounds(bounds_);
-    SetWindowPos(nativeEnergyWindow_, HWND_TOP, rect.left, rect.top,
-                 std::max(1L, rect.right - rect.left), std::max(1L, rect.bottom - rect.top),
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    PlaceNativeWindow(nativeEnergyWindow_, layout.energy, nativeDashboardVisible_);
     InvalidateRect(nativeEnergyWindow_, nullptr, FALSE);
   }
   if (nativeStationheadWindow_ && IsWindow(nativeStationheadWindow_)) {
-    const RECT rect = NativeStationheadRectFromBounds(bounds_);
-    SetWindowPos(nativeStationheadWindow_, HWND_TOP, rect.left, rect.top,
-                 std::max(1L, rect.right - rect.left), std::max(1L, rect.bottom - rect.top),
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    PlaceNativeWindow(nativeStationheadWindow_, layout.stationhead, nativeDashboardVisible_);
     InvalidateRect(nativeStationheadWindow_, nullptr, FALSE);
   }
   if (nativeRadarWindow_ && IsWindow(nativeRadarWindow_)) {
-    const RECT rect = NativeRadarRectFromBounds(bounds_);
-    SetWindowPos(nativeRadarWindow_, HWND_TOP, rect.left, rect.top,
-                 std::max(1L, rect.right - rect.left), std::max(1L, rect.bottom - rect.top),
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    PlaceNativeWindow(nativeRadarWindow_, layout.radar, nativeDashboardVisible_);
     InvalidateRect(nativeRadarWindow_, nullptr, FALSE);
   }
 }
@@ -421,10 +359,8 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
 
 void Renderer::ApplyNativeClockBounds() {
   if (!nativeClockWindow_ || !IsWindow(nativeClockWindow_)) return;
-  const RECT rect = NativeClockRectFromBounds(bounds_);
-  SetWindowPos(nativeClockWindow_, HWND_TOP, rect.left, rect.top,
-               std::max(1L, rect.right - rect.left),
-               std::max(1L, rect.bottom - rect.top), SWP_NOACTIVATE | SWP_SHOWWINDOW);
+  const RECT rect = ComputeNativeDashboardLayout(bounds_).clock;
+  PlaceNativeWindow(nativeClockWindow_, rect, nativeDashboardVisible_);
   InvalidateRect(nativeClockWindow_, nullptr, FALSE);
 }
 

@@ -74,6 +74,72 @@ struct NativePlaybackRender {
 inline constexpr int kRadarCanvasWidth = 800;
 inline constexpr int kRadarCanvasHeight = 520;
 
+struct NativeDashboardLayout {
+  RECT air{};
+  RECT airHistory{};
+  RECT controls{};
+  RECT news{};
+  RECT weather{};
+  RECT energy{};
+  RECT stationhead{};
+  RECT radar{};
+  RECT clock{};
+};
+
+inline RECT NormalizeInsetRect(RECT rect, int left, int top, int right, int bottom) {
+  rect.left += left;
+  rect.top += top;
+  rect.right -= right;
+  rect.bottom -= bottom;
+  if (rect.right <= rect.left) rect.right = rect.left + 1;
+  if (rect.bottom <= rect.top) rect.bottom = rect.top + 1;
+  return rect;
+}
+
+inline NativeDashboardLayout ComputeNativeDashboardLayout(const RECT& bounds) {
+  const int clientWidth = std::max(1L, bounds.right - bounds.left);
+  const int clientHeight = std::max(1L, bounds.bottom - bounds.top);
+  const int margin = clientWidth >= 1200 && clientHeight >= 700 ? 12 : 6;
+  const int gap = clientWidth >= 1200 && clientHeight >= 700 ? 8 : 4;
+  const int gridWidth = std::max(1, clientWidth - margin * 2);
+  const int gridHeight = std::max(1, clientHeight - margin * 2);
+  const int columnWidth = std::max(1, (gridWidth - gap * 2) / 3);
+  const int rowHeight = std::max(1, (gridHeight - gap) / 2);
+  const int left = bounds.left + margin;
+  const int top = bounds.top + margin;
+  const auto panel = [&](int column, int row) {
+    const int panelLeft = left + column * (columnWidth + gap);
+    const int panelTop = top + row * (rowHeight + gap);
+    return RECT{panelLeft, panelTop, panelLeft + columnWidth, panelTop + rowHeight};
+  };
+
+  NativeDashboardLayout layout;
+  const RECT airPanel = panel(0, 0);
+  const RECT centerTop = panel(1, 0);
+  layout.air = RECT{airPanel.left + 10, airPanel.top + 34, airPanel.right - 10,
+                    airPanel.top + 104};
+  if (layout.air.bottom <= layout.air.top) layout.air.bottom = layout.air.top + 1;
+  if (layout.air.right <= layout.air.left) layout.air.right = layout.air.left + 1;
+  layout.airHistory = NormalizeInsetRect(
+      RECT{airPanel.left + 10, airPanel.top + 112, airPanel.right - 10, airPanel.bottom - 10},
+      0, 0, 0, 0);
+  layout.controls = panel(2, 1);
+  layout.news = NormalizeInsetRect(
+      RECT{centerTop.left + 12, centerTop.top + 8, centerTop.right - 12, centerTop.top + 92},
+      0, 0, 0, 0);
+  layout.weather = NormalizeInsetRect(
+      RECT{centerTop.left + 12, centerTop.bottom - 108, centerTop.right - 12, centerTop.bottom - 8},
+      0, 0, 0, 0);
+  layout.energy = panel(2, 0);
+  layout.stationhead = panel(0, 1);
+  layout.radar = panel(1, 1);
+  layout.clock = NormalizeInsetRect(
+      RECT{centerTop.left + 12, centerTop.top + 34, centerTop.right - 12,
+           centerTop.top + std::max(96L, centerTop.bottom - centerTop.top - 94)},
+      0, 0, 0, 0);
+  return layout;
+}
+
 class Renderer {
  public:
   Renderer(HWND window, int width, int height, RadarManager& radar);
@@ -161,6 +227,7 @@ class Renderer {
   int width_ = 0;
   int height_ = 0;
   RECT bounds_{};
+  bool nativeDashboardVisible_ = true;
   RadarManager& radar_;
   fs::path rootDir_;
   fs::path dataDir_;

@@ -28,8 +28,15 @@ void Renderer::UpdateState(const RenderState& state) {
   UpdateNativeStaticPanels(state);
 }
 
-RECT Renderer::ClockRect() const { return ClientBounds(); }
-RECT Renderer::SensorRect() const { return ClientBounds(); }
-RECT Renderer::RadarRect() const { return ClientBounds(); }
-RECT Renderer::StationheadRect() const { return ClientBounds(); }
+RECT Renderer::ClockRect() const { return ComputeNativeDashboardLayout(ClientBounds()).clock; }
+RECT Renderer::SensorRect() const {
+  const NativeDashboardLayout layout = ComputeNativeDashboardLayout(ClientBounds());
+  RECT rect = layout.air;
+  rect.bottom = layout.airHistory.bottom;
+  return rect;
+}
+RECT Renderer::RadarRect() const { return ComputeNativeDashboardLayout(ClientBounds()).radar; }
+RECT Renderer::StationheadRect() const {
+  return ComputeNativeDashboardLayout(ClientBounds()).stationhead;
+}
 }  // namespace hp
