@@ -325,7 +325,7 @@ class App {
     // label updates on the very next paint instead of lagging until the next
     // Tick rebuild (idle ticks can be up to 30s apart). The 50-minute auto
     // rotation still re-asserts its A/B pattern on schedule.
-    renderState_.stationhead.audioMuted = stationhead_->AudioMuted();
+    ApplyScheduledStationheadAudioProfile(!stationhead_->AudioMuted());
     renderState_.toast = stationhead_->AudioMuted()
         ? L"Stationhead A 音声OFF"
         : L"Stationhead A 音声ON";
@@ -336,7 +336,7 @@ class App {
   void ToggleStationheadAudioB() {
     if (secondaryStationhead_) {
       secondaryStationhead_->ToggleAudioMuted();
-      renderState_.stationhead.secondaryAudioMuted = secondaryStationhead_->AudioMuted();
+      ApplyScheduledStationheadAudioProfile(secondaryStationhead_->AudioMuted());
       renderState_.toast = secondaryStationhead_->AudioMuted()
           ? L"Stationhead B 音声OFF"
           : L"Stationhead B 音声ON";
