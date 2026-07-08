@@ -202,12 +202,12 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
     ApplyBounds();
   }
 
-  // The primary player can temporarily mark its content host as visible while
-  // it bootstraps, navigates, or confirms playback. That must not promote the
-  // content host above the dashboard. Only an app-selected Stationhead/auth tab
-  // or an actual login/auth prompt should raise it.
+  // The primary Stationhead surface must never rise above the dashboard. Keep
+  // both the content and auth hosts on the background side regardless of
+  // internal login/auth state or app-selected tabs.
   bool IsInteractive(const StationheadStatus& status) const noexcept {
-    return selectedTab_ != StationheadTabKind::None || status.loginRequired || status.authAvailable;
+    (void)status;
+    return false;
   }
 
  private:
