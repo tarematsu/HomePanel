@@ -566,97 +566,6 @@ void App::Invalidate(const RECT& rect) {
   ::InvalidateRect(window_, &rect, FALSE);
 }
 
-void App::LoadAirHistory() {
-  const fs::path path = dataDir_ / L"air-history.json";
-  try {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) return;
-    const std::string text((std::istreambuf_iterator<char>(input)), {});
-    if (text.empty()) return;
-    const auto array = winrt::Windows::Data::Json::JsonArray::Parse(Utf8ToWide(text));
-    std::vector<AirHistorySample> history;
-    const int64_t cutoff = UnixMillis() - 24 * 60 * 60 * 1000;
-    for (auto value : array) {
-      if (value.ValueType() != winrt::Windows::Data::Json::JsonValueType::Object) continue;
-      const auto item = value.GetObject();
-      AirHistorySample sample{
-          static_cast<int64_t>(item.GetNamedNumber(L"t", 0)),
-          static_cast<int>(item.GetNamedNumber(L"co2", 0)),
-          item.GetNamedNumber(L"temperature", 0),
-          item.GetNamedNumber(L"humidity", 0),
-      };
-      if (sample.timestamp >= cutoff && sample.co2 >= 250 && sample.co2 <= 10000 &&
-          sample.temperature >= -40 && sample.temperature <= 85 &&
-          sample.humidity >= 0 && sample.humidity <= 100) {
-        history.push_back(sample);
-      }
-    }
-    std::sort(history.begin(), history.end(), [](const AirHistorySample& left, const AirHistorySample& right) {
-      return left.timestamp < right.timestamp;
-    });
-    renderState_.airHistory = std::move(history);
-  } catch (const std::exception& error) {
-    if (logger_) logger_->Warn(L"Air history load failed: " + Utf8ToWide(error.what()));
-  } catch (...) {
-    if (logger_) logger_->Warn(L"Air history load failed with an unknown error");
-  }
-}
-
-void App::SaveAirHistory() const {
-  const fs::path target = dataDir_ / L"air-history.json";
-  const fs::path temporary = dataDir_ / L"air-history.json.tmp";
-  try {
-    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-    if (!output) return;
-    output << "[";
-    bool first = true;
-    for (const auto& sample : renderState_.airHistory) {
-      if (!first) output << ",";
-      first = false;
-      output << "{\"t\":" << sample.timestamp
-             << ",\"co2\":" << sample.co2
-             << ",\"temperature\":" << sample.temperature
-             << ",\"humidity\":" << sample.humidity << "}";
-    }
-    output << "]";
-    output.close();
-    if (!output) return;
-    std::error_code ignored;
-    fs::rename(temporary, target, ignored);
-    if (ignored) {
-      ignored.clear();
-      fs::copy_file(temporary, target, fs::copy_options::overwrite_existing, ignored);
-      fs::remove(temporary, ignored);
-    }
-  } catch (const std::exception& error) {
-    if (logger_) logger_->Warn(L"Air history save failed: " + Utf8ToWide(error.what()));
-  } catch (...) {
-    if (logger_) logger_->Warn(L"Air history save failed with an unknown error");
-  }
-}
-
-void App::UpdateAirHistory(const SensorSnapshot& sensors) {
-  constexpr int64_t historyWindowMs = 24 * 60 * 60 * 1000;
-  constexpr int64_t sampleBucketMs = 5 * 60 * 1000;
-  constexpr size_t maxSamples = static_cast<size_t>(historyWindowMs / sampleBucketMs) + 1;
-  if (!sensors.co2Connected || sensors.observedAt <= 0 || sensors.co2 < 250 || sensors.co2 > 10000 ||
-      sensors.temperatureCorrected < -40 || sensors.temperatureCorrected > 85 ||
-      sensors.humidityCorrected < 0 || sensors.humidityCorrected > 100) {
-    return;
-  }
-
-  const int64_t bucket = sensors.observedAt / sampleBucketMs * sampleBucketMs;
-  auto& history = renderState_.airHistory;
-  if (!history.empty() && history.back().timestamp == bucket) return;
-  history.push_back({bucket, sensors.co2, sensors.temperatureCorrected, sensors.humidityCorrected});
-  const int64_t cutoff = UnixMillis() - historyWindowMs;
-  history.erase(std::remove_if(history.begin(), history.end(), [cutoff](const AirHistorySample& sample) {
-    return sample.timestamp < cutoff;
-  }), history.end());
-  if (history.size() > maxSamples) history.erase(history.begin(), history.end() - maxSamples);
-  SaveAirHistory();
-  MarkRenderStateDirty();
-}
 
 void App::HandleAction(UiAction action, float seekFraction) {
   switch (action) {
@@ -813,109 +722,6 @@ void App::ClearDisplayCache() {
   logger_->Info(L"Display cache cleared; WebView user data and telemetry outbox preserved");
 }
 
-void App::CheckForUpdateAsync(bool install) {
-  if (updateBusy_.exchange(true)) {
-    if (install) {
-      renderState_.toast = L"更新確認はすでに実行中です";
-      toastUntil_ = UnixMillis() + 4000;
-      MarkRenderStateDirty();
-      InvalidateAll();
-    }
-    return;
-  }
-  if (updateThread_.joinable()) updateThread_.join();
-  if (install) {
-    renderState_.toast = L"署名・ハッシュを確認して更新を準備しています";
-    toastUntil_ = UnixMillis() + 15'000;
-    MarkRenderStateDirty();
-    InvalidateAll();
-  }
-
-  updateThread_ = std::thread([this, install] {
-    std::wstring message;
-    try {
-      const std::string manifestJson = cloud_->FetchUpdateManifest();
-      const UpdateManifest manifest = ParseUpdateManifest(manifestJson);
-      const std::wstring currentVersion = [] (const fs::path& rootDir) {
-        const std::wstring installed = InstalledHomePanelVersion(rootDir / L"HomePanel.exe");
-        return installed.empty() ? std::wstring(kVersion) : installed;
-      }(rootDir_);
-      if (!IsVersionNewer(manifest.version, currentVersion)) {
-        if (install) {
-          message = L"すでに最新バージョンです (v" + currentVersion + L")";
-        }
-      } else if (!install) {
-        message = L"HomePanel " + manifest.version + L" が利用できます";
-      } else if (LaunchVerifiedUpdater(manifest.version, manifestJson)) {
-        logger_->Info(L"Verified updater launched for version " + manifest.version);
-        PostMessageW(window_, WM_CLOSE, 0, 0);
-        updateBusy_ = false;
-        return;
-      } else {
-        message = L"検証済み更新プログラムを起動できませんでした";
-      }
-    } catch (const std::exception& error) {
-      logger_->Warn(L"Update check failed: " + Utf8ToWide(error.what()));
-      if (install) message = L"更新確認に失敗: " + Utf8ToWide(error.what());
-    }
-
-    if (!message.empty()) {
-      auto copy = std::make_unique<wchar_t[]>(message.size() + 1);
-      wcscpy_s(copy.get(), message.size() + 1, message.c_str());
-      if (PostMessageW(window_, WM_HP_UPDATE_RESULT, 0, reinterpret_cast<LPARAM>(copy.get()))) {
-        copy.release();
-      }
-    }
-    updateBusy_ = false;
-  });
-}
-
-bool App::LaunchVerifiedUpdater(const std::wstring& version, const std::string& manifestJson) {
-  const fs::path installedUpdater = rootDir_ / L"HomePanelUpdater.exe";
-  if (!fs::exists(installedUpdater)) {
-    logger_->Warn(L"HomePanelUpdater.exe is not installed; one manual package update is required");
-    return false;
-  }
-
-  const fs::path pending = dataDir_ / L"pending-update.json";
-  const fs::path temporary = dataDir_ / L"pending-update.json.tmp";
-  {
-    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-    if (!output) return false;
-    output.write(manifestJson.data(), static_cast<std::streamsize>(manifestJson.size()));
-    output.flush();
-    if (!output) return false;
-  }
-  if (!MoveFileExW(temporary.c_str(), pending.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-    DeleteFileW(temporary.c_str());
-    return false;
-  }
-
-  const fs::path runnerDirectory = dataDir_ / L"update-runner";
-  const fs::path runner = runnerDirectory / L"HomePanelUpdater.exe";
-  std::error_code ignored;
-  fs::create_directories(runnerDirectory, ignored);
-  if (ignored || !CopyFileW(installedUpdater.c_str(), runner.c_str(), FALSE)) {
-    logger_->Warn(L"Failed to stage the update runner: " + std::to_wstring(GetLastError()));
-    return false;
-  }
-
-  std::wstring command = Quote(runner) + L" --pid " + std::to_wstring(GetCurrentProcessId()) +
-      L" --root " + Quote(rootDir_) + L" --manifest " + Quote(pending) + L" --version " + version;
-  std::vector<wchar_t> buffer(command.begin(), command.end());
-  buffer.push_back(L'\0');
-  STARTUPINFOW startup{sizeof(startup)};
-  PROCESS_INFORMATION process{};
-  if (!CreateProcessW(runner.c_str(), buffer.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
-                      nullptr, rootDir_.c_str(), &startup, &process)) {
-    logger_->Warn(L"CreateProcess for updater failed: " + std::to_wstring(GetLastError()));
-    return false;
-  }
-  CloseHandle(process.hThread);
-  CloseHandle(process.hProcess);
-  return true;
-}
-
 void App::LogUnhandled(DWORD code, void* address) {
   if (logger_) {
     std::wostringstream text;
@@ -924,3 +730,9 @@ void App::LogUnhandled(DWORD code, void* address) {
   }
 }
 }  // namespace hp
+
+// Feature groups split out of this file; compiled as part of this translation
+// unit so they share its includes and file-local helpers (unity-build pattern,
+// like renderer_core.cpp). Not listed in CMake on purpose.
+#include "app_air_history.cpp"
+#include "app_update.cpp"
