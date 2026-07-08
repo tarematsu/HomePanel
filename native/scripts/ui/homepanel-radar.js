@@ -33,12 +33,13 @@
     return frame;
   }
 
-  function loadRadarImage(url) {
+  function loadRadarImage(url, cacheKey = '') {
     return new Promise(resolve => {
       const image = new Image();
       image.onload = () => resolve(image);
       image.onerror = () => resolve(null);
-      image.src = url;
+      const separator = String(url).includes('?') ? '&' : '?';
+      image.src = cacheKey ? `${url}${separator}v=${encodeURIComponent(cacheKey)}` : url;
     });
   }
 
@@ -50,8 +51,8 @@
   function loadBaseLayers() {
     if (!baseLayersPromise) {
       baseLayersPromise = Promise.all([
-        loadRadarImage(RADAR_BASE_SATELLITE_URL),
-        loadRadarImage(RADAR_BASE_MAP_URL),
+        loadRadarImage(RADAR_BASE_SATELLITE_URL, 'bundled-satellite'),
+        loadRadarImage(RADAR_BASE_MAP_URL, 'bundled-map'),
       ]).then(([satellite, map]) => {
         if (!satellite || !map) throw new Error('bundled radar base layers unavailable');
         return { satellite, map };
@@ -96,6 +97,7 @@
       frameData?.validTime || '',
       overlayTiles.length,
       baseTiles.length || 'bundled',
+      ...overlayTiles.map(tile => String(tile?.url || '')),
     ]);
     if (signature === radarSignatureValue && radarFrame) {
       presentRadar();
@@ -107,7 +109,10 @@
     const scaleX = RADAR_WIDTH / width;
     const scaleY = RADAR_HEIGHT / height;
 
-    const overlayImages = await Promise.all(overlayTiles.map(tile => loadRadarImage(tile.url)));
+    const overlayCacheKey = `${frameData?.baseTime || ''}-${frameData?.validTime || ''}`;
+    const overlayImages = await Promise.all(
+      overlayTiles.map(tile => loadRadarImage(tile.url, `${overlayCacheKey}-${tile?.x || 0}-${tile?.y || 0}`)),
+    );
 
     const frame = buildFallbackFrame(baseLayers);
     if (!frame) return;
@@ -115,9 +120,11 @@
     if (!context) return;
 
     context.imageSmoothingEnabled = false;
+    let loadedOverlayCount = 0;
     overlayTiles.forEach((tile, index) => {
       const image = overlayImages[index];
       if (!image) return;
+      loadedOverlayCount += 1;
       context.drawImage(
         image,
         Math.round(Number(tile.destX || 0) * scaleX),
@@ -137,6 +144,12 @@
       }));
     } else {
       text('#radar-time', overlayTiles.length ? '--:--' : '待機中');
+    }
+
+    if (overlayTiles.length && loadedOverlayCount === 0) {
+      radarSignatureValue = '';
+      text('#radar-time', '--:--');
+      return;
     }
 
     radarSignatureValue = signature;
