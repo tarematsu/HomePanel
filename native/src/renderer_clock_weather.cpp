@@ -12,6 +12,17 @@ constexpr int kNativeEnergyId = 106;
 constexpr int kNativeStationheadId = 107;
 constexpr int kNativeRadarId = 108;
 
+constexpr COLORREF kWidgetBackground = RGB(7, 10, 16);
+constexpr COLORREF kWidgetSurface = RGB(18, 23, 31);
+constexpr COLORREF kWidgetSurfaceAlt = RGB(24, 31, 41);
+constexpr COLORREF kWidgetBorder = RGB(46, 56, 70);
+constexpr COLORREF kWidgetText = RGB(245, 248, 252);
+constexpr COLORREF kWidgetMuted = RGB(173, 184, 198);
+constexpr COLORREF kWidgetSubtle = RGB(124, 137, 154);
+constexpr COLORREF kWidgetBlue = RGB(110, 190, 246);
+constexpr COLORREF kWidgetGreen = RGB(114, 224, 162);
+constexpr COLORREF kWidgetOrange = RGB(255, 184, 72);
+
 RECT NativeClockRectFromBounds(const RECT& bounds) {
   return ComputeNativeDashboardLayout(bounds).clock;
 }
@@ -597,12 +608,12 @@ void Renderer::PaintNativeClock(HWND hwnd) {
   HDC memoryDc = CreateCompatibleDC(dc);
   HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
+  HBRUSH background = CreateSolidBrush(kWidgetBackground);
   FillRect(memoryDc, &bounds, background);
   DeleteObject(background);
 
   SetBkMode(memoryDc, TRANSPARENT);
-  SetTextColor(memoryDc, RGB(238, 245, 255));
+  SetTextColor(memoryDc, kWidgetMuted);
 
   SYSTEMTIME now{};
   GetLocalTime(&now);
@@ -619,7 +630,7 @@ void Renderer::PaintNativeClock(HWND hwnd) {
   SelectObject(memoryDc, previousFont);
   DeleteObject(dateFont);
 
-  SetTextColor(memoryDc, RGB(255, 255, 255));
+  SetTextColor(memoryDc, kWidgetText);
   RECT timeRect = bounds;
   timeRect.top = dateRect.bottom + 4;
   HFONT clockFont = CreateUiFont(clockHeight, FW_LIGHT);
@@ -645,7 +656,7 @@ void Renderer::PaintNativeAir(HWND hwnd) {
   HDC memoryDc = CreateCompatibleDC(dc);
   HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
+  HBRUSH background = CreateSolidBrush(kWidgetBackground);
   FillRect(memoryDc, &bounds, background);
   DeleteObject(background);
   SetBkMode(memoryDc, TRANSPARENT);
@@ -658,9 +669,9 @@ void Renderer::PaintNativeAir(HWND hwnd) {
       {L"温度", nativeSensors_.co2Connected ? Fixed(nativeSensors_.temperatureCorrected, 1) + L"℃" : L"--.-℃"},
       {L"湿度", nativeSensors_.co2Connected ? Fixed(nativeSensors_.humidityCorrected, 0) + L"%" : L"--%"},
   }};
-  HPEN border = CreatePen(PS_SOLID, 1, RGB(43, 51, 63));
+  HPEN border = CreatePen(PS_SOLID, 1, kWidgetBorder);
   HGDIOBJ previousPen = SelectObject(memoryDc, border);
-  HBRUSH card = CreateSolidBrush(RGB(21, 29, 39));
+  HBRUSH card = CreateSolidBrush(kWidgetSurfaceAlt);
   HGDIOBJ previousBrush = SelectObject(memoryDc, card);
   HFONT labelFont = CreateUiFont(15, FW_NORMAL);
   HFONT valueFont = CreateUiFont(29, FW_NORMAL);
@@ -668,11 +679,11 @@ void Renderer::PaintNativeAir(HWND hwnd) {
     RECT rect{i * (cardWidth + gap), 0, i * (cardWidth + gap) + cardWidth, bounds.bottom};
     RoundRect(memoryDc, rect.left, rect.top, rect.right, rect.bottom, 8, 8);
     RECT labelRect{rect.left, rect.top + 7, rect.right, rect.top + 25};
-    SetTextColor(memoryDc, RGB(184, 195, 208));
+    SetTextColor(memoryDc, kWidgetMuted);
     HGDIOBJ previousFont = SelectObject(memoryDc, labelFont);
     DrawTextInRect(memoryDc, values[i].first, labelRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     RECT valueRect{rect.left + 2, rect.top + 26, rect.right - 2, rect.bottom - 4};
-    SetTextColor(memoryDc, RGB(255, 255, 255));
+    SetTextColor(memoryDc, kWidgetText);
     SelectObject(memoryDc, valueFont);
     DrawTextInRect(memoryDc, values[i].second, valueRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     SelectObject(memoryDc, previousFont);
@@ -700,13 +711,13 @@ void Renderer::PaintNativeAirHistory(HWND hwnd) {
   HDC memoryDc = CreateCompatibleDC(dc);
   HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
+  HBRUSH background = CreateSolidBrush(kWidgetBackground);
   FillRect(memoryDc, &bounds, background);
   DeleteObject(background);
   SetBkMode(memoryDc, TRANSPARENT);
 
-  HPEN border = CreatePen(PS_SOLID, 1, RGB(43, 51, 63));
-  HBRUSH card = CreateSolidBrush(RGB(13, 20, 30));
+  HPEN border = CreatePen(PS_SOLID, 1, kWidgetBorder);
+  HBRUSH card = CreateSolidBrush(kWidgetSurface);
   HGDIOBJ previousPen = SelectObject(memoryDc, border);
   HGDIOBJ previousBrush = SelectObject(memoryDc, card);
   RoundRect(memoryDc, bounds.left, bounds.top, bounds.right, bounds.bottom, 8, 8);
@@ -736,12 +747,12 @@ void Renderer::PaintNativeAirHistory(HWND hwnd) {
 
   HFONT font = CreateUiFont(11, FW_NORMAL);
   HGDIOBJ previousFont = SelectObject(memoryDc, font);
-  SetTextColor(memoryDc, RGB(184, 195, 208));
+  SetTextColor(memoryDc, kWidgetMuted);
   RECT legend{bounds.left + 8, bounds.top + 5, bounds.right - 8, bounds.top + 23};
   DrawTextInRect(memoryDc, L"CO2   温度   湿度", legend, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
 
   RECT plot{bounds.left + 34, bounds.top + 28, bounds.right - 10, bounds.bottom - 22};
-  HPEN gridPen = CreatePen(PS_SOLID, 1, RGB(30, 39, 52));
+  HPEN gridPen = CreatePen(PS_SOLID, 1, RGB(32, 40, 52));
   previousPen = SelectObject(memoryDc, gridPen);
   for (int i = 0; i < 4; ++i) {
     const int y = plot.top + (plot.bottom - plot.top) * i / 3;
@@ -758,18 +769,18 @@ void Renderer::PaintNativeAirHistory(HWND hwnd) {
     const double tempMax = RangeMax(temperatureValues, 28) + 0.5;
     const double humMin = RangeMin(humidityValues, 30) - 2;
     const double humMax = RangeMax(humidityValues, 80) + 2;
-    DrawHistoryLine(memoryDc, samples, plot, cutoff, kWindowMs, co2Min, co2Max, RGB(57, 211, 83), 2,
+    DrawHistoryLine(memoryDc, samples, plot, cutoff, kWindowMs, co2Min, co2Max, kWidgetGreen, 2,
                     [](const AirHistorySample& s) { return static_cast<double>(s.co2); });
-    DrawHistoryLine(memoryDc, samples, plot, cutoff, kWindowMs, tempMin, tempMax, RGB(255, 184, 48), 1,
+    DrawHistoryLine(memoryDc, samples, plot, cutoff, kWindowMs, tempMin, tempMax, kWidgetOrange, 1,
                     [](const AirHistorySample& s) { return s.temperature; });
-    DrawHistoryLine(memoryDc, samples, plot, cutoff, kWindowMs, humMin, humMax, RGB(74, 179, 244), 1,
+    DrawHistoryLine(memoryDc, samples, plot, cutoff, kWindowMs, humMin, humMax, kWidgetBlue, 1,
                     [](const AirHistorySample& s) { return s.humidity; });
   } else {
     RECT empty{bounds.left, bounds.top, bounds.right, bounds.bottom};
     DrawTextInRect(memoryDc, L"履歴を取得中", empty, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   }
 
-  SetTextColor(memoryDc, RGB(130, 142, 156));
+  SetTextColor(memoryDc, kWidgetSubtle);
   RECT axis{bounds.left + 8, bounds.bottom - 20, bounds.right - 8, bounds.bottom - 4};
   DrawTextInRect(memoryDc, L"24時間前", axis, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
   DrawTextInRect(memoryDc, L"現在", axis, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
@@ -792,17 +803,17 @@ void Renderer::PaintNativeControls(HWND hwnd) {
   HDC memoryDc = CreateCompatibleDC(dc);
   HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
+  HBRUSH background = CreateSolidBrush(kWidgetBackground);
   FillRect(memoryDc, &bounds, background);
   DeleteObject(background);
   SetBkMode(memoryDc, TRANSPARENT);
 
   HFONT headerFont = CreateUiFont(13, FW_NORMAL);
   HGDIOBJ previousFont = SelectObject(memoryDc, headerFont);
-  SetTextColor(memoryDc, RGB(255, 255, 255));
+  SetTextColor(memoryDc, kWidgetText);
   RECT titleRect{12, 8, bounds.right - 12, 31};
   DrawTextInRect(memoryDc, L"操作", titleRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-  SetTextColor(memoryDc, RGB(184, 195, 208));
+  SetTextColor(memoryDc, kWidgetMuted);
   const std::wstring version = nativeAppVersion_.empty() ? L"" : L"v" + nativeAppVersion_;
   DrawTextInRect(memoryDc, version, titleRect, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
   SelectObject(memoryDc, previousFont);
@@ -813,13 +824,13 @@ void Renderer::PaintNativeControls(HWND hwnd) {
       {L"更新", controlButtons.update},
       {L"再起動", controlButtons.restart},
   }};
-  HPEN border = CreatePen(PS_SOLID, 1, RGB(58, 67, 80));
-  HBRUSH fill = CreateSolidBrush(RGB(24, 34, 47));
+  HPEN border = CreatePen(PS_SOLID, 1, kWidgetBorder);
+  HBRUSH fill = CreateSolidBrush(kWidgetSurfaceAlt);
   HGDIOBJ previousPen = SelectObject(memoryDc, border);
   HGDIOBJ previousBrush = SelectObject(memoryDc, fill);
   HFONT buttonFont = CreateUiFont(14, FW_SEMIBOLD);
   previousFont = SelectObject(memoryDc, buttonFont);
-  SetTextColor(memoryDc, RGB(242, 247, 250));
+  SetTextColor(memoryDc, kWidgetText);
   for (const auto& [label, rect] : buttons) {
     RoundRect(memoryDc, rect.left, rect.top, rect.right, rect.bottom, 7, 7);
     RECT textRect = rect;
@@ -859,13 +870,13 @@ void Renderer::PaintNativeNews(HWND hwnd) {
   HDC memoryDc = CreateCompatibleDC(dc);
   HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  HBRUSH background = CreateSolidBrush(RGB(15, 22, 32));
+  HBRUSH background = CreateSolidBrush(kWidgetBackground);
   FillRect(memoryDc, &bounds, background);
   DeleteObject(background);
   SetBkMode(memoryDc, TRANSPARENT);
 
-  HPEN border = CreatePen(PS_SOLID, 1, RGB(43, 51, 63));
-  HBRUSH card = CreateSolidBrush(RGB(18, 27, 38));
+  HPEN border = CreatePen(PS_SOLID, 1, kWidgetBorder);
+  HBRUSH card = CreateSolidBrush(kWidgetSurface);
   HGDIOBJ previousPen = SelectObject(memoryDc, border);
   HGDIOBJ previousBrush = SelectObject(memoryDc, card);
   RoundRect(memoryDc, bounds.left, bounds.top, bounds.right, bounds.bottom, 10, 10);
@@ -884,7 +895,7 @@ void Renderer::PaintNativeNews(HWND hwnd) {
 
   HFONT titleFont = CreateUiFont(15, FW_SEMIBOLD);
   HGDIOBJ previousFont = SelectObject(memoryDc, titleFont);
-  SetTextColor(memoryDc, RGB(245, 248, 252));
+  SetTextColor(memoryDc, kWidgetText);
   RECT titleRect{bounds.left + 12, bounds.top + 8, bounds.right - 12, bounds.top + 30};
   DrawTextInRect(memoryDc, title, titleRect, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
   SelectObject(memoryDc, previousFont);
@@ -892,7 +903,7 @@ void Renderer::PaintNativeNews(HWND hwnd) {
 
   HFONT detailFont = CreateUiFont(11, FW_NORMAL);
   previousFont = SelectObject(memoryDc, detailFont);
-  SetTextColor(memoryDc, RGB(184, 195, 208));
+  SetTextColor(memoryDc, kWidgetMuted);
   RECT detailRect{bounds.left + 12, bounds.top + 34, bounds.right - 12, bounds.bottom - 8};
   DrawTextInRect(memoryDc, detail, detailRect, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
   SelectObject(memoryDc, previousFont);
@@ -914,7 +925,7 @@ void Renderer::PaintNativeWeather(HWND hwnd) {
   HDC memoryDc = CreateCompatibleDC(dc);
   HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
+  HBRUSH background = CreateSolidBrush(kWidgetBackground);
   FillRect(memoryDc, &bounds, background);
   DeleteObject(background);
   SetBkMode(memoryDc, TRANSPARENT);
@@ -927,15 +938,15 @@ void Renderer::PaintNativeWeather(HWND hwnd) {
   }
 
   RECT popRect{bounds.left, bounds.top, bounds.left + 72, bounds.bottom};
-  HBRUSH popBrush = CreateSolidBrush(RGB(21, 29, 39));
-  HPEN border = CreatePen(PS_SOLID, 1, RGB(43, 51, 63));
+  HBRUSH popBrush = CreateSolidBrush(kWidgetSurfaceAlt);
+  HPEN border = CreatePen(PS_SOLID, 1, kWidgetBorder);
   HGDIOBJ previousBrush = SelectObject(memoryDc, popBrush);
   HGDIOBJ previousPen = SelectObject(memoryDc, border);
   RoundRect(memoryDc, popRect.left, popRect.top, popRect.right, popRect.bottom, 8, 8);
 
   HFONT smallFont = CreateUiFont(9, FW_NORMAL);
   HGDIOBJ previousFont = SelectObject(memoryDc, smallFont);
-  SetTextColor(memoryDc, RGB(184, 195, 208));
+  SetTextColor(memoryDc, kWidgetMuted);
   RECT labelRect{popRect.left, popRect.top + 18, popRect.right, popRect.top + 34};
   DrawTextInRect(memoryDc, L"降水確率", labelRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   SelectObject(memoryDc, previousFont);
@@ -943,7 +954,7 @@ void Renderer::PaintNativeWeather(HWND hwnd) {
 
   HFONT popFont = CreateUiFont(28, FW_BOLD);
   previousFont = SelectObject(memoryDc, popFont);
-  SetTextColor(memoryDc, maxPop >= 70 ? RGB(74, 179, 244) : maxPop >= 40 ? RGB(120, 190, 235) : RGB(165, 174, 186));
+  SetTextColor(memoryDc, maxPop >= 70 ? kWidgetBlue : maxPop >= 40 ? RGB(120, 190, 235) : kWidgetMuted);
   RECT valueRect{popRect.left, popRect.top + 36, popRect.right, popRect.bottom - 10};
   DrawTextInRect(memoryDc, std::to_wstring(static_cast<int>(std::round(maxPop))) + L"%", valueRect,
                  DT_CENTER | DT_SINGLELINE | DT_VCENTER);
@@ -960,12 +971,12 @@ void Renderer::PaintNativeWeather(HWND hwnd) {
     RECT cardRect{rightLeft + i * (cardWidth + cardGap), bounds.top,
                   rightLeft + i * (cardWidth + cardGap) + cardWidth, bounds.bottom};
     RoundRect(memoryDc, cardRect.left, cardRect.top, cardRect.right, cardRect.bottom, 6, 6);
-    SetTextColor(memoryDc, RGB(184, 195, 208));
+    SetTextColor(memoryDc, kWidgetMuted);
     previousFont = SelectObject(memoryDc, hourFont);
     RECT hourRect{cardRect.left, cardRect.top + 8, cardRect.right, cardRect.top + 24};
     const std::wstring hour = i < static_cast<int>(count) ? std::to_wstring(hours[i].hour) + L"時" : L"--";
     DrawTextInRect(memoryDc, hour, hourRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-    SetTextColor(memoryDc, RGB(116, 184, 229));
+    SetTextColor(memoryDc, kWidgetBlue);
     SelectObject(memoryDc, rainFont);
     RECT rainRect{cardRect.left, cardRect.top + 45, cardRect.right, cardRect.bottom - 8};
     const std::wstring rain = i < static_cast<int>(count) ? NumberOrDash(hours[i].rainMm, 0) + L"mm" : L"--";
@@ -995,14 +1006,14 @@ void Renderer::PaintNativeEnergy(HWND hwnd) {
   HDC memoryDc = CreateCompatibleDC(dc);
   HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
+  HBRUSH background = CreateSolidBrush(kWidgetBackground);
   FillRect(memoryDc, &bounds, background);
   DeleteObject(background);
   SetBkMode(memoryDc, TRANSPARENT);
 
   HFONT headerFont = CreateUiFont(13, FW_NORMAL);
   HGDIOBJ previousFont = SelectObject(memoryDc, headerFont);
-  SetTextColor(memoryDc, RGB(255, 255, 255));
+  SetTextColor(memoryDc, kWidgetText);
   RECT headerRect{bounds.left + 12, bounds.top + 8, bounds.right - 12, bounds.top + 31};
   DrawTextInRect(memoryDc, L"Octopus Energy", headerRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
   SelectObject(memoryDc, previousFont);
@@ -1021,8 +1032,8 @@ void Renderer::PaintNativeEnergy(HWND hwnd) {
       {L"今月見込み", usageText(nativeDashboard_.projectedUsage), costText(nativeDashboard_.projectedUsage)},
   }};
 
-  HPEN border = CreatePen(PS_SOLID, 1, RGB(43, 51, 63));
-  HBRUSH card = CreateSolidBrush(RGB(21, 29, 39));
+  HPEN border = CreatePen(PS_SOLID, 1, kWidgetBorder);
+  HBRUSH card = CreateSolidBrush(kWidgetSurfaceAlt);
   HGDIOBJ previousPen = SelectObject(memoryDc, border);
   HGDIOBJ previousBrush = SelectObject(memoryDc, card);
   HFONT labelFont = CreateUiFont(11, FW_NORMAL);
@@ -1034,15 +1045,15 @@ void Renderer::PaintNativeEnergy(HWND hwnd) {
     RECT rect{bounds.left + 12 + i * (summaryWidth + summaryGap), summaryTop,
               bounds.left + 12 + i * (summaryWidth + summaryGap) + summaryWidth, summaryTop + 72};
     RoundRect(memoryDc, rect.left, rect.top, rect.right, rect.bottom, 8, 8);
-    SetTextColor(memoryDc, RGB(184, 195, 208));
+    SetTextColor(memoryDc, kWidgetMuted);
     previousFont = SelectObject(memoryDc, labelFont);
     RECT labelRect{rect.left, rect.top + 7, rect.right, rect.top + 24};
     DrawTextInRect(memoryDc, std::get<0>(summary[i]), labelRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-    SetTextColor(memoryDc, RGB(255, 255, 255));
+    SetTextColor(memoryDc, kWidgetText);
     SelectObject(memoryDc, valueFont);
     RECT valueRect{rect.left, rect.top + 25, rect.right, rect.top + 51};
     DrawTextInRect(memoryDc, std::get<1>(summary[i]), valueRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-    SetTextColor(memoryDc, RGB(184, 195, 208));
+    SetTextColor(memoryDc, kWidgetMuted);
     SelectObject(memoryDc, labelFont);
     RECT costRect{rect.left, rect.top + 52, rect.right, rect.bottom - 4};
     DrawTextInRect(memoryDc, std::get<2>(summary[i]), costRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
@@ -1058,9 +1069,9 @@ void Renderer::PaintNativeEnergy(HWND hwnd) {
     const int count = static_cast<int>(nativeDashboard_.octopusHistory.size());
     const int step = std::max(1, static_cast<int>(chart.right - chart.left) / std::max(1, count));
     const int barWidth = std::max(2, step * 7 / 10);
-    HBRUSH bar = CreateSolidBrush(RGB(255, 184, 72));
+    HBRUSH bar = CreateSolidBrush(kWidgetOrange);
     HBRUSH previousBarBrush = static_cast<HBRUSH>(SelectObject(memoryDc, bar));
-    SetTextColor(memoryDc, RGB(205, 212, 222));
+    SetTextColor(memoryDc, kWidgetMuted);
     HFONT chartFont = CreateUiFont(8, FW_NORMAL);
     previousFont = SelectObject(memoryDc, chartFont);
     for (int i = 0; i < count; ++i) {
@@ -1083,7 +1094,7 @@ void Renderer::PaintNativeEnergy(HWND hwnd) {
   const int plugTop = std::max(static_cast<int>(bounds.bottom) - 48, summaryTop + 164);
   HFONT plugFont = CreateUiFont(10, FW_NORMAL);
   previousFont = SelectObject(memoryDc, plugFont);
-  SetTextColor(memoryDc, RGB(184, 195, 208));
+  SetTextColor(memoryDc, kWidgetMuted);
   RECT plugRect{bounds.left + 12, plugTop, bounds.right - 12, bounds.bottom - 8};
   std::wstring plugs = L"Plug Mini情報なし";
   if (!nativeDashboard_.switchBotDevices.empty()) {
@@ -1121,21 +1132,21 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
   HDC memoryDc = CreateCompatibleDC(dc);
   HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
+  HBRUSH background = CreateSolidBrush(kWidgetBackground);
   FillRect(memoryDc, &bounds, background);
   DeleteObject(background);
   SetBkMode(memoryDc, TRANSPARENT);
 
   HFONT headerFont = CreateUiFont(13, FW_NORMAL);
   HGDIOBJ previousFont = SelectObject(memoryDc, headerFont);
-  SetTextColor(memoryDc, RGB(255, 255, 255));
+  SetTextColor(memoryDc, kWidgetText);
   RECT header{bounds.left + 12, bounds.top + 8, bounds.right - 12, bounds.top + 31};
   DrawTextInRect(memoryDc, L"Spotify WebView2", header, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
   SelectObject(memoryDc, previousFont);
   DeleteObject(headerFont);
 
-  HPEN border = CreatePen(PS_SOLID, 1, RGB(43, 51, 63));
-  HBRUSH card = CreateSolidBrush(RGB(18, 27, 38));
+  HPEN border = CreatePen(PS_SOLID, 1, kWidgetBorder);
+  HBRUSH card = CreateSolidBrush(kWidgetSurface);
   HGDIOBJ previousPen = SelectObject(memoryDc, border);
   HGDIOBJ previousBrush = SelectObject(memoryDc, card);
   HFONT labelFont = CreateUiFont(11, FW_NORMAL);
@@ -1152,7 +1163,7 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
     RoundRect(memoryDc, rowRect.left, rowRect.top, rowRect.right, rowRect.bottom, 8, 8);
 
     RECT art{rowRect.left + 10, rowRect.top + 10, rowRect.left + 70, rowRect.bottom - 10};
-    HBRUSH artBrush = CreateSolidBrush(RGB(26, 39, 54));
+    HBRUSH artBrush = CreateSolidBrush(kWidgetSurfaceAlt);
     HGDIOBJ oldBrush = SelectObject(memoryDc, artBrush);
     RoundRect(memoryDc, art.left, art.top, art.right, art.bottom, 10, 10);
     SelectObject(memoryDc, oldBrush);
@@ -1168,7 +1179,7 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
     const std::wstring artist = playback.hasTrack ? playback.track.artist : fallbackArtist;
     const bool withProgress = playback.hasTrack && playback.track.durationMs > 0;
 
-    SetTextColor(memoryDc, RGB(184, 195, 208));
+    SetTextColor(memoryDc, kWidgetMuted);
     previousFont = SelectObject(memoryDc, labelFont);
     RECT labelRect{art.right + 12, rowRect.top + 8, rowRect.right - 112, rowRect.top + 25};
     DrawTextInRect(memoryDc, label, labelRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
@@ -1179,13 +1190,13 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
                      labelRect, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
     }
 
-    SetTextColor(memoryDc, RGB(245, 248, 252));
+    SetTextColor(memoryDc, kWidgetText);
     SelectObject(memoryDc, titleFont);
     RECT titleRect{art.right + 12, rowRect.top + 27, rowRect.right - 112, rowRect.top + 52};
     DrawTextInRect(memoryDc, title.empty() ? L"--" : title, titleRect,
                    DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
 
-    SetTextColor(memoryDc, RGB(184, 195, 208));
+    SetTextColor(memoryDc, kWidgetMuted);
     SelectObject(memoryDc, artistFont);
     RECT artistRect{art.right + 12, rowRect.top + 54, rowRect.right - 112,
                     withProgress ? rowRect.bottom - 18 : rowRect.bottom - 8};
@@ -1204,7 +1215,7 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
       fillRect.right = barRect.left +
           static_cast<int>((barRect.right - barRect.left) * ratio);
       if (fillRect.right > fillRect.left) {
-        HBRUSH fillBrush = CreateSolidBrush(RGB(114, 224, 162));
+        HBRUSH fillBrush = CreateSolidBrush(kWidgetGreen);
         FillRect(memoryDc, &fillRect, fillBrush);
         DeleteObject(fillBrush);
       }
@@ -1217,7 +1228,7 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
     RoundRect(memoryDc, button.left, button.top, button.right, button.bottom, 7, 7);
     SelectObject(memoryDc, oldBrush);
     DeleteObject(buttonBrush);
-    SetTextColor(memoryDc, muted ? RGB(255, 128, 140) : RGB(114, 224, 162));
+    SetTextColor(memoryDc, muted ? RGB(255, 128, 140) : kWidgetGreen);
     SelectObject(memoryDc, buttonFont);
     DrawTextInRect(memoryDc, muted ? L"音声OFF" : L"音声ON", button,
                    DT_CENTER | DT_SINGLELINE | DT_VCENTER);
@@ -1265,20 +1276,20 @@ void Renderer::PaintNativeRadar(HWND hwnd) {
   HDC memoryDc = CreateCompatibleDC(dc);
   HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
   HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  HBRUSH background = CreateSolidBrush(RGB(9, 14, 21));
+  HBRUSH background = CreateSolidBrush(kWidgetBackground);
   FillRect(memoryDc, &bounds, background);
   DeleteObject(background);
   SetBkMode(memoryDc, TRANSPARENT);
 
   HFONT headerFont = CreateUiFont(13, FW_NORMAL);
   HGDIOBJ previousFont = SelectObject(memoryDc, headerFont);
-  SetTextColor(memoryDc, RGB(255, 255, 255));
+  SetTextColor(memoryDc, kWidgetText);
   RECT header{bounds.left + 12, bounds.top + 8, bounds.right - 12, bounds.top + 31};
   DrawTextInRect(memoryDc, L"リアルタイム雨雲", header, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
 
   {
     std::lock_guard lock(radarFrameMutex_);
-    SetTextColor(memoryDc, RGB(184, 195, 208));
+    SetTextColor(memoryDc, kWidgetMuted);
     DrawTextInRect(memoryDc, radarTimeText_.empty() ? L"--:--" : radarTimeText_, header,
                    DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
 
@@ -1304,7 +1315,7 @@ void Renderer::PaintNativeRadar(HWND hwnd) {
         DeleteDC(frameDc);
       }
     } else {
-      SetTextColor(memoryDc, RGB(184, 195, 208));
+      SetTextColor(memoryDc, kWidgetMuted);
       DrawTextInRect(memoryDc, L"待機中", stage,
                      DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     }
