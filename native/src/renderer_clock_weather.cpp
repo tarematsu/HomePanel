@@ -16,17 +16,20 @@ constexpr COLORREF kWidgetBackground = kNativeDashboardBackground;
 constexpr COLORREF kWidgetSurface = RGB(18, 23, 31);
 constexpr COLORREF kWidgetSurfaceAlt = RGB(24, 31, 41);
 constexpr COLORREF kWidgetBorder = RGB(46, 56, 70);
-constexpr COLORREF kWidgetText = RGB(245, 248, 252);
-constexpr COLORREF kWidgetMuted = RGB(173, 184, 198);
-constexpr COLORREF kWidgetSubtle = RGB(124, 137, 154);
-constexpr COLORREF kWidgetBlue = RGB(110, 190, 246);
-constexpr COLORREF kWidgetGreen = RGB(114, 224, 162);
-constexpr COLORREF kWidgetOrange = RGB(255, 184, 72);
+// Label hierarchy follows iOS dark-mode label/secondaryLabel/tertiaryLabel.
+constexpr COLORREF kWidgetText = RGB(255, 255, 255);
+constexpr COLORREF kWidgetMuted = RGB(152, 152, 157);
+constexpr COLORREF kWidgetSubtle = RGB(99, 99, 102);
+// Accents follow iOS dark-mode system colors (systemBlue/Green/Orange/Yellow/Red).
+constexpr COLORREF kWidgetBlue = RGB(10, 132, 255);
+constexpr COLORREF kWidgetBlueMuted = RGB(64, 156, 255);
+constexpr COLORREF kWidgetGreen = RGB(48, 209, 88);
+constexpr COLORREF kWidgetOrange = RGB(255, 159, 10);
 constexpr COLORREF kWidgetPanelHero = RGB(14, 18, 26);
 constexpr COLORREF kWidgetStage = RGB(11, 16, 23);
 constexpr COLORREF kWidgetTrack = RGB(34, 44, 56);
-constexpr COLORREF kWidgetWarning = RGB(255, 209, 140);
-constexpr COLORREF kWidgetDanger = RGB(255, 128, 140);
+constexpr COLORREF kWidgetWarning = RGB(255, 214, 10);
+constexpr COLORREF kWidgetDanger = RGB(255, 69, 58);
 constexpr COLORREF kWidgetDangerSurface = RGB(42, 33, 35);
 constexpr COLORREF kWidgetSuccessSurface = RGB(24, 46, 34);
 
@@ -755,7 +758,7 @@ void Renderer::PaintNativeAir(HWND hwnd) {
       {L"湿度", nativeSensors_.co2Connected ? Fixed(nativeSensors_.humidityCorrected, 0) + L"%" : L"--%"},
   }};
   HFONT labelFont = CreateUiFont(std::clamp(height / 5, 10, 15), FW_NORMAL);
-  HFONT valueFont = CreateUiFont(std::clamp(height / 3, 18, 29), FW_NORMAL);
+  HFONT valueFont = CreateUiFont(std::clamp(height / 3, 18, 29), FW_SEMIBOLD);
   const bool compact = width < 230 && height >= 56;
   for (int i = 0; i < 3; ++i) {
     RECT rect{};
@@ -1006,7 +1009,7 @@ void Renderer::PaintNativeWeather(HWND hwnd) {
 
   HFONT popFont = CreateUiFont(std::clamp(popHeight / 3, 20, 30), FW_BOLD);
   previousFont = SelectObject(memoryDc, popFont);
-  SetTextColor(memoryDc, maxPop >= 70 ? kWidgetBlue : maxPop >= 40 ? RGB(120, 190, 235) : kWidgetMuted);
+  SetTextColor(memoryDc, maxPop >= 70 ? kWidgetBlue : maxPop >= 40 ? kWidgetBlueMuted : kWidgetMuted);
   RECT valueRect{popRect.left, popRect.top + 36, popRect.right, popRect.bottom - 10};
   DrawTextInRect(memoryDc, std::to_wstring(static_cast<int>(std::round(maxPop))) + L"%", valueRect,
                  DT_CENTER | DT_SINGLELINE | DT_VCENTER);
@@ -1077,7 +1080,7 @@ void Renderer::PaintNativeEnergy(HWND hwnd) {
   const int contentHeight = std::max(1L, content.bottom - content.top);
   const int summaryHeight = std::clamp(contentHeight / 3, 58, 72);
   HFONT labelFont = CreateUiFont(std::clamp(summaryHeight / 6, 9, 11), FW_NORMAL);
-  HFONT valueFont = CreateUiFont(std::clamp(summaryHeight / 4, 16, 20), FW_NORMAL);
+  HFONT valueFont = CreateUiFont(std::clamp(summaryHeight / 4, 16, 20), FW_SEMIBOLD);
   HGDIOBJ previousFont = nullptr;
   const int summaryGap = 8;
   const int summaryWidth = (std::max(1L, content.right - content.left) - summaryGap) / 2;
