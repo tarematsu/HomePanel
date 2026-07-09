@@ -233,9 +233,13 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
 
   // The primary Stationhead surface stays behind the dashboard during normal
   // playback. Only explicit login/auth flows may temporarily raise it so the
-  // user can complete Stationhead or Spotify sign-in.
+  // user can complete Stationhead or Spotify sign-in. A window that is already
+  // playing audio is doing its job in the background and must never be raised,
+  // so a stale spotifyAuthorization/apiAuthorization flag can no longer pop a
+  // playing window full-screen in front of the dashboard (login can never be
+  // required while audio is confirmed, so this keeps genuine login foreground).
   bool IsInteractive(const StationheadStatus& status) const noexcept {
-    return StationheadNeedsForeground(status);
+    return StationheadNeedsForeground(status) && !status.audioPlaying;
   }
 
  private:
@@ -329,7 +333,10 @@ class AppSecondaryStationheadHandle
   }
 
   bool IsInteractive(const SecondaryStationheadStatus& status) const noexcept {
-    return StationheadNeedsForeground(status);
+    // Same rule as the primary: a window playing audio stays in the background
+    // even if an auth flag is still set. The secondary reports confirmed audio
+    // via `playing` (its status has no audioPlaying field).
+    return StationheadNeedsForeground(status) && !status.playing;
   }
 
  private:
