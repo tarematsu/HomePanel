@@ -4,6 +4,4 @@
 #include "dashboard_playback_parse.cpp"
 #include "dashboard_playback_resolve.cpp"
 #include "dashboard_state_render_optimized.cpp"
-#include "radar_web.cpp"
-#include "embedded_ui_resource_compat.cpp"
 #include "embedded_ui.cpp"
