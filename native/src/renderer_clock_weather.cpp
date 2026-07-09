@@ -370,13 +370,42 @@ void DrawShadowedText(HDC dc, const std::wstring& text, RECT rect, int format, C
   DrawTextInRect(dc, text, rect, format);
 }
 
-// Draws a thick black outline (8 offset copies) behind the text instead of a
-// single drop shadow, so the clock stays legible over the busy radar map.
-void DrawOutlinedText(HDC dc, const std::wstring& text, RECT rect, int format, COLORREF color) {
-  static constexpr POINT kOffsets[] = {
-      {-2, -2}, {0, -2}, {2, -2}, {-2, 0}, {2, 0}, {-2, 2}, {0, 2}, {2, 2},
+void DrawSoftOutlinedText(HDC dc, const std::wstring& text, RECT rect, int format, COLORREF color) {
+  static constexpr POINT kSoftOffsets[] = {
+      {-3, -2}, {-1, -3}, {1, -3}, {3, -2}, {-4, 0}, {4, 0},
+      {-3, 2}, {-1, 3}, {1, 3}, {3, 2}, {0, 4},
+      {-2, -1}, {0, -2}, {2, -1}, {-2, 1}, {2, 1}, {0, 2},
   };
-  SetTextColor(dc, RGB(0, 0, 0));
+  SetTextColor(dc, RGB(6, 8, 12));
+  for (const POINT& offset : kSoftOffsets) {
+    RECT shadowRect = rect;
+    OffsetRect(&shadowRect, offset.x, offset.y);
+    DrawTextInRect(dc, text, shadowRect, format);
+  }
+  SetTextColor(dc, RGB(22, 26, 34));
+  static constexpr POINT kCoreOffsets[] = {
+      {-1, 0}, {1, 0}, {0, -1}, {0, 1},
+  };
+  for (const POINT& offset : kCoreOffsets) {
+    RECT shadowRect = rect;
+    OffsetRect(&shadowRect, offset.x, offset.y);
+    DrawTextInRect(dc, text, shadowRect, format);
+  }
+  SetTextColor(dc, color);
+  DrawTextInRect(dc, text, rect, format);
+}
+
+// Draws a soft outline behind the text so it stays legible over the busy radar
+// map without the hard, chunky edge of a single thick outline.
+void DrawOutlinedText(HDC dc, const std::wstring& text, RECT rect, int format, COLORREF color) {
+  DrawSoftOutlinedText(dc, text, rect, format, color);
+}
+
+void DrawSoftShadowedText(HDC dc, const std::wstring& text, RECT rect, int format, COLORREF color) {
+  static constexpr POINT kOffsets[] = {
+      {-2, 1}, {0, 2}, {2, 1}, {-1, 3}, {1, 3},
+  };
+  SetTextColor(dc, RGB(5, 7, 10));
   for (const POINT& offset : kOffsets) {
     RECT shadowRect = rect;
     OffsetRect(&shadowRect, offset.x, offset.y);
@@ -974,10 +1003,10 @@ void Renderer::PaintNativeControls(HWND hwnd) {
 
 void Renderer::PaintNativeNews(HWND hwnd) {
   const RECT absoluteRect = ComputeNativeDashboardLayout(bounds_).news;
-  NativePanelPaintScope scope(*this, hwnd, absoluteRect, /*tintAlpha=*/130, /*cornerRadius=*/16);
+  NativePanelPaintScope scope(*this, hwnd, absoluteRect, /*tintAlpha=*/0);
   if (!scope.Valid()) return;
   HDC memoryDc = scope.dc;
-  const RECT content = NormalizeInsetRect(scope.bounds, 16, 8, 16, 8);
+  const RECT content = NormalizeInsetRect(scope.bounds, 4, 4, 4, 4);
 
   const NewsItemData* item = nullptr;
   if (!nativeDashboard_.newsItems.empty()) {
@@ -992,16 +1021,16 @@ void Renderer::PaintNativeNews(HWND hwnd) {
   RECT titleRect{content.left, content.top, content.right, content.top + titleHeight};
   HFONT titleFont = CachedUiFont(std::clamp(titleHeight * 70 / 100, 13, 16), FW_SEMIBOLD);
   HGDIOBJ previousFont = SelectObject(memoryDc, titleFont);
-  SetTextColor(memoryDc, kWidgetText);
-  DrawTextInRect(memoryDc, title, titleRect, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
+  DrawSoftShadowedText(memoryDc, title, titleRect,
+                       DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER, kWidgetText);
   SelectObject(memoryDc, previousFont);
 
   if (!description.empty()) {
     RECT descRect{content.left, titleRect.bottom + 2, content.right, content.bottom};
     HFONT descFont = CachedUiFont(12, FW_NORMAL);
     previousFont = SelectObject(memoryDc, descFont);
-    SetTextColor(memoryDc, kWidgetMuted);
-    DrawTextInRect(memoryDc, description, descRect, DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
+    DrawSoftShadowedText(memoryDc, description, descRect,
+                         DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS, kWidgetMuted);
     SelectObject(memoryDc, previousFont);
   }
 }

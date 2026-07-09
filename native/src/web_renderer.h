@@ -98,9 +98,9 @@ inline RECT NormalizeInsetRect(RECT rect, int left, int top, int right, int bott
 
 // Overlay layout: the radar map fills the entire client area as a living
 // background. Air/Energy/Stationhead/Weather float as translucent cards in
-// the four corners (all sharing one footprint), while News/Clock/Controls
-// stack down the center: news up top, the clock centered in the remaining
-// middle space, and the update/restart buttons pinned to the bottom.
+// the four corners, while News/Clock/Controls stack down the center: news up
+// top, the clock just above the update/restart buttons, and controls pinned
+// to the bottom.
 inline NativeDashboardLayout ComputeNativeDashboardLayout(const RECT& bounds) {
   const int clientWidth = std::max(1L, bounds.right - bounds.left);
   const int clientHeight = std::max(1L, bounds.bottom - bounds.top);
@@ -112,18 +112,20 @@ inline NativeDashboardLayout ComputeNativeDashboardLayout(const RECT& bounds) {
   layout.radar = bounds;
 
   const int centerWidth = std::clamp(clientWidth * 30 / 100, 320, 480);
-  const int cornerHeight = std::clamp(clientHeight * 19 / 100, 150, 210) +
-                           std::clamp(shortSide * 8 / 100, 40, 70);
+  const int cornerBaseHeight = std::clamp(clientHeight * 19 / 100, 150, 210) +
+                               std::clamp(shortSide * 8 / 100, 40, 70);
+  const int cornerWidth = std::clamp(centerWidth * 6 / 5, 384, 576);
+  const int cornerHeight = std::clamp(cornerBaseHeight * 11 / 10, 209, 308);
   const int centerLeft = bounds.left + (clientWidth - centerWidth) / 2;
   const int centerRight = centerLeft + centerWidth;
 
   layout.air = RECT{bounds.left + margin, bounds.top + margin,
-                    bounds.left + margin + centerWidth, bounds.top + margin + cornerHeight};
-  layout.energy = RECT{bounds.right - margin - centerWidth, bounds.top + margin,
+                    bounds.left + margin + cornerWidth, bounds.top + margin + cornerHeight};
+  layout.energy = RECT{bounds.right - margin - cornerWidth, bounds.top + margin,
                        bounds.right - margin, bounds.top + margin + cornerHeight};
   layout.stationhead = RECT{bounds.left + margin, bounds.bottom - margin - cornerHeight,
-                            bounds.left + margin + centerWidth, bounds.bottom - margin};
-  layout.weather = RECT{bounds.right - margin - centerWidth, bounds.bottom - margin - cornerHeight,
+                            bounds.left + margin + cornerWidth, bounds.bottom - margin};
+  layout.weather = RECT{bounds.right - margin - cornerWidth, bounds.bottom - margin - cornerHeight,
                         bounds.right - margin, bounds.bottom - margin};
 
   const int newsHeight = std::clamp(clientHeight * 9 / 100, 56, 84);
@@ -134,9 +136,7 @@ inline NativeDashboardLayout ComputeNativeDashboardLayout(const RECT& bounds) {
                          centerRight, bounds.bottom - margin};
 
   const int clockHeight = std::clamp(clientHeight * 15 / 100, 100, 160);
-  const int clockAreaTop = layout.news.bottom + gap;
-  const int clockAreaBottom = layout.controls.top - gap;
-  const int clockTop = clockAreaTop + std::max(0, (clockAreaBottom - clockAreaTop - clockHeight) / 2);
+  const int clockTop = layout.controls.top - gap - clockHeight;
   layout.clock = RECT{centerLeft, clockTop, centerRight, clockTop + clockHeight};
 
   return layout;
