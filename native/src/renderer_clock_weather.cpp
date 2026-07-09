@@ -637,25 +637,25 @@ void Renderer::PaintNativeClock(HWND hwnd) {
   SYSTEMTIME now{};
   GetLocalTime(&now);
   const int height = std::max(1L, content.bottom - content.top);
-  const int dateHeight = std::clamp(height / 9, 14, 20);
-  const int clockHeight = std::clamp(height / 3, 48, 72);
+  const int dateHeight = std::clamp(height / 8, 14, 22);
+  const int clockHeight = std::clamp(height / 2, 52, 86);
 
   RECT dateRect = content;
-  dateRect.bottom = content.top + height / 2 - clockHeight / 2;
+  dateRect.bottom = content.top + dateHeight + 6;
   HFONT dateFont = CreateUiFont(dateHeight, FW_NORMAL);
   HGDIOBJ previousFont = SelectObject(memoryDc, dateFont);
   DrawTextW(memoryDc, DateText(now).c_str(), -1, &dateRect,
-            DT_CENTER | DT_BOTTOM | DT_SINGLELINE | DT_NOPREFIX);
+            DT_LEFT | DT_BOTTOM | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
   SelectObject(memoryDc, previousFont);
   DeleteObject(dateFont);
 
   SetTextColor(memoryDc, kWidgetText);
   RECT timeRect = content;
-  timeRect.top = dateRect.bottom + 4;
+  timeRect.top = dateRect.bottom + std::max(2, height / 12);
   HFONT clockFont = CreateUiFont(clockHeight, FW_LIGHT);
   previousFont = SelectObject(memoryDc, clockFont);
   DrawTextW(memoryDc, TimeText(now).c_str(), -1, &timeRect,
-            DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+            DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
   SelectObject(memoryDc, previousFont);
   DeleteObject(clockFont);
 
@@ -898,18 +898,20 @@ void Renderer::PaintNativeNews(HWND hwnd) {
   const std::wstring title = item ? item->title : L"ニュース取得待ち";
   const std::wstring detail = item ? item->description : L"";
 
-  HFONT titleFont = CreateUiFont(15, FW_SEMIBOLD);
+  const int contentHeight = std::max(1L, content.bottom - content.top);
+  HFONT titleFont = CreateUiFont(std::clamp(contentHeight / 6, 14, 18), FW_SEMIBOLD);
   HGDIOBJ previousFont = SelectObject(memoryDc, titleFont);
   SetTextColor(memoryDc, kWidgetText);
-  RECT titleRect{content.left, content.top, content.right, content.top + 22};
+  RECT titleRect{content.left, content.top, content.right,
+                 content.top + std::clamp(contentHeight / 4, 24, 34)};
   DrawTextInRect(memoryDc, title, titleRect, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
   SelectObject(memoryDc, previousFont);
   DeleteObject(titleFont);
 
-  HFONT detailFont = CreateUiFont(11, FW_NORMAL);
+  HFONT detailFont = CreateUiFont(std::clamp(contentHeight / 10, 10, 12), FW_NORMAL);
   previousFont = SelectObject(memoryDc, detailFont);
   SetTextColor(memoryDc, kWidgetMuted);
-  RECT detailRect{content.left, content.top + 26, content.right, content.bottom};
+  RECT detailRect{content.left, titleRect.bottom + 4, content.right, content.bottom};
   DrawTextInRect(memoryDc, detail, detailRect, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
   SelectObject(memoryDc, previousFont);
   DeleteObject(detailFont);
