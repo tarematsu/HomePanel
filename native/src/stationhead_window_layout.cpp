@@ -37,23 +37,12 @@ void ApplyStationheadChildLayout(HWND hostWindow,
                                  const RECT& bounds,
                                  bool contentVisible,
                                  bool showAuth,
-                                 bool previewVisible,
-                                 bool backgroundNeedsGeometry) {
+                                 bool previewVisible) {
   const int width = std::max(1L, bounds.right - bounds.left);
   const int height = std::max(1L, bounds.bottom - bounds.top);
-  // On-screen states (startup preview, interactive login/content) show the host
-  // on the visible desktop. Background states (normal playback and the auto-play
-  // startup scan) are parked below the parent client area so the host never
-  // paints over the dashboard. While the scan is still running the surface must
-  // keep its full pixel size, because auto-play detection relies on
-  // getBoundingClientRect()/elementFromPoint geometry that collapses at 1x1 (the
-  // scan can no longer see or click "Start Listening", so audio never starts).
-  // Once playback is confirmed (backgroundNeedsGeometry == false) it collapses
-  // to 1x1 so the GPU stops compositing a full-size hidden WebView.
-  const bool onScreen = previewVisible || contentVisible;
-  const bool fullSize = onScreen || backgroundNeedsGeometry;
-  const int hostWidth = fullSize ? width : 1;
-  const int hostHeight = fullSize ? height : 1;
+  const bool fullContent = previewVisible || contentVisible;
+  const int hostWidth = fullContent ? width : 1;
+  const int hostHeight = fullContent ? height : 1;
   const RECT contentBounds{0, 0, hostWidth, hostHeight};
   const RECT authBounds{0, 0, width, height};
 
@@ -67,19 +56,13 @@ void ApplyStationheadChildLayout(HWND hostWindow,
     if (showAuth) {
       ShowWindow(hostWindow, SW_HIDE);
     } else {
-      int posX = bounds.left;
-      int posY = bounds.top;
-      if (!onScreen) {
-        // hostWindow is a WS_CHILD, so coordinates are relative to the parent
-        // client area. Pushing the top a full virtual-screen height below the
-        // workspace bottom moves the surface entirely outside the parent's
-        // visible client (clipped away) so it never covers the dashboard.
-        posY = bounds.bottom + GetSystemMetrics(SM_CYVIRTUALSCREEN) + 8;
-      }
       SetWindowRgn(hostWindow, nullptr, FALSE);
       ShowWindow(hostWindow, SW_SHOWNOACTIVATE);
+      // Normal playback/content remains behind the dashboard. Startup preview is
+      // the only content-host case that is deliberately raised, and App clears it
+      // before the dashboard is shown.
       SetWindowPos(hostWindow, previewVisible ? HWND_TOP : HWND_BOTTOM,
-                   posX, posY, hostWidth, hostHeight,
+                   bounds.left, bounds.top, hostWidth, hostHeight,
                    SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
   }
@@ -152,8 +135,7 @@ void StationheadPlayer::KeepPlaybackBehindDashboard() {
   viewVisible_ = false;
   selectedTab_ = StationheadTabKind::None;
   ApplyStationheadChildLayout(hostWindow_, authHostWindow_, controller_.Get(), authController_.Get(),
-                              bounds_, false, false, false,
-                              !audioPlaying_.load(std::memory_order_relaxed));
+                              bounds_, false, false, false);
   backgroundHostPlaced_ = true;
   controllerLayoutValid_ = false;
   std::lock_guard lock(mutex_);
@@ -220,8 +202,7 @@ void StationheadPlayer::LayoutControllers() {
   const bool preview = startupPreviewActive_;
   const bool showAuth = !preview && selectedTab_ == StationheadTabKind::Auth && authController_;
   ApplyStationheadChildLayout(hostWindow_, authHostWindow_, controller_.Get(), authController_.Get(),
-                              bounds_, viewVisible_, showAuth, preview,
-                              !audioPlaying_.load(std::memory_order_relaxed));
+                              bounds_, viewVisible_, showAuth, preview);
   backgroundHostPlaced_ = !(preview || viewVisible_);
   controllerLayoutValid_ = true;
   lastControllerLayoutBounds_ = bounds_;
@@ -270,8 +251,7 @@ void SecondaryStationheadPlayer::LayoutWindows(bool interactive) {
   const bool showAuth = !preview && interactive && spotifyAuthorization_ && authController_;
   EnsureHostWindow();
   ApplyStationheadChildLayout(hostWindow_, authHostWindow_, controller_.Get(), authController_.Get(),
-                              bounds_, interactive, showAuth, preview,
-                              !audioPlaying_.load(std::memory_order_relaxed));
+                              bounds_, interactive, showAuth, preview);
   interactive_ = interactive;
   {
     std::lock_guard lock(mutex_);

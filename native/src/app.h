@@ -94,26 +94,17 @@ class StationheadHandleBase {
     const auto status = player_->Status();
     const bool interactive = static_cast<const Derived*>(this)->IsInteractive(status);
     const bool preview = startupPreviewActive_;
-    const bool onScreen = interactive || preview;
     const RECT activeBounds = preview ? startupPreviewBounds_ : workspaceBounds_;
-    // Background playback/scan keeps full pixel size while the auto-play scan
-    // still needs real page geometry (until audio is confirmed), then collapses
-    // to 1x1 to stop the GPU compositing a full-size hidden WebView. Either way
-    // a background host is parked below the parent client area so it never
-    // paints over the dashboard - host is a WS_CHILD, so coordinates are
-    // parent-client-relative. Preview and interactive login/auth are the only
-    // states raised onto the visible desktop. This must agree with the player's
-    // ApplyStationheadChildLayout so the two owners don't fight.
-    const bool fullSize = onScreen || static_cast<const Derived*>(this)->ScanNeedsGeometry(status);
-    const int width = fullSize ? std::max(1L, activeBounds.right - activeBounds.left) : 1;
-    const int height = fullSize ? std::max(1L, activeBounds.bottom - activeBounds.top) : 1;
-    int posX = activeBounds.left;
-    int posY = activeBounds.top;
-    if (!onScreen) {
-      posY = activeBounds.bottom + GetSystemMetrics(SM_CYVIRTUALSCREEN) + 8;
-    }
-    const HWND placement = onScreen ? HWND_TOP : HWND_BOTTOM;
-    SetWindowPos(host, placement, posX, posY, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    const bool compactPlayback = !preview && status.lightweight && !interactive;
+    const int width = compactPlayback
+        ? 2
+        : std::max(1L, activeBounds.right - activeBounds.left);
+    const int height = compactPlayback
+        ? 2
+        : std::max(1L, activeBounds.bottom - activeBounds.top);
+    const HWND placement = (interactive || preview) ? HWND_TOP : HWND_BOTTOM;
+    SetWindowPos(host, placement, activeBounds.left, activeBounds.top,
+                 width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     if (!preview) BringMainWindowToFront(host);
   }
 
@@ -247,13 +238,6 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
     return StationheadNeedsForeground(status);
   }
 
-  // Playback is confirmed once the page reports audio; until then the background
-  // auto-play scan still needs the surface at full size for its geometry-based
-  // "Start Listening" click, so it must not be collapsed to 1x1 yet.
-  bool ScanNeedsGeometry(const StationheadStatus& status) const noexcept {
-    return !status.audioPlaying;
-  }
-
  private:
   StationheadTabKind selectedTab_ = StationheadTabKind::None;
 };
@@ -346,12 +330,6 @@ class AppSecondaryStationheadHandle
 
   bool IsInteractive(const SecondaryStationheadStatus& status) const noexcept {
     return StationheadNeedsForeground(status);
-  }
-
-  // The secondary status reports confirmed audio via `playing` (its struct has
-  // no audioPlaying field); until then keep the scan surface full-size.
-  bool ScanNeedsGeometry(const SecondaryStationheadStatus& status) const noexcept {
-    return !status.playing;
   }
 
  private:
