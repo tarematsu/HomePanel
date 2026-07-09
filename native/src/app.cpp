@@ -11,7 +11,6 @@ constexpr wchar_t kWindowClass[] = L"HomePanelNativeWindow";
 constexpr UINT_PTR kCentralTimer = 1;
 constexpr UINT WM_HP_UPDATE_RESULT = WM_APP + 20;
 constexpr int kRestartExitCode = 42;
-constexpr int64_t kDashboardStartupDelayMs = 1'500;
 constexpr uint32_t kFastTickMs = 1000;
 constexpr uint32_t kIdleTickMs = 5000;
 constexpr uint32_t kMaxIdleTickMs = 30'000;
@@ -257,14 +256,28 @@ void App::ClearStartupStationheadPreview() {
 }
 
 void App::StartDeferredServices(int64_t now, const StationheadStatus& stationheadStatus) {
-  const bool audioReady = stationheadStatus.audioPlaying || stationheadStatus.lightweight;
-  const bool stationheadWindowsStarted = !secondaryStationhead_ || secondaryStarted_;
-  const bool dashboardDelayReached = stationheadWindowsStarted && now - startupAt_ >= kDashboardStartupDelayMs;
+  const bool primaryAudioReady = stationheadStatus.audioPlaying || stationheadStatus.lightweight;
+  // The split A/B startup preview stays full-size and in front (so both windows
+  // finish loading and the auto-play scan has real geometry) until playback is
+  // confirmed. Only then does the native dashboard take over and both
+  // Stationhead windows drop to the background. Read the secondary status once,
+  // and only while the dashboard has not started yet.
+  bool secondaryAudioReady = true;
+  bool secondaryLoginRequired = false;
+  if (!rendererStarted_ && secondaryStationhead_) {
+    const SecondaryStationheadStatus secondaryStatus = secondaryStationhead_->Status();
+    secondaryAudioReady = secondaryStatus.playing;
+    secondaryLoginRequired = secondaryStatus.loginRequired;
+  }
+  const bool dashboardAudioReady = primaryAudioReady && secondaryAudioReady;
+  // A login prompt on either window can never auto-confirm audio, so let it hand
+  // the screen to the dashboard immediately (the prompt itself stays in front).
+  const bool loginRequired = stationheadStatus.loginRequired || secondaryLoginRequired;
   const bool startupDeadlineReached = now - startupAt_ >= 30'000;
-  if (audioReady && playbackReadyAt_ == 0) playbackReadyAt_ = now;
+  if (primaryAudioReady && playbackReadyAt_ == 0) playbackReadyAt_ = now;
 
   if (!rendererStarted_ &&
-      (dashboardDelayReached || audioReady || startupDeadlineReached || stationheadStatus.loginRequired)) {
+      (dashboardAudioReady || startupDeadlineReached || loginRequired)) {
     renderer_->Initialize();
     rendererStarted_ = true;
     ClearStartupStationheadPreview();
@@ -272,17 +285,17 @@ void App::StartDeferredServices(int64_t now, const StationheadStatus& stationhea
     PublishRenderStateNow();
     renderer_->TickNativePanels(now);
     InvalidateAll();
-    logger_->Info(dashboardDelayReached && !audioReady && !startupDeadlineReached && !stationheadStatus.loginRequired
-        ? L"Native dashboard started after Stationhead A/B startup preview"
-        : (audioReady
-            ? L"Native dashboard started after Stationhead audio confirmation"
+    logger_->Info(dashboardAudioReady
+        ? L"Native dashboard started after Stationhead A/B audio confirmation"
+        : (loginRequired
+            ? L"Native dashboard started because Stationhead login is required"
             : L"Native dashboard started after startup fallback deadline"));
   }
 
-  if (!cloudStarted_ && (audioReady || startupDeadlineReached)) {
+  if (!cloudStarted_ && (primaryAudioReady || startupDeadlineReached)) {
     cloud_->Start();
     cloudStarted_ = true;
-    logger_->Info(audioReady
+    logger_->Info(primaryAudioReady
         ? L"Cloud synchronization started after Stationhead audio confirmation"
         : L"Cloud synchronization started after startup fallback deadline");
   }
