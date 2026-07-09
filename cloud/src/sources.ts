@@ -1,5 +1,6 @@
 import { fetchText } from "./http";
-import { fetchOctopus, fetchRadar } from "./sources_services";
+import { fetchOctopus } from "./octopus_source";
+import { fetchRadar } from "./radar_source";
 import { fetchStationhead } from "./spotify_source";
 
 export interface Env {

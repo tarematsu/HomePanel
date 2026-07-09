@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchOctopus } from "../src/sources_services";
+import { fetchOctopus } from "../src/octopus_source";
 import { fetchStationhead } from "../src/spotify_source";
 import type { Env } from "../src/sources";
 

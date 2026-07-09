@@ -13,9 +13,9 @@ import {
   getDeviceCommands,
   getDeviceConfig,
   getDeviceSync,
-  proxyRadarTile,
   putDeviceConfig,
 } from "./device_control";
+import { proxyRadarTile } from "./radar_tile";
 import type { Env } from "./sources";
 import { fetchStationhead } from "./spotify_source";
 import { receiveTelemetryOptimized } from "./telemetry_route";
