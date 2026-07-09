@@ -15,7 +15,6 @@ constexpr int kNativeRadarId = 108;
 constexpr COLORREF kWidgetBackground = kNativeDashboardBackground;
 constexpr COLORREF kWidgetSurface = RGB(18, 23, 31);
 constexpr COLORREF kWidgetSurfaceAlt = RGB(24, 31, 41);
-constexpr COLORREF kWidgetBorder = RGB(46, 56, 70);
 // Label hierarchy follows iOS dark-mode label/secondaryLabel/tertiaryLabel.
 constexpr COLORREF kWidgetText = RGB(255, 255, 255);
 constexpr COLORREF kWidgetMuted = RGB(152, 152, 157);
@@ -179,43 +178,37 @@ void FillWidgetBackground(HDC dc, const RECT& bounds) {
 }
 
 RECT DrawWidgetSurface(HDC dc, const RECT& bounds, COLORREF color = kWidgetSurface) {
-  HPEN border = CreatePen(PS_SOLID, 1, kWidgetBorder);
   HBRUSH surface = CreateSolidBrush(color);
-  HGDIOBJ previousPen = SelectObject(dc, border);
+  HGDIOBJ previousPen = SelectObject(dc, GetStockObject(NULL_PEN));
   HGDIOBJ previousBrush = SelectObject(dc, surface);
-  RoundRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom, 8, 8);
+  RoundRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom, 20, 20);
   SelectObject(dc, previousBrush);
   SelectObject(dc, previousPen);
   DeleteObject(surface);
-  DeleteObject(border);
-  return NormalizeInsetRect(bounds, 12, 10, 12, 10);
+  return NormalizeInsetRect(bounds, 16, 14, 16, 14);
 }
 
 void DrawWidgetCard(HDC dc, const RECT& rect, COLORREF color = kWidgetSurfaceAlt,
-                    int radius = 8) {
+                    int radius = 14) {
   if (rect.right <= rect.left || rect.bottom <= rect.top) return;
-  HPEN border = CreatePen(PS_SOLID, 1, kWidgetBorder);
   HBRUSH fill = CreateSolidBrush(color);
-  HGDIOBJ previousPen = SelectObject(dc, border);
+  HGDIOBJ previousPen = SelectObject(dc, GetStockObject(NULL_PEN));
   HGDIOBJ previousBrush = SelectObject(dc, fill);
   RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
   SelectObject(dc, previousBrush);
   SelectObject(dc, previousPen);
   DeleteObject(fill);
-  DeleteObject(border);
 }
 
 void DrawWidgetPill(HDC dc, const RECT& rect, COLORREF color) {
   if (rect.right <= rect.left || rect.bottom <= rect.top) return;
   HBRUSH fill = CreateSolidBrush(color);
+  HGDIOBJ previousPen = SelectObject(dc, GetStockObject(NULL_PEN));
   HGDIOBJ previousBrush = SelectObject(dc, fill);
-  HPEN pen = CreatePen(PS_SOLID, 1, color);
-  HGDIOBJ previousPen = SelectObject(dc, pen);
   const int radius = std::max(2L, rect.bottom - rect.top);
   RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
-  SelectObject(dc, previousPen);
   SelectObject(dc, previousBrush);
-  DeleteObject(pen);
+  SelectObject(dc, previousPen);
   DeleteObject(fill);
 }
 
@@ -751,7 +744,7 @@ void Renderer::PaintNativeAir(HWND hwnd) {
 
   const int width = std::max(1L, content.right - content.left);
   const int height = std::max(1L, content.bottom - content.top);
-  const int gap = 5;
+  const int gap = 16;
   const std::array<std::pair<std::wstring, std::wstring>, 3> values{{
       {L"CO2", nativeSensors_.co2Connected ? std::to_wstring(nativeSensors_.co2) + L" ppm" : L"--- ppm"},
       {L"温度", nativeSensors_.co2Connected ? Fixed(nativeSensors_.temperatureCorrected, 1) + L"℃" : L"--.-℃"},
@@ -774,7 +767,6 @@ void Renderer::PaintNativeAir(HWND hwnd) {
       rect = RECT{content.left + i * (cardWidth + gap), content.top,
                   content.left + i * (cardWidth + gap) + cardWidth, content.bottom};
     }
-    DrawWidgetCard(memoryDc, rect);
     RECT labelRect{rect.left, rect.top + 6, rect.right, rect.top + std::clamp(height / 3, 20, 26)};
     SetTextColor(memoryDc, kWidgetMuted);
     HGDIOBJ previousFont = SelectObject(memoryDc, labelFont);
@@ -903,7 +895,7 @@ void Renderer::PaintNativeControls(HWND hwnd) {
   HGDIOBJ previousFont = SelectObject(memoryDc, buttonFont);
   SetTextColor(memoryDc, kWidgetText);
   for (const auto& [label, rect] : buttons) {
-    DrawWidgetCard(memoryDc, rect, kWidgetSurfaceAlt, 7);
+    DrawWidgetCard(memoryDc, rect, kWidgetSurfaceAlt);
     RECT textRect = rect;
     DrawTextInRect(memoryDc, label, textRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   }
@@ -996,7 +988,6 @@ void Renderer::PaintNativeWeather(HWND hwnd) {
   const int contentWidth = std::max(1L, content.right - content.left);
   const int popWidth = std::clamp(contentWidth / 4, 58, 72);
   RECT popRect{content.left, content.top, content.left + popWidth, content.bottom};
-  DrawWidgetCard(memoryDc, popRect);
 
   const int popHeight = std::max(1, static_cast<int>(popRect.bottom - popRect.top));
   HFONT smallFont = CreateUiFont(std::clamp(popHeight / 9, 8, 10), FW_NORMAL);
@@ -1018,15 +1009,14 @@ void Renderer::PaintNativeWeather(HWND hwnd) {
 
   HFONT hourFont = CreateUiFont(10, FW_NORMAL);
   HFONT rainFont = CreateUiFont(13, FW_NORMAL);
-  const int rightLeft = popRect.right + 6;
-  const int cardGap = 3;
+  const int rightLeft = popRect.right + 18;
+  const int cardGap = 12;
   const int availableWidth = std::max(1L, content.right - rightLeft);
   const int slotCount = std::clamp(availableWidth / 42, 2, 5);
   const int cardWidth = std::max(1, (availableWidth - cardGap * (slotCount - 1)) / slotCount);
   for (int i = 0; i < slotCount; ++i) {
     RECT cardRect{rightLeft + i * (cardWidth + cardGap), content.top,
                   rightLeft + i * (cardWidth + cardGap) + cardWidth, content.bottom};
-    DrawWidgetCard(memoryDc, cardRect, kWidgetSurfaceAlt, 6);
     SetTextColor(memoryDc, kWidgetMuted);
     previousFont = SelectObject(memoryDc, hourFont);
     RECT hourRect{cardRect.left, cardRect.top + 8, cardRect.right, cardRect.top + 24};
@@ -1082,13 +1072,12 @@ void Renderer::PaintNativeEnergy(HWND hwnd) {
   HFONT labelFont = CreateUiFont(std::clamp(summaryHeight / 6, 9, 11), FW_NORMAL);
   HFONT valueFont = CreateUiFont(std::clamp(summaryHeight / 4, 16, 20), FW_SEMIBOLD);
   HGDIOBJ previousFont = nullptr;
-  const int summaryGap = 8;
+  const int summaryGap = 20;
   const int summaryWidth = (std::max(1L, content.right - content.left) - summaryGap) / 2;
   for (int i = 0; i < 2; ++i) {
     RECT rect{content.left + i * (summaryWidth + summaryGap), content.top + 30,
               content.left + i * (summaryWidth + summaryGap) + summaryWidth,
               content.top + 30 + summaryHeight};
-    DrawWidgetCard(memoryDc, rect);
     SetTextColor(memoryDc, kWidgetMuted);
     previousFont = SelectObject(memoryDc, labelFont);
     RECT labelRect{rect.left, rect.top + 7, rect.right, rect.top + 24};
@@ -1185,7 +1174,7 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
   HGDIOBJ previousFont = nullptr;
   const StationheadButtonRects stationButtons = StationheadButtonsFromBounds(content);
   const int contentHeight = std::max(1L, content.bottom - content.top);
-  const int rowGap = 8;
+  const int rowGap = 18;
   const int rowTop = content.top + 30;
   const int rowHeight = std::max(56, (contentHeight - 30 - rowGap) / 2);
   const int contentWidth = std::max(1L, content.right - content.left);
@@ -1197,12 +1186,11 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
                            const std::wstring& detail) {
     const int top = rowTop + row * (rowHeight + rowGap);
     RECT rowRect{content.left, top, content.right, std::min<LONG>(top + rowHeight, content.bottom)};
-    DrawWidgetCard(memoryDc, rowRect, kWidgetSurface);
 
     const int artSize = std::clamp(static_cast<int>(rowRect.bottom - rowRect.top) - 20, 42, 60);
     RECT art{rowRect.left + 10, rowRect.top + 10, rowRect.left + 10 + artSize,
              rowRect.top + 10 + artSize};
-    DrawWidgetCard(memoryDc, art, kWidgetSurfaceAlt, 8);
+    DrawWidgetCard(memoryDc, art, kWidgetSurfaceAlt);
     if (playback.hasTrack) {
       DrawPremultipliedBitmap(memoryDc,
                               NativeArtworkBitmap(playback.track.artwork, art.right - art.left,
@@ -1259,7 +1247,7 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
       }
     }
 
-    DrawWidgetCard(memoryDc, button, muted ? kWidgetDangerSurface : kWidgetSuccessSurface, 7);
+    DrawWidgetCard(memoryDc, button, muted ? kWidgetDangerSurface : kWidgetSuccessSurface);
     SetTextColor(memoryDc, muted ? kWidgetDanger : kWidgetGreen);
     SelectObject(memoryDc, buttonFont);
     DrawTextInRect(memoryDc, muted ? L"音声OFF" : L"音声ON", button,
