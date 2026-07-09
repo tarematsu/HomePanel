@@ -493,6 +493,7 @@ void Renderer::StopNativePlaybackBridge() noexcept {
 }
 
 void Renderer::NativePlaybackLoop() {
+  const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   while (!nativePlaybackStopping_.load(std::memory_order_acquire)) {
     for (size_t index = 0; index < std::size(kPlaybackEndpoints); ++index) {
       if (nativePlaybackStopping_.load(std::memory_order_acquire)) break;
@@ -519,7 +520,6 @@ void Renderer::NativePlaybackLoop() {
         update.hasPayload = update.error.empty() && !update.payload.empty();
         update.revision = ++nativePlaybackRevision_;
       }
-      InvalidateRect(window_, nullptr, FALSE);
       const HWND stationheadWindow = nativeStationheadWindow_;
       if (stationheadWindow && IsWindow(stationheadWindow)) {
         InvalidateRect(stationheadWindow, nullptr, FALSE);
@@ -532,6 +532,7 @@ void Renderer::NativePlaybackLoop() {
         std::chrono::milliseconds(kNativePlaybackPollMs),
         [this] { return nativePlaybackStopping_.load(std::memory_order_acquire); });
   }
+  if (SUCCEEDED(apartment)) CoUninitialize();
 }
 
 }  // namespace hp

@@ -141,6 +141,7 @@ void Renderer::StopRadarCompose() noexcept {
 }
 
 void Renderer::RadarComposeLoop() {
+  const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   while (!radarComposeStopping_.load(std::memory_order_acquire)) {
     {
       std::unique_lock waitLock(radarComposeWakeMutex_);
@@ -156,6 +157,7 @@ void Renderer::RadarComposeLoop() {
     } catch (...) {
     }
   }
+  if (SUCCEEDED(apartment)) CoUninitialize();
 }
 
 void Renderer::ComposeRadarFrame() {

@@ -105,14 +105,15 @@ export async function updateFileResponse(request: Request, env: Env, name: strin
     if (!constantTimeEqual(supplied, expected)) return json({ error: "invalid update signature" }, 403);
 
     const downloaded = await readObject(env, updateKey(env, `releases/${version}/${name}`));
-    const contentLength = downloaded.size ?? downloaded.httpEtag?.length ?? 0;
     const headers = new Headers({
       "Content-Type": downloaded.httpMetadata?.contentType || "application/octet-stream",
       "Content-Disposition": `attachment; filename=\"${name}\"`,
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
     });
-    if (contentLength > 0) headers.set("Content-Length", String(contentLength));
+    if (Number.isFinite(downloaded.size) && downloaded.size > 0) {
+      headers.set("Content-Length", String(downloaded.size));
+    }
     return new Response(downloaded.body, { status: 200, headers });
   } catch (error) {
     return unavailable("file", error);

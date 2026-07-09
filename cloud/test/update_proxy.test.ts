@@ -5,6 +5,7 @@ import type { Env } from "../src/sources";
 type StoredObject = {
   body: Uint8Array;
   contentType?: string;
+  size?: number;
 };
 
 function text(value: string): Uint8Array {
@@ -23,7 +24,7 @@ function bucket(objects: Record<string, StoredObject>): R2Bucket {
             controller.close();
           },
         }),
-        size: object.body.byteLength,
+        size: object.size,
         httpEtag: `"${key}"`,
         httpMetadata: object.contentType ? { contentType: object.contentType } : undefined,
         async text() {
@@ -92,6 +93,7 @@ describe("update proxy", () => {
     const response = await updateFileResponse(new Request(fileUrl!), env, "HomePanel.exe");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(response.headers.get("content-length")).toBeNull();
     const body = new TextDecoder().decode(await response.arrayBuffer());
     expect(body).toBe("binary-homepanel");
   });

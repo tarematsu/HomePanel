@@ -186,6 +186,28 @@ void FillWidgetBackground(HDC dc, const RECT& bounds) {
 
 void AlphaBlendSolidColor(HDC dc, const RECT& rect, COLORREF color, BYTE alpha);
 
+HBITMAP SolidColorBitmap(COLORREF color) {
+  static std::map<COLORREF, HBITMAP> cache;
+  auto [entry, inserted] = cache.try_emplace(color, nullptr);
+  if (!inserted) return entry->second;
+
+  BITMAPINFO info{};
+  info.bmiHeader.biSize = sizeof(info.bmiHeader);
+  info.bmiHeader.biWidth = 1;
+  info.bmiHeader.biHeight = -1;
+  info.bmiHeader.biPlanes = 1;
+  info.bmiHeader.biBitCount = 32;
+  info.bmiHeader.biCompression = BI_RGB;
+  void* pixel = nullptr;
+  HBITMAP bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixel, nullptr, 0);
+  if (bitmap && pixel) {
+    *static_cast<uint32_t*>(pixel) =
+        (GetRValue(color) << 16) | (GetGValue(color) << 8) | GetBValue(color);
+  }
+  entry->second = bitmap;
+  return bitmap;
+}
+
 // Fills a rounded-rect region with an alpha-blended solid color instead of an
 // opaque brush, so the panel's sampled radar background shows through.
 void FillRoundRectTranslucent(HDC dc, const RECT& rect, COLORREF color, int radius, BYTE alpha) {
@@ -414,20 +436,15 @@ void StretchRadarSampleInto(HDC destDc, const RECT& destRect, HBITMAP radarBitma
 
 void AlphaBlendSolidColor(HDC dc, const RECT& rect, COLORREF color, BYTE alpha) {
   if (alpha == 0 || rect.right <= rect.left || rect.bottom <= rect.top) return;
+  HBITMAP colorBitmap = SolidColorBitmap(color);
+  if (!colorBitmap) return;
   HDC colorDc = CreateCompatibleDC(dc);
   if (!colorDc) return;
-  HBITMAP colorBitmap = CreateCompatibleBitmap(dc, 1, 1);
-  if (!colorBitmap) {
-    DeleteDC(colorDc);
-    return;
-  }
   HGDIOBJ previousBitmap = SelectObject(colorDc, colorBitmap);
-  SetPixelV(colorDc, 0, 0, color);
   const BLENDFUNCTION blend{AC_SRC_OVER, 0, alpha, 0};
   AlphaBlend(dc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
             colorDc, 0, 0, 1, 1, blend);
   SelectObject(colorDc, previousBitmap);
-  DeleteObject(colorBitmap);
   DeleteDC(colorDc);
 }
 }  // namespace
@@ -439,6 +456,14 @@ Renderer::NativePanelPaintScope::NativePanelPaintScope(Renderer& renderer, HWND 
   GetClientRect(hwnd, &bounds);
   dc = CreateCompatibleDC(paintDc);
   HBITMAP bitmap = renderer.NativePanelBackBuffer(hwnd, paintDc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  if (!dc || !bitmap) {
+    if (dc) {
+      DeleteDC(dc);
+      dc = nullptr;
+    }
+    FillWidgetBackground(paintDc, bounds);
+    return;
+  }
   previousBitmap = SelectObject(dc, bitmap);
 
   const RECT sampleRect = RadarSampleRectFor(absoluteRect, renderer.bounds_);

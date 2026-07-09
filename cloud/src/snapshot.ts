@@ -197,7 +197,8 @@ export async function updateState(
   }
 
   const payload = JSON.stringify(result.payload);
-  const hash = await sha256Hex(JSON.stringify(stablePayload(result)));
+  const stable = stablePayload(result);
+  const hash = await sha256Hex(stable === result.payload ? payload : JSON.stringify(stable));
   if (previous?.content_hash === hash) {
     const heartbeatDue = now - previous.fetched_at >= STATE_HEARTBEAT_MS;
     const recovered = previous.status !== "ok" || previous.error !== null;
