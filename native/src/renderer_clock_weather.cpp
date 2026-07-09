@@ -802,7 +802,7 @@ void Renderer::PaintNativeAir(HWND hwnd) {
 
   const int width = std::max(1L, content.right - content.left);
   const int statsTop = content.top + 30;
-  const int statsHeight = std::clamp((content.bottom - content.top) * 22 / 100, 50, 70);
+  const int statsHeight = std::clamp(static_cast<int>(content.bottom - content.top) * 22 / 100, 50, 70);
   const int gap = 16;
   const std::array<std::pair<std::wstring, std::wstring>, 3> values{{
       {L"CO2", nativeSensors_.co2Connected ? std::to_wstring(nativeSensors_.co2) + L" ppm" : L"--- ppm"},
@@ -935,7 +935,7 @@ void Renderer::PaintNativeNews(HWND hwnd) {
   }
   const std::wstring title = item ? item->title : L"ニュース取得待ち";
 
-  HFONT titleFont = CachedUiFont(std::clamp((content.bottom - content.top) * 45 / 100, 13, 16), FW_NORMAL);
+  HFONT titleFont = CachedUiFont(std::clamp(static_cast<int>(content.bottom - content.top) * 45 / 100, 13, 16), FW_NORMAL);
   HGDIOBJ previousFont = SelectObject(memoryDc, titleFont);
   SetTextColor(memoryDc, kWidgetText);
   DrawTextInRect(memoryDc, title, content, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
