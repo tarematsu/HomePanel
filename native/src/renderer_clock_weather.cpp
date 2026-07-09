@@ -1185,6 +1185,8 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
   const int rowGap = 8;
   const int rowTop = content.top + 30;
   const int rowHeight = std::max(56, (contentHeight - 30 - rowGap) / 2);
+  const int contentWidth = std::max(1L, content.right - content.left);
+  const bool compactRows = contentWidth < 300;
 
   const auto drawRow = [&](int row, const std::wstring& label, bool muted,
                            const NativePlaybackRender& playback,
@@ -1209,7 +1211,10 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
     const std::wstring artist = playback.hasTrack ? playback.track.artist : fallbackArtist;
     const bool withProgress = playback.hasTrack && playback.track.durationMs > 0;
     RECT button = row == 0 ? stationButtons.primaryAudio : stationButtons.secondaryAudio;
-    const int textRight = std::max(art.right + 28, button.left - 8);
+    if (compactRows) {
+      button = RECT{rowRect.right - 88, rowRect.bottom - 34, rowRect.right - 10, rowRect.bottom - 8};
+    }
+    const int textRight = compactRows ? rowRect.right - 10 : std::max(art.right + 28, button.left - 8);
 
     SetTextColor(memoryDc, kWidgetMuted);
     previousFont = SelectObject(memoryDc, labelFont);
@@ -1231,12 +1236,14 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
     SetTextColor(memoryDc, kWidgetMuted);
     SelectObject(memoryDc, artistFont);
     RECT artistRect{art.right + 12, rowRect.top + 54, textRight,
-                    withProgress ? rowRect.bottom - 18 : rowRect.bottom - 8};
+                    compactRows ? button.top - 4 : withProgress ? rowRect.bottom - 18 : rowRect.bottom - 8};
     DrawTextInRect(memoryDc, artist.empty() ? detail : artist, artistRect,
                    DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
 
     if (withProgress) {
-      RECT barRect{art.right + 12, rowRect.bottom - 14, textRight, rowRect.bottom - 10};
+      RECT barRect{art.right + 12, compactRows ? button.top - 8 : rowRect.bottom - 14,
+                   compactRows ? button.left - 8 : textRight,
+                   compactRows ? button.top - 4 : rowRect.bottom - 10};
       DrawWidgetPill(memoryDc, barRect, kWidgetTrack);
       const double ratio = std::clamp(
           static_cast<double>(playback.progressMs) / static_cast<double>(playback.track.durationMs),
