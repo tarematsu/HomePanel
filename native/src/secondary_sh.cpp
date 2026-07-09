@@ -52,7 +52,6 @@ SecondaryStationheadStatus SecondaryStationheadPlayer::Status() const {
   std::lock_guard lock(mutex_);
   SecondaryStationheadStatus copy = status_;
   copy.playing = audioPlaying_.load(std::memory_order_relaxed);
-  copy.lightweight = false;
   copy.loginRequired = loginRequired_;
   copy.audioMuted = audioMuted_.load(std::memory_order_relaxed);
   return copy;
@@ -317,7 +316,6 @@ void SecondaryStationheadPlayer::CloseWebView() {
     status_.created = false;
     status_.navigating = false;
     status_.playing = false;
-    status_.lightweight = false;
     status_.loginRequired = false;
     status_.spotifyAuthorization = false;
     status_.visible = false;

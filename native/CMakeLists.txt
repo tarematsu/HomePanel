@@ -127,7 +127,7 @@ set(HOMEPANEL_STATIONHEAD_SOURCES
 
 set(HOMEPANEL_RENDERER_SOURCES
   src/renderer_core.cpp
-  src/renderer_clock_weather.cpp
+  src/renderer_panels.cpp
   src/renderer_radar_ui.cpp)
 
 set(HOMEPANEL_RESOURCE_SOURCES
@@ -145,8 +145,8 @@ homepanel_configure_common_target(HomePanel)
 add_dependencies(HomePanel homepanel_version_files)
 target_link_libraries(HomePanel PRIVATE
   "${WEBVIEW2_NATIVE_DIR}/WebView2Loader.dll.lib"
-  d2d1 dwrite d3d11 dcomp dxgi windowscodecs winhttp bcrypt wintrust setupapi psapi shell32
-  ole32 oleaut32 user32 gdi32 msimg32 shlwapi windowsapp runtimeobject powrprof crypt32 iphlpapi)
+  windowscodecs winhttp bcrypt wintrust setupapi psapi shell32
+  ole32 oleaut32 user32 gdi32 msimg32 shlwapi windowsapp runtimeobject crypt32 iphlpapi)
 add_custom_command(TARGET HomePanel POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
           "${WEBVIEW2_NATIVE_DIR}/WebView2Loader.dll" "$<TARGET_FILE_DIR:HomePanel>/WebView2Loader.dll"

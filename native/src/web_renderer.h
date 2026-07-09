@@ -147,7 +147,6 @@ class Renderer {
   void Resize(int width, int height);
   void SetBounds(const RECT& bounds);
   void SetVisible(bool visible);
-  bool IsUiReady() const noexcept { return true; }
   bool LoadDashboard(const fs::path& jsonPath, bool* changed = nullptr);
   int NewsCount() const { return newsCount_; }
   void Render(const RECT& dirty, const RenderState& state);

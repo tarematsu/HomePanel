@@ -24,30 +24,15 @@ struct StationheadStatus {
   bool playing = false;
   bool loginRequired = false;
   bool spotifyAuthorization = false;
-  bool apiAuthorization = false;
-  bool lightweight = false;
   bool visible = false;
   bool processFailed = false;
   bool spotifyConfigured = false;
   bool authAvailable = false;
   bool audioPlaying = false;
-  bool audioSilent = false;
   bool audioMuted = false;
   bool secondaryAudioMuted = false;
-  int healthMisses = 0;
-  int64_t lastPlaybackConfirmedAt = 0;
-  size_t processWorkingSet = 0;
-  double processCpuPercent = 0;
-  uint64_t blockedResources = 0;
   std::wstring url;
   std::wstring detail;
-  std::wstring trackTitle;
-  std::wstring trackArtist;
-  std::wstring deviceName;
-  std::wstring artworkUrl;
-  int64_t sampledAt = 0;
-  int64_t expectedEndAt = 0;
-  int64_t trackDurationMs = 0;
 
   bool operator==(const StationheadStatus&) const = default;
 };
@@ -100,7 +85,6 @@ class StationheadPlayer {
   void SetStartupBounds();
   void SetVisible(bool visible);
   void ScheduleRecreate(const std::wstring& reason);
-  size_t MeasureProcessWorkingSet();
   void LayoutControllers();
 
   HWND window_;
@@ -143,7 +127,6 @@ class StationheadPlayer {
   std::atomic<bool> changeMessagePending_{false};
   std::wstring pendingAuthorizationUrl_;
   int64_t createdAt_ = 0;
-  int64_t lastMemoryCheckAt_ = 0;
   int64_t lastReloadAt_ = 0;
   int64_t noAudioSinceAt_ = 0;
   int64_t nextTickAt_ = 0;

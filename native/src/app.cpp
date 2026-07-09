@@ -222,7 +222,7 @@ void App::ClearStartupStationheadPreview() {
 }
 
 void App::StartDeferredServices(int64_t now, const StationheadStatus& stationheadStatus) {
-  const bool primaryAudioReady = stationheadStatus.audioPlaying || stationheadStatus.lightweight;
+  const bool primaryAudioReady = stationheadStatus.audioPlaying;
   // The split A/B startup preview stays full-size and in front (so both windows
   // finish loading and the auto-play scan has real geometry) until playback is
   // confirmed. Only then does the native dashboard take over and both

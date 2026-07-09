@@ -1163,7 +1163,7 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
       : nativeStationhead_.created ? L"接続中"
       : L"起動待ち";
   drawRow(0, L"StationheadウインドウA", nativeStationhead_.audioMuted, playbackA,
-          nativeStationhead_.trackTitle, nativeStationhead_.trackArtist, detail);
+          L"", L"", detail);
   drawRow(1, L"StationheadウインドウB", nativeStationhead_.secondaryAudioMuted, playbackB,
           L"Buddy46", L"",
           playbackB.available && !playbackB.hasTrack ? L"次の曲を待機中"

@@ -1,7 +1,6 @@
 #include "sh.h"
 #include "shared_webview_environment.h"
 #include "sh_shared.h"
-#include <psapi.h>
 #include <winrt/Windows.Data.Json.h>
 
 namespace hp {
@@ -47,12 +46,8 @@ StationheadStatus StationheadPlayer::Status() const {
   StationheadStatus copy = status_;
   copy.authAvailable = authController_ != nullptr || !authPendingUrl_.empty();
   copy.spotifyAuthorization = spotifyAuthorization_;
-  copy.apiAuthorization = false;
   copy.audioPlaying = audioPlaying_.load(std::memory_order_relaxed);
   copy.playing = copy.audioPlaying;
-  copy.audioSilent = false;
-  copy.lightweight = false;
-  copy.blockedResources = 0;
   copy.audioMuted = audioMuted_.load(std::memory_order_relaxed);
   return copy;
 }
@@ -273,7 +268,6 @@ void StationheadPlayer::ConfigureWebView() {
                   status_.loginRequired = false;
                   status_.navigating = false;
                   status_.detail = usedFallback_ ? L"fallback audio detected" : L"audio detected";
-                  status_.lastPlaybackConfirmedAt = now;
                 }
                 // Re-assert the z-order exactly once per confirmed playback
                 // (each scheduled reload), instead of every tick. The startup
@@ -392,14 +386,12 @@ void StationheadPlayer::ConfigureWebView() {
   {
     std::lock_guard lock(mutex_);
     const bool spotifyConfigured = status_.spotifyConfigured;
-    const int64_t lastConfirmed = status_.lastPlaybackConfirmedAt;
     status_ = {};
     status_.created = true;
     status_.navigating = true;
     status_.url = config_.url;
     status_.detail = L"起動中";
     status_.spotifyConfigured = spotifyConfigured;
-    status_.lastPlaybackConfirmedAt = lastConfirmed;
   }
   createdAt_ = lastReloadAt_ = UnixMillis();
   noAudioSinceAt_ = createdAt_;
@@ -508,7 +500,6 @@ void StationheadPlayer::CloseWebView() {
   noAudioSinceAt_ = 0;
   std::lock_guard lock(mutex_);
   status_.created = false;
-  status_.lightweight = false;
 }
 
 void StationheadPlayer::CloseAuthWebView() {
@@ -568,14 +559,6 @@ void StationheadPlayer::Tick(int64_t nowMs) {
     return;
   }
 
-  const int64_t memoryCheckInterval = 60 * 60'000;
-  if (nowMs - lastMemoryCheckAt_ >= memoryCheckInterval) {
-    lastMemoryCheckAt_ = nowMs;
-    const size_t memory = MeasureProcessWorkingSet();
-    std::lock_guard lock(mutex_);
-    status_.processWorkingSet = memory;
-  }
-
   int64_t next = nowMs + 30 * 60'000;
   const auto consider = [&](int64_t deadline) {
     if (deadline <= nowMs) next = nowMs + 1'000;
@@ -585,7 +568,6 @@ void StationheadPlayer::Tick(int64_t nowMs) {
   if (!usedFallback_ && !audioPlaying_.load(std::memory_order_relaxed) && noAudioSinceAt_ > 0) {
     consider(noAudioSinceAt_ + kPrimaryNoAudioFallbackMs);
   }
-  consider(lastMemoryCheckAt_ + memoryCheckInterval);
   nextTickAt_ = std::max(nowMs + 1'000, next);
 }
 
@@ -759,20 +741,6 @@ void StationheadPlayer::ScheduleRecreate(const std::wstring& reason) {
   }
   log_.Warn(L"Stationhead WebView recreate scheduled: " + reason);
   PostChange();
-}
-
-size_t StationheadPlayer::MeasureProcessWorkingSet() {
-  if (!webview_) return 0;
-  UINT32 pid = 0;
-  if (FAILED(webview_->get_BrowserProcessId(&pid))) return 0;
-  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-  if (!process) return 0;
-  PROCESS_MEMORY_COUNTERS_EX counters{};
-  counters.cb = sizeof(counters);
-  const bool ok = GetProcessMemoryInfo(
-      process, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)) != FALSE;
-  CloseHandle(process);
-  return ok ? counters.WorkingSetSize : 0;
 }
 
 }  // namespace hp

@@ -10,7 +10,6 @@ struct SecondaryStationheadStatus {
   bool created = false;
   bool navigating = false;
   bool playing = false;
-  bool lightweight = false;
   bool loginRequired = false;
   bool spotifyAuthorization = false;
   bool visible = false;

@@ -99,13 +99,8 @@ class StationheadHandleBase {
     const bool interactive = static_cast<const Derived*>(this)->IsInteractive(status);
     const bool preview = startupPreviewActive_;
     const RECT activeBounds = preview ? startupPreviewBounds_ : workspaceBounds_;
-    const bool compactPlayback = !preview && status.lightweight && !interactive;
-    const int width = compactPlayback
-        ? 2
-        : std::max(1L, activeBounds.right - activeBounds.left);
-    const int height = compactPlayback
-        ? 2
-        : std::max(1L, activeBounds.bottom - activeBounds.top);
+    const int width = std::max(1L, activeBounds.right - activeBounds.left);
+    const int height = std::max(1L, activeBounds.bottom - activeBounds.top);
     const HWND placement = (interactive || preview) ? HWND_TOP : HWND_BOTTOM;
     SetWindowPos(host, placement, activeBounds.left, activeBounds.top,
                  width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -220,7 +215,11 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
     return player_ ? player_->ConsumeChangeFlags() : StationheadChangeNone;
   }
   bool HasAuthTab() const { return player_ && player_->HasAuthTab(); }
-  StationheadStatus Status() const;
+  StationheadStatus Status() const {
+    StationheadStatus status = player_ ? player_->Status() : StationheadStatus{};
+    status.audioMuted = audioMuted_;
+    return status;
+  }
   int64_t NextWakeAt() const noexcept {
     return player_ ? player_->NextWakeAt() : 0;
   }
@@ -344,46 +343,7 @@ class App {
     if (secondaryStationhead_) secondaryStationhead_->SetAudioVolume(volume);
   }
 
-  // UI-ready and primary-audio probes are advisory startup signals. A stalled
-  // probe must not permanently suppress the independently profiled secondary
-  // player. Prefer the normal ready path, then use a bounded fallback.
-  bool NeedsSecondaryStartupFallback() const noexcept {
-    if (secondaryStarted_ || !secondaryStationhead_ || startupAt_ <= 0) return false;
-    const int64_t elapsed = UnixMillis() - startupAt_;
-    const bool dashboardReady = renderer_ && renderer_->IsUiReady();
-    return (dashboardReady && elapsed >= 45'000) || elapsed >= 90'000;
-  }
-
  private:
-  class RendererStartupState {
-   public:
-    RendererStartupState& operator=(bool started) noexcept {
-      started_ = started;
-      return *this;
-    }
-
-    // Initialization is guarded by the raw started flag. Secondary startup
-    // normally waits for the HTML ready message, but a broken/missed WebView2
-    // signal receives an explicit bounded fallback instead of waiting forever.
-    bool operator!() const noexcept { return !started_; }
-    explicit operator bool() const noexcept {
-      const App* app = App::Current();
-      if (!started_ || !app || !app->renderer_) return false;
-      if (app->renderer_->IsUiReady()) return true;
-      const bool fallback = app->NeedsSecondaryStartupFallback();
-      if (fallback && !fallbackLogged_ && app->logger_) {
-        fallbackLogged_ = true;
-        app->logger_->Warn(
-            L"Dashboard ready signal timed out; allowing secondary Stationhead startup fallback");
-      }
-      return fallback;
-    }
-
-   private:
-    bool started_ = false;
-    mutable bool fallbackLogged_ = false;
-  };
-
   static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
   LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
   void InitializePaths();
@@ -435,9 +395,8 @@ class App {
   int exitCode_ = 0;
   int64_t startupAt_ = 0;
   int64_t playbackReadyAt_ = 0;
-  int64_t secondaryEligibleAt_ = 0;
   bool secondaryStarted_ = false;
-  RendererStartupState rendererStarted_;
+  bool rendererStarted_ = false;
   bool cloudStarted_ = false;
   bool startupUpdateScheduled_ = false;
   int64_t lastTelemetryAt_ = 0;
@@ -454,19 +413,4 @@ class App {
   RECT workspaceBounds_{0, 0, 1, 1};
   inline static App* current_ = nullptr;
 };
-
-inline StationheadStatus AppStationheadHandle::Status() const {
-  StationheadStatus status = player_ ? player_->Status() : StationheadStatus{};
-  status.audioMuted = audioMuted_;
-  if (!status.audioPlaying && !status.lightweight) {
-    const App* app = App::Current();
-    if (app && app->NeedsSecondaryStartupFallback()) {
-      // This flag is consumed only as App's startup-readiness signal. The
-      // underlying StationheadPlayer state remains untouched, so playback,
-      // telemetry, and controller layout continue to use the real status.
-      status.lightweight = true;
-    }
-  }
-  return status;
-}
 }  // namespace hp

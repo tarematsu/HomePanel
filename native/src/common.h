@@ -15,11 +15,6 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <windowsx.h>
-#include <d2d1_3.h>
-#include <dwrite.h>
-#include <d3d11_1.h>
-#include <dcomp.h>
-#include <dxgi1_3.h>
 #include <wincodec.h>
 #include <winhttp.h>
 #include <wincrypt.h>
@@ -57,14 +52,11 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <queue>
-#include <regex>
 #include <stdexcept>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <tuple>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 #include <string_view>
