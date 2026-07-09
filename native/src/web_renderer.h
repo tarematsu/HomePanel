@@ -223,6 +223,22 @@ class Renderer {
     int width = 0;
     int height = 0;
   };
+  // Shared BeginPaint/back-buffer setup and BitBlt/EndPaint teardown for every
+  // PaintNativeXxx panel; each panel only supplies the drawing in between.
+  struct NativePanelPaintScope {
+    NativePanelPaintScope(Renderer& renderer, HWND hwnd);
+    ~NativePanelPaintScope();
+    NativePanelPaintScope(const NativePanelPaintScope&) = delete;
+    NativePanelPaintScope& operator=(const NativePanelPaintScope&) = delete;
+    bool Valid() const { return paintDc != nullptr; }
+
+    HWND hwnd = nullptr;
+    PAINTSTRUCT paint{};
+    HDC paintDc = nullptr;
+    HDC dc = nullptr;
+    HGDIOBJ previousBitmap = nullptr;
+    RECT bounds{};
+  };
 
   bool EnsureNativeClockWindow();
   void ApplyNativeClockBounds();

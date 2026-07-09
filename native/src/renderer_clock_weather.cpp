@@ -335,6 +335,27 @@ void DrawHistoryLine(HDC dc, const std::vector<AirHistorySample>& samples, const
 }
 }  // namespace
 
+Renderer::NativePanelPaintScope::NativePanelPaintScope(Renderer& renderer, HWND hwnd)
+    : hwnd(hwnd), paintDc(BeginPaint(hwnd, &paint)) {
+  if (!paintDc) return;
+  GetClientRect(hwnd, &bounds);
+  dc = CreateCompatibleDC(paintDc);
+  HBITMAP bitmap = renderer.NativePanelBackBuffer(hwnd, paintDc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
+  previousBitmap = SelectObject(dc, bitmap);
+  FillWidgetBackground(dc, bounds);
+  SetBkMode(dc, TRANSPARENT);
+}
+
+Renderer::NativePanelPaintScope::~NativePanelPaintScope() {
+  if (!paintDc) return;
+  if (dc) {
+    BitBlt(paintDc, 0, 0, bounds.right, bounds.bottom, dc, 0, 0, SRCCOPY);
+    SelectObject(dc, previousBitmap);
+    DeleteDC(dc);
+  }
+  EndPaint(hwnd, &paint);
+}
+
 bool Renderer::EnsureNativeClockWindow() {
   if (nativeClockWindow_ && IsWindow(nativeClockWindow_)) return true;
   if (!window_ || !IsWindow(window_)) return false;
@@ -682,19 +703,11 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
 }
 
 void Renderer::PaintNativeClock(HWND hwnd) {
-  PAINTSTRUCT paint{};
-  HDC dc = BeginPaint(hwnd, &paint);
-  if (!dc) return;
+  NativePanelPaintScope scope(*this, hwnd);
+  if (!scope.Valid()) return;
+  HDC memoryDc = scope.dc;
+  const RECT content = DrawWidgetSurface(memoryDc, scope.bounds, kWidgetPanelHero);
 
-  RECT bounds{};
-  GetClientRect(hwnd, &bounds);
-  HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
-  HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  FillWidgetBackground(memoryDc, bounds);
-  const RECT content = DrawWidgetSurface(memoryDc, bounds, kWidgetPanelHero);
-
-  SetBkMode(memoryDc, TRANSPARENT);
   SetTextColor(memoryDc, kWidgetMuted);
 
   SYSTEMTIME now{};
@@ -721,26 +734,13 @@ void Renderer::PaintNativeClock(HWND hwnd) {
             DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
   SelectObject(memoryDc, previousFont);
   DeleteObject(clockFont);
-
-  BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
-  SelectObject(memoryDc, previousBitmap);
-  DeleteDC(memoryDc);
-  EndPaint(hwnd, &paint);
 }
 
 void Renderer::PaintNativeAir(HWND hwnd) {
-  PAINTSTRUCT paint{};
-  HDC dc = BeginPaint(hwnd, &paint);
-  if (!dc) return;
-
-  RECT bounds{};
-  GetClientRect(hwnd, &bounds);
-  HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
-  HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  FillWidgetBackground(memoryDc, bounds);
-  SetBkMode(memoryDc, TRANSPARENT);
-  const RECT content = DrawWidgetSurface(memoryDc, bounds, kWidgetSurface);
+  NativePanelPaintScope scope(*this, hwnd);
+  if (!scope.Valid()) return;
+  HDC memoryDc = scope.dc;
+  const RECT content = DrawWidgetSurface(memoryDc, scope.bounds, kWidgetSurface);
 
   const int width = std::max(1L, content.right - content.left);
   const int height = std::max(1L, content.bottom - content.top);
@@ -779,26 +779,13 @@ void Renderer::PaintNativeAir(HWND hwnd) {
   }
   DeleteObject(labelFont);
   DeleteObject(valueFont);
-
-  BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
-  SelectObject(memoryDc, previousBitmap);
-  DeleteDC(memoryDc);
-  EndPaint(hwnd, &paint);
 }
 
 void Renderer::PaintNativeAirHistory(HWND hwnd) {
-  PAINTSTRUCT paint{};
-  HDC dc = BeginPaint(hwnd, &paint);
-  if (!dc) return;
-
-  RECT bounds{};
-  GetClientRect(hwnd, &bounds);
-  HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
-  HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  FillWidgetBackground(memoryDc, bounds);
-  SetBkMode(memoryDc, TRANSPARENT);
-  const RECT content = DrawWidgetSurface(memoryDc, bounds, kWidgetSurface);
+  NativePanelPaintScope scope(*this, hwnd);
+  if (!scope.Valid()) return;
+  HDC memoryDc = scope.dc;
+  const RECT content = DrawWidgetSurface(memoryDc, scope.bounds, kWidgetSurface);
 
   const int64_t now = UnixMillis();
   constexpr int64_t kWindowMs = 24LL * 60 * 60 * 1000;
@@ -860,26 +847,13 @@ void Renderer::PaintNativeAirHistory(HWND hwnd) {
   DrawTextInRect(memoryDc, L"現在", axis, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
   SelectObject(memoryDc, previousFont);
   DeleteObject(font);
-
-  BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
-  SelectObject(memoryDc, previousBitmap);
-  DeleteDC(memoryDc);
-  EndPaint(hwnd, &paint);
 }
 
 void Renderer::PaintNativeControls(HWND hwnd) {
-  PAINTSTRUCT paint{};
-  HDC dc = BeginPaint(hwnd, &paint);
-  if (!dc) return;
-
-  RECT bounds{};
-  GetClientRect(hwnd, &bounds);
-  HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
-  HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  FillWidgetBackground(memoryDc, bounds);
-  SetBkMode(memoryDc, TRANSPARENT);
-  const RECT content = DrawWidgetSurface(memoryDc, bounds);
+  NativePanelPaintScope scope(*this, hwnd);
+  if (!scope.Valid()) return;
+  HDC memoryDc = scope.dc;
+  const RECT content = DrawWidgetSurface(memoryDc, scope.bounds);
 
   const std::wstring version = nativeAppVersion_.empty() ? L"" : L"v" + nativeAppVersion_;
   const int contentHeight = std::max(1L, content.bottom - content.top);
@@ -912,25 +886,13 @@ void Renderer::PaintNativeControls(HWND hwnd) {
     SelectObject(memoryDc, previousFont);
     DeleteObject(toastFont);
   }
-  BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
-  SelectObject(memoryDc, previousBitmap);
-  DeleteDC(memoryDc);
-  EndPaint(hwnd, &paint);
 }
 
 void Renderer::PaintNativeNews(HWND hwnd) {
-  PAINTSTRUCT paint{};
-  HDC dc = BeginPaint(hwnd, &paint);
-  if (!dc) return;
-
-  RECT bounds{};
-  GetClientRect(hwnd, &bounds);
-  HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
-  HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  FillWidgetBackground(memoryDc, bounds);
-  SetBkMode(memoryDc, TRANSPARENT);
-  const RECT content = DrawWidgetSurface(memoryDc, bounds, kWidgetSurface);
+  NativePanelPaintScope scope(*this, hwnd);
+  if (!scope.Valid()) return;
+  HDC memoryDc = scope.dc;
+  const RECT content = DrawWidgetSurface(memoryDc, scope.bounds, kWidgetSurface);
 
   const NewsItemData* item = nullptr;
   if (!nativeDashboard_.newsItems.empty()) {
@@ -957,26 +919,13 @@ void Renderer::PaintNativeNews(HWND hwnd) {
   DrawTextInRect(memoryDc, detail, detailRect, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
   SelectObject(memoryDc, previousFont);
   DeleteObject(detailFont);
-
-  BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
-  SelectObject(memoryDc, previousBitmap);
-  DeleteDC(memoryDc);
-  EndPaint(hwnd, &paint);
 }
 
 void Renderer::PaintNativeWeather(HWND hwnd) {
-  PAINTSTRUCT paint{};
-  HDC dc = BeginPaint(hwnd, &paint);
-  if (!dc) return;
-
-  RECT bounds{};
-  GetClientRect(hwnd, &bounds);
-  HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
-  HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  FillWidgetBackground(memoryDc, bounds);
-  SetBkMode(memoryDc, TRANSPARENT);
-  const RECT content = DrawWidgetSurface(memoryDc, bounds, kWidgetSurface);
+  NativePanelPaintScope scope(*this, hwnd);
+  if (!scope.Valid()) return;
+  HDC memoryDc = scope.dc;
+  const RECT content = DrawWidgetSurface(memoryDc, scope.bounds, kWidgetSurface);
 
   const auto& hours = nativeDashboard_.weatherHours;
   const size_t count = std::min<size_t>(5, hours.size());
@@ -1031,26 +980,13 @@ void Renderer::PaintNativeWeather(HWND hwnd) {
   }
   DeleteObject(hourFont);
   DeleteObject(rainFont);
-
-  BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
-  SelectObject(memoryDc, previousBitmap);
-  DeleteDC(memoryDc);
-  EndPaint(hwnd, &paint);
 }
 
 void Renderer::PaintNativeEnergy(HWND hwnd) {
-  PAINTSTRUCT paint{};
-  HDC dc = BeginPaint(hwnd, &paint);
-  if (!dc) return;
-
-  RECT bounds{};
-  GetClientRect(hwnd, &bounds);
-  HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
-  HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  FillWidgetBackground(memoryDc, bounds);
-  SetBkMode(memoryDc, TRANSPARENT);
-  const RECT content = DrawWidgetSurface(memoryDc, bounds);
+  NativePanelPaintScope scope(*this, hwnd);
+  if (!scope.Valid()) return;
+  HDC memoryDc = scope.dc;
+  const RECT content = DrawWidgetSurface(memoryDc, scope.bounds);
 
   DrawWidgetHeader(memoryDc, L"Octopus Energy", L"", content);
 
@@ -1144,26 +1080,13 @@ void Renderer::PaintNativeEnergy(HWND hwnd) {
 
   DeleteObject(labelFont);
   DeleteObject(valueFont);
-
-  BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
-  SelectObject(memoryDc, previousBitmap);
-  DeleteDC(memoryDc);
-  EndPaint(hwnd, &paint);
 }
 
 void Renderer::PaintNativeStationhead(HWND hwnd) {
-  PAINTSTRUCT paint{};
-  HDC dc = BeginPaint(hwnd, &paint);
-  if (!dc) return;
-
-  RECT bounds{};
-  GetClientRect(hwnd, &bounds);
-  HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
-  HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  FillWidgetBackground(memoryDc, bounds);
-  SetBkMode(memoryDc, TRANSPARENT);
-  const RECT content = DrawWidgetSurface(memoryDc, bounds);
+  NativePanelPaintScope scope(*this, hwnd);
+  if (!scope.Valid()) return;
+  HDC memoryDc = scope.dc;
+  const RECT content = DrawWidgetSurface(memoryDc, scope.bounds);
 
   DrawWidgetHeader(memoryDc, L"Spotify WebView2", L"", content);
 
@@ -1275,26 +1198,13 @@ void Renderer::PaintNativeStationhead(HWND hwnd) {
   DeleteObject(titleFont);
   DeleteObject(artistFont);
   DeleteObject(buttonFont);
-
-  BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
-  SelectObject(memoryDc, previousBitmap);
-  DeleteDC(memoryDc);
-  EndPaint(hwnd, &paint);
 }
 
 void Renderer::PaintNativeRadar(HWND hwnd) {
-  PAINTSTRUCT paint{};
-  HDC dc = BeginPaint(hwnd, &paint);
-  if (!dc) return;
-
-  RECT bounds{};
-  GetClientRect(hwnd, &bounds);
-  HDC memoryDc = CreateCompatibleDC(dc);
-  HBITMAP bitmap = NativePanelBackBuffer(hwnd, dc, std::max(1L, bounds.right), std::max(1L, bounds.bottom));
-  HGDIOBJ previousBitmap = SelectObject(memoryDc, bitmap);
-  FillWidgetBackground(memoryDc, bounds);
-  SetBkMode(memoryDc, TRANSPARENT);
-  const RECT content = DrawWidgetSurface(memoryDc, bounds);
+  NativePanelPaintScope scope(*this, hwnd);
+  if (!scope.Valid()) return;
+  HDC memoryDc = scope.dc;
+  const RECT content = DrawWidgetSurface(memoryDc, scope.bounds);
 
   {
     std::lock_guard lock(radarFrameMutex_);
@@ -1329,11 +1239,6 @@ void Renderer::PaintNativeRadar(HWND hwnd) {
                      DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     }
   }
-
-  BitBlt(dc, 0, 0, bounds.right, bounds.bottom, memoryDc, 0, 0, SRCCOPY);
-  SelectObject(memoryDc, previousBitmap);
-  DeleteDC(memoryDc);
-  EndPaint(hwnd, &paint);
 }
 
 HBITMAP Renderer::NativeArtworkBitmap(const std::wstring& url, int width, int height) {
