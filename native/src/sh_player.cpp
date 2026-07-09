@@ -191,8 +191,7 @@ void StationheadPlayer::ResetNavigationRouteState(int64_t nowMs) {
 
 void StationheadPlayer::NavigatePrimaryUrl(int64_t nowMs, const std::wstring& reason) {
   if (!webview_) return;
-  selectedTab_ = StationheadTabKind::Stationhead;
-  SetVisible(true);
+  SetStartupBounds();
   ResetNavigationRouteState(nowMs);
   {
     std::lock_guard lock(mutex_);
@@ -466,6 +465,5 @@ size_t StationheadPlayer::MeasureProcessWorkingSet() {
 // Feature groups split out of this file; compiled as part of this translation
 // unit so they share its includes and file-local helpers (unity-build pattern,
 // like renderer_core.cpp). Not listed in CMake on purpose.
-#include "sh_player_layout.cpp"
 #include "sh_player_startup.cpp"
 #include "sh_player_webview.cpp"
