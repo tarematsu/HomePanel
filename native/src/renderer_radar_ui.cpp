@@ -245,6 +245,7 @@ void Renderer::ComposeRadarFrame() {
       if (previousFrame) DeleteObject(previousFrame);
       const HWND radarWindow = nativeRadarWindow_;
       if (radarWindow && IsWindow(radarWindow)) InvalidateRect(radarWindow, nullptr, FALSE);
+      InvalidateAllNativePanels();
       return;
     }
   }
@@ -339,5 +340,6 @@ void Renderer::ComposeRadarFrame() {
 
   const HWND radarWindow = nativeRadarWindow_;
   if (radarWindow && IsWindow(radarWindow)) InvalidateRect(radarWindow, nullptr, FALSE);
+  InvalidateAllNativePanels();
 }
 }  // namespace hp

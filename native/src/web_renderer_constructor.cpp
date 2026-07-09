@@ -67,9 +67,6 @@ void Renderer::SetVisible(bool visible) {
   if (nativeAirWindow_ && IsWindow(nativeAirWindow_)) {
     ShowWindow(nativeAirWindow_, visible ? SW_SHOWNA : SW_HIDE);
   }
-  if (nativeAirHistoryWindow_ && IsWindow(nativeAirHistoryWindow_)) {
-    ShowWindow(nativeAirHistoryWindow_, visible ? SW_SHOWNA : SW_HIDE);
-  }
   if (nativeControlsWindow_ && IsWindow(nativeControlsWindow_)) {
     ShowWindow(nativeControlsWindow_, visible ? SW_SHOWNA : SW_HIDE);
   }

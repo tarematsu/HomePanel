@@ -77,7 +77,6 @@ inline constexpr COLORREF kNativeDashboardBackground = RGB(7, 10, 16);
 
 struct NativeDashboardLayout {
   RECT air{};
-  RECT airHistory{};
   RECT controls{};
   RECT news{};
   RECT weather{};
@@ -97,84 +96,47 @@ inline RECT NormalizeInsetRect(RECT rect, int left, int top, int right, int bott
   return rect;
 }
 
+// Overlay layout: the radar map fills the entire client area as a living
+// background, the clock/weather/news stack floats centered on top of it,
+// and the remaining widgets float as translucent cards in the four corners.
 inline NativeDashboardLayout ComputeNativeDashboardLayout(const RECT& bounds) {
   const int clientWidth = std::max(1L, bounds.right - bounds.left);
   const int clientHeight = std::max(1L, bounds.bottom - bounds.top);
-  const bool roomy = clientWidth >= 1200 && clientHeight >= 700;
-  const int margin = roomy ? 24 : 10;
-  const int gap = roomy ? 16 : 8;
-  const int gridWidth = std::max(1, clientWidth - margin * 2);
-  const int gridHeight = std::max(1, clientHeight - margin * 2);
-  const int left = bounds.left + margin;
-  const int top = bounds.top + margin;
+  const int shortSide = std::min(clientWidth, clientHeight);
+  const int margin = std::clamp(shortSide * 3 / 100, 16, 32);
+  const int gap = std::clamp(shortSide * 2 / 100, 10, 20);
 
   NativeDashboardLayout layout;
-  if (clientWidth < 900) {
-    const int columnWidth = std::max(1, (gridWidth - gap) / 2);
-    const int rowHeight = std::max(1, (gridHeight - gap * 4) / 5);
-    const auto panel = [&](int column, int row, int columnSpan = 1, int rowSpan = 1) {
-      const int panelLeft = left + column * (columnWidth + gap);
-      const int panelTop = top + row * (rowHeight + gap);
-      return RECT{panelLeft, panelTop,
-                  panelLeft + columnWidth * columnSpan + gap * (columnSpan - 1),
-                  panelTop + rowHeight * rowSpan + gap * (rowSpan - 1)};
-    };
+  layout.radar = bounds;
 
-    const RECT airPanel = panel(1, 2);
-    layout.clock = panel(0, 0);
-    layout.weather = panel(1, 0);
-    layout.stationhead = panel(0, 1);
-    layout.radar = panel(1, 1);
-    layout.air = NormalizeInsetRect(
-        RECT{airPanel.left + 10, airPanel.top + 22, airPanel.right - 10, airPanel.top + 92},
-        0, 0, 0, 0);
-    layout.airHistory = NormalizeInsetRect(
-        RECT{airPanel.left + 10, airPanel.top + 100, airPanel.right - 10, airPanel.bottom - 10},
-        0, 0, 0, 0);
-    layout.controls = panel(0, 2);
-    layout.energy = panel(0, 3, 2);
-    layout.news = panel(0, 4, 2);
-    return layout;
-  }
+  const int cornerWidth = std::clamp(clientWidth * 24 / 100, 260, 440);
+  const int topCornerHeight = std::clamp(clientHeight * 40 / 100, 260, 420);
+  const int stationheadHeight = std::clamp(clientHeight * 40 / 100, 260, 420);
+  const int controlsHeight = std::clamp(clientHeight * 14 / 100, 100, 140);
 
-  const int heroHeight = std::clamp(gridHeight * 28 / 100, 150, 230);
-  const int bottomHeight = std::clamp(gridHeight * 27 / 100, 150, 230);
-  const int middleHeight = std::max(1, gridHeight - heroHeight - bottomHeight - gap * 2);
-  const int heroWide = std::clamp(gridWidth * 46 / 100, 360, std::max(361, gridWidth - 260));
-  const int sideWidth = std::max(1, (gridWidth - heroWide - gap * 2) / 2);
-  const int middleAirWidth = std::clamp(gridWidth * 22 / 100, 220, 320);
-  const int middleLeftWidth = std::clamp(gridWidth * 20 / 100, 200, 300);
-  const int middleRightWidth = std::max(1, gridWidth - middleLeftWidth - middleAirWidth - gap * 2);
-  const int bottomLeftWidth = std::clamp(gridWidth * 42 / 100, 360, std::max(361, gridWidth - 320));
-  const int bottomRightWidth = std::max(1, gridWidth - bottomLeftWidth - gap);
-  const int row0 = top;
-  const int row1 = row0 + heroHeight + gap;
-  const int row2 = row1 + middleHeight + gap;
-  const auto rect = [](int rectLeft, int rectTop, int rectWidth, int rectHeight) {
-    return RECT{rectLeft, rectTop, rectLeft + std::max(1, rectWidth),
-                rectTop + std::max(1, rectHeight)};
-  };
+  layout.air = RECT{bounds.left + margin, bounds.top + margin,
+                    bounds.left + margin + cornerWidth, bounds.top + margin + topCornerHeight};
+  layout.energy = RECT{bounds.right - margin - cornerWidth, bounds.top + margin,
+                       bounds.right - margin, bounds.top + margin + topCornerHeight};
+  layout.stationhead = RECT{bounds.left + margin, bounds.bottom - margin - stationheadHeight,
+                            bounds.left + margin + cornerWidth, bounds.bottom - margin};
+  layout.controls = RECT{bounds.right - margin - cornerWidth, bounds.bottom - margin - controlsHeight,
+                         bounds.right - margin, bounds.bottom - margin};
 
-  layout.clock = rect(left, row0, heroWide, heroHeight);
-  layout.weather = rect(layout.clock.right + gap, row0, sideWidth, heroHeight);
-  layout.controls = rect(layout.weather.right + gap, row0,
-                         gridWidth - heroWide - sideWidth - gap * 2, heroHeight);
-  layout.stationhead = rect(left, row1, middleLeftWidth, middleHeight);
-  layout.radar = rect(layout.stationhead.right + gap, row1, middleRightWidth, middleHeight);
-  const RECT airPanel = rect(layout.radar.right + gap, row1, middleAirWidth, middleHeight);
-  layout.energy = rect(left, row2, bottomLeftWidth, bottomHeight);
-  layout.news = rect(layout.energy.right + gap, row2, bottomRightWidth, bottomHeight);
+  const int centerWidth = std::clamp(clientWidth * 30 / 100, 320, 480);
+  const int centerLeft = bounds.left + (clientWidth - centerWidth) / 2;
+  const int centerRight = centerLeft + centerWidth;
+  const int clockHeight = std::clamp(clientHeight * 15 / 100, 100, 160);
+  const int weatherHeight = std::clamp(clientHeight * 19 / 100, 150, 210);
+  const int newsHeight = std::clamp(clientHeight * 6 / 100, 36, 52);
+  const int centerBlockHeight = clockHeight + gap + weatherHeight + gap + newsHeight;
+  const int centerTop = bounds.top + std::max(margin, (clientHeight - centerBlockHeight) / 2);
 
-  const int airPanelHeight = std::max(1L, airPanel.bottom - airPanel.top);
-  const int airMetricsHeight = std::clamp(airPanelHeight * 28 / 100, 56, 90);
-  layout.air = NormalizeInsetRect(
-      RECT{airPanel.left, airPanel.top, airPanel.right,
-           airPanel.top + airMetricsHeight},
-      0, 0, 0, 0);
-  layout.airHistory = NormalizeInsetRect(
-      RECT{airPanel.left, layout.air.bottom + gap, airPanel.right,
-           airPanel.bottom},
-      0, 0, 0, 0);
+  layout.clock = RECT{centerLeft, centerTop, centerRight, centerTop + clockHeight};
+  layout.weather = RECT{centerLeft, layout.clock.bottom + gap,
+                        centerRight, layout.clock.bottom + gap + weatherHeight};
+  layout.news = RECT{centerLeft, layout.weather.bottom + gap,
+                     centerRight, layout.weather.bottom + gap + newsHeight};
   return layout;
 }
 
@@ -221,8 +183,16 @@ class Renderer {
   };
   // Shared BeginPaint/back-buffer setup and BitBlt/EndPaint teardown for every
   // PaintNativeXxx panel; each panel only supplies the drawing in between.
+  // The back layer is always sampled from the live radar frame at this
+  // panel's absoluteRect (its position within the overall dashboard), so
+  // every floating panel reads as a window looking through to the map
+  // behind it. Passing tintAlpha > 0 blends a dark frosted-glass tint over
+  // a cornerRadius-rounded region on top of that sample; tintAlpha == 0
+  // (used by the radar panel itself) leaves the sampled map untouched.
   struct NativePanelPaintScope {
-    NativePanelPaintScope(Renderer& renderer, HWND hwnd);
+    NativePanelPaintScope(Renderer& renderer, HWND hwnd, const RECT& absoluteRect,
+                         BYTE tintAlpha = 168, int cornerRadius = 22,
+                         COLORREF tintColor = RGB(10, 14, 22));
     ~NativePanelPaintScope();
     NativePanelPaintScope(const NativePanelPaintScope&) = delete;
     NativePanelPaintScope& operator=(const NativePanelPaintScope&) = delete;
@@ -260,7 +230,6 @@ class Renderer {
   LRESULT HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   void PaintNativeClock(HWND hwnd);
   void PaintNativeAir(HWND hwnd);
-  void PaintNativeAirHistory(HWND hwnd);
   void PaintNativeControls(HWND hwnd);
   void PaintNativeNews(HWND hwnd);
   void PaintNativeWeather(HWND hwnd);
@@ -281,13 +250,13 @@ class Renderer {
   void StopRadarCompose() noexcept;
   void RadarComposeLoop();
   void ComposeRadarFrame();
+  void InvalidateAllNativePanels();
   RECT ClientBounds() const;
   void ParseDashboardMetadata(const std::wstring& json);
 
   HWND window_{};
   HWND nativeClockWindow_{};
   HWND nativeAirWindow_{};
-  HWND nativeAirHistoryWindow_{};
   HWND nativeControlsWindow_{};
   HWND nativeNewsWindow_{};
   HWND nativeWeatherWindow_{};
