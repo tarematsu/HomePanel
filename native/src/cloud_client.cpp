@@ -113,11 +113,8 @@ void CloudClient::Stop() {
 
 void CloudClient::StartNetworkChangeWatcher() {
   // Cloud sync/Spotify polling back off up to 15 minutes after repeated
-  // failures (see Loop()). If the device's network was actually down (DNS
-  // unreachable, Wi-Fi drop, etc.), that backoff can leave the app stuck
-  // for a long time even after the network comes back. Watch for Windows
-  // network configuration changes and force an immediate retry when one
-  // is detected, instead of waiting out the fixed backoff timer.
+  // failures. Cancel every outstanding NotifyAddrChange request before the
+  // stack OVERLAPPED and its event are destroyed during shutdown.
   networkChangeStopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   if (!networkChangeStopEvent_) return;
   networkChangeThread_ = std::thread([this] {
@@ -127,14 +124,26 @@ void CloudClient::StartNetworkChangeWatcher() {
       if (!overlapped.hEvent) return;
       HANDLE notifyHandle = nullptr;
       const DWORD requested = NotifyAddrChange(&notifyHandle, &overlapped);
-      if (requested != NO_ERROR && GetLastError() != ERROR_IO_PENDING) {
+      if (requested != ERROR_IO_PENDING) {
         CloseHandle(overlapped.hEvent);
         return;
       }
+
       HANDLE waitHandles[2] = {networkChangeStopEvent_, overlapped.hEvent};
       const DWORD wait = WaitForMultipleObjects(2, waitHandles, FALSE, INFINITE);
+      if (wait == WAIT_OBJECT_0) {
+        CancelIPChangeNotify(&overlapped);
+        WaitForSingleObject(overlapped.hEvent, INFINITE);
+        CloseHandle(overlapped.hEvent);
+        return;
+      }
+      if (wait != WAIT_OBJECT_0 + 1) {
+        CancelIPChangeNotify(&overlapped);
+        WaitForSingleObject(overlapped.hEvent, INFINITE);
+        CloseHandle(overlapped.hEvent);
+        return;
+      }
       CloseHandle(overlapped.hEvent);
-      if (wait != WAIT_OBJECT_0 + 1) return;  // stop requested or wait failed
       RefreshNow();
     }
   });
