@@ -243,6 +243,24 @@ inline bool StationheadRequestIsBlockable(const std::wstring& uriLower) {
   return false;
 }
 
+inline bool StationheadCorePlaybackRequest(const std::wstring& uriLower) {
+  if (uriLower.empty()) return false;
+  const bool stationhead = uriLower.find(L"stationhead.com") != std::wstring::npos;
+  const bool spotify = uriLower.find(L"spotify") != std::wstring::npos ||
+                       uriLower.find(L"scdn.co") != std::wstring::npos;
+  if (!stationhead && !spotify) return false;
+  if (uriLower.find(L"/timestamp") != std::wstring::npos ||
+      uriLower.find(L"/pusher/presenceauth") != std::wstring::npos ||
+      uriLower.find(L"/channels/alias/") != std::wstring::npos ||
+      uriLower.find(L"/me/country") != std::wstring::npos) {
+    return true;
+  }
+  return spotify &&
+      (uriLower.find(L"audio") != std::wstring::npos ||
+       uriLower.find(L"playback") != std::wstring::npos ||
+       uriLower.find(L"gew") != std::wstring::npos);
+}
+
 // Realtime chat, presence and reactions are delivered over the Pusher
 // WebSocket, which WebResourceRequested cannot intercept (WS upgrades don't
 // raise the event). Block the Pusher socket hosts at the network layer via the
@@ -283,6 +301,9 @@ inline void BlockStationheadRealtimeSockets(ICoreWebView2* webview) {
 //   * After playback is armed, additional stylesheets are blocked. The page's
 //     already-loaded CSS remains in memory; this only prevents late UI/theme
 //     fetches from waking the renderer/GPU for a hidden audio window.
+//   * After playback is armed, late script/fetch/xhr traffic is reduced to
+//     known core playback endpoints. This keeps the already-running page alive
+//     while cutting background social/feature polling.
 // Shared by the primary and secondary players so both apply the same rules.
 // The token must be removed via remove_WebResourceRequested(token) on close,
 // and armed reset to false at that point.
@@ -299,7 +320,12 @@ inline void ApplyStationheadResourceBlocking(ICoreWebView2Environment* environme
   webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT);
   webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_XML_HTTP_REQUEST);
   webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FETCH);
+  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_TEXT_TRACK);
+  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_EVENT_SOURCE);
+  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_WEBSOCKET);
+  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MANIFEST);
   webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_PING);
+  webview->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_CSP_VIOLATION_REPORT);
   const bool blockImages = config.blockImagesAfterPlayback;
   const bool blockFonts = config.blockFontsAfterPlayback;
   ComPtr<ICoreWebView2Environment> env = environment;
@@ -337,6 +363,18 @@ inline void ApplyStationheadResourceBlocking(ICoreWebView2Environment* environme
                   block = !lower.empty() &&
                           lower.find(L"stationhead.com") == std::wstring::npos &&
                           lower.find(L"spotify") == std::wstring::npos;
+                } else if (context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_TEXT_TRACK ||
+                           context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MANIFEST ||
+                           context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_CSP_VIOLATION_REPORT) {
+                  block = true;
+                } else if (context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_EVENT_SOURCE ||
+                           context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_WEBSOCKET) {
+                  block = !StationheadCorePlaybackRequest(lower);
+                } else if (armedNow &&
+                           (context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT ||
+                            context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_XML_HTTP_REQUEST ||
+                            context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FETCH)) {
+                  block = !StationheadCorePlaybackRequest(lower);
                 }
               }
             }
