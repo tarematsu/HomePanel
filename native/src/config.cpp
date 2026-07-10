@@ -84,9 +84,9 @@ std::vector<std::wstring> TokenKeys(const wchar_t* environmentName) {
     return {environmentName, L"DEVICE_TOKEN", L"HOMEPANEL_INGEST_SECRET"};
   }
   if (wcscmp(environmentName, L"HOMEPANEL_ACTION_TOKEN") == 0) {
-    // Administrative operations require their own credential. Do not silently
-    // promote a device/ingestion token to fleet-control authority.
-    return {environmentName, L"API_TOKEN"};
+    // API_TOKEN remains an optional override. Existing installations may use a
+    // single DEVICE_TOKEN for device sync and administrative operations.
+    return {environmentName, L"API_TOKEN", L"DEVICE_TOKEN", L"HOMEPANEL_INGEST_SECRET"};
   }
   return {environmentName};
 }
