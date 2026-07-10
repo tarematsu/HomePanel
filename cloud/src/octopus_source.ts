@@ -1,7 +1,10 @@
 import { fetchJson } from "./http";
 import { JST_MS, jstDayKey as jstDayKeyMs, type Env, type SourceResult } from "./sources";
+import { alignedWeekComparison } from "./week_comparison";
 
 const OCTOPUS_TOKEN_TTL_MS = 55 * 60_000;
+const DAY_MS = 86_400_000;
+const WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"] as const;
 
 type OctopusToken = {
   value: string;
@@ -133,7 +136,6 @@ async function authenticateOctopus(env: Env, forceCredentials = false): Promise<
       octopusToken = activeToken;
       return activeToken.value;
     } catch {
-
     }
   }
   octopusToken = await requestOctopusToken(credentialInput(env));
@@ -206,7 +208,12 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
   const currentStart = jstBoundary(jst.getUTCFullYear(), billingMonth, 2);
   const previousStart = jstBoundary(jst.getUTCFullYear(), billingMonth - 1, 2);
   const nextStart = jstBoundary(jst.getUTCFullYear(), billingMonth + 1, 2);
-  const ranges = [{ from: previousStart, to: currentStart }, { from: currentStart, to: now }];
+  const comparison = alignedWeekComparison(now.getTime());
+  const ranges = [
+    { from: previousStart, to: currentStart },
+    { from: currentStart, to: now },
+    { from: comparison.previousYearWeekStart, to: comparison.previousYearWeekEnd },
+  ];
   let token = await authenticateOctopus(env);
   let readings: OctopusReading[];
   try {
@@ -233,19 +240,39 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
     if (date >= previousStart && date < currentStart) { monthly.previous += value; previousSlots += 1; }
     if (date >= currentStart && date < now) monthly.current += value;
   }
-  const history = Array.from({ length: 14 }, (_, index) => {
-    const date = new Date(jstBoundary(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate()).getTime() - (14 - index) * 86_400_000);
-    const key = jstDayKeyMs(date.getTime());
-    return { date: key, value: daily[key] === undefined ? null : Number(daily[key].toFixed(3)) };
+  const history = Array.from({ length: 7 }, (_, index) => {
+    const currentDate = new Date(comparison.currentWeekStart.getTime() + index * DAY_MS);
+    const previousYearDate = new Date(comparison.previousYearWeekStart.getTime() + index * DAY_MS);
+    const currentKey = jstDayKeyMs(currentDate.getTime());
+    const previousYearKey = jstDayKeyMs(previousYearDate.getTime());
+    const currentValue = currentDate.getTime() < now.getTime() && daily[currentKey] !== undefined
+      ? Number(daily[currentKey].toFixed(3))
+      : null;
+    const previousYearValue = daily[previousYearKey] === undefined
+      ? null
+      : Number(daily[previousYearKey].toFixed(3));
+    return {
+      weekday: WEEKDAYS[index],
+      date: currentKey,
+      value: currentValue,
+      previousYearDate: previousYearKey,
+      previousYearValue,
+    };
   });
   const elapsed = Math.max(1, now.getTime() - currentStart.getTime());
   const duration = Math.max(1, nextStart.getTime() - currentStart.getTime());
   const projected = monthly.current * duration / elapsed;
-  const expectedSlots = Math.round((currentStart.getTime() - previousStart.getTime()) / 86_400_000) * 48;
+  const expectedSlots = Math.round((currentStart.getTime() - previousStart.getTime()) / DAY_MS) * 48;
   return {
     source: "octopus",
     payload: {
       history,
+      comparison: {
+        currentIsoYear: comparison.current.year,
+        currentIsoWeek: comparison.current.week,
+        previousIsoYear: comparison.previousYear.year,
+        previousIsoWeek: comparison.previousYear.week,
+      },
       lastMonth: { usage: Number(monthly.previous.toFixed(3)), complete: previousSlots / Math.max(1, expectedSlots) >= 0.95, coveredSlots: previousSlots, expectedSlots },
       thisMonth: { usageToDate: Number(monthly.current.toFixed(3)), projectedUsage: Number(projected.toFixed(3)) },
     },
