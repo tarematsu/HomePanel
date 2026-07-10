@@ -39,6 +39,7 @@ void StationheadPlayer::Start() {
 void StationheadPlayer::Stop() {
   shuttingDown_ = true;
   createCallbackAlive_->store(false, std::memory_order_release);
+  authCallbackAlive_->store(false, std::memory_order_release);
   CloseAuthWebView();
   CloseWebView();
   if (authHostWindow_ && IsWindow(authHostWindow_)) DestroyWindow(authHostWindow_);
@@ -60,8 +61,9 @@ StationheadStatus StationheadPlayer::Status() const {
 
 void StationheadPlayer::ResetNavigationRouteState() {
   audioPlaying_ = false;
-  nextTickAt_ = 0;
+  noAudioSinceAt_ = 0;
   fallbackMonitorAfterAt_ = 0;
+  nextTickAt_ = 0;
 }
 
 void StationheadPlayer::ApplyAudioPlaybackState(bool playing, int64_t nowMs,
@@ -88,9 +90,13 @@ void StationheadPlayer::ApplyAudioPlaybackState(bool playing, int64_t nowMs,
     return;
   }
 
-  if (!usedFallback_ && fallbackMonitorAfterAt_ > 0 &&
-      nowMs >= fallbackMonitorAfterAt_ && noAudioSinceAt_ == 0) {
-    noAudioSinceAt_ = nowMs;
+  // Re-arm silence monitoring whenever primary playback transitions from
+  // playing to stopped. Navigation also arms this timer, so recovery no longer
+  // depends on the injected script finding and clicking a particular DOM node.
+  if (!usedFallback_ &&
+      (changed || (fallbackMonitorAfterAt_ == 0 && noAudioSinceAt_ == 0))) {
+    fallbackMonitorAfterAt_ = nowMs + kPrimaryFallbackMonitorGraceMs;
+    noAudioSinceAt_ = 0;
   }
   {
     std::lock_guard lock(mutex_);
@@ -112,13 +118,13 @@ void StationheadPlayer::NavigatePrimaryUrl(int64_t nowMs, const std::wstring& re
 void StationheadPlayer::NavigateStationheadUrl(int64_t nowMs, const std::wstring& url,
                                                const std::wstring& reason,
                                                bool fallbackActive) {
-  (void)nowMs;
   if (!webview_ || url.empty()) return;
   SetStartupBounds();
   ResetNavigationRouteState();
   usedFallback_ = fallbackActive;
-  noAudioSinceAt_ = 0;
-  fallbackMonitorAfterAt_ = 0;
+  if (!fallbackActive) {
+    fallbackMonitorAfterAt_ = nowMs + kPrimaryFallbackMonitorGraceMs;
+  }
   resourceBlockingArmed_ = false;
   loginSessionActive_ = false;
   {
@@ -192,9 +198,16 @@ void StationheadPlayer::Create() {
 void StationheadPlayer::EnsureAuthController(const std::wstring& url) {
   authPendingUrl_ = url;
   if (!environment_ || authController_ || !EnsureAuthHostWindow()) return;
+  authCallbackAlive_->store(false, std::memory_order_release);
+  authCallbackAlive_ = std::make_shared<std::atomic<bool>>(true);
+  const auto alive = authCallbackAlive_;
   environment_->CreateCoreWebView2Controller(
       authHostWindow_, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                           [this](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
+                           [this, alive](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
+                             if (!CallbackAlive(alive)) {
+                               if (controller) controller->Close();
+                               return S_OK;
+                             }
                              if (FAILED(result) || !controller || shuttingDown_) {
                                if (controller) controller->Close();
                                return S_OK;
@@ -208,6 +221,7 @@ void StationheadPlayer::EnsureAuthController(const std::wstring& url) {
 }
 
 void StationheadPlayer::ConfigureWebView() {
+  const auto alive = createCallbackAlive_;
   // Fresh WebView: force the next ApplyMute/ApplyVolume to actually push state.
   appliedMuted_.store(-1, std::memory_order_relaxed);
   appliedVolumePercent_.store(-1, std::memory_order_relaxed);
@@ -238,8 +252,8 @@ void StationheadPlayer::ConfigureWebView() {
   if (SUCCEEDED(webview_.As(&audioView)) && audioView) {
     const HRESULT audioHandlerResult = audioView->add_IsDocumentPlayingAudioChanged(
         Callback<ICoreWebView2IsDocumentPlayingAudioChangedEventHandler>(
-            [this](ICoreWebView2*, IUnknown*) -> HRESULT {
-              if (shuttingDown_ || !webview_) return S_OK;
+            [this, alive](ICoreWebView2*, IUnknown*) -> HRESULT {
+              if (!CallbackAlive(alive) || shuttingDown_ || !webview_) return S_OK;
               ComPtr<ICoreWebView2_8> currentAudioView;
               if (FAILED(webview_.As(&currentAudioView)) || !currentAudioView) return S_OK;
               BOOL playing = FALSE;
@@ -271,7 +285,8 @@ void StationheadPlayer::ConfigureWebView() {
   webview_->AddScriptToExecuteOnDocumentCreated(
       startupScript.c_str(),
       Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
-          [this](HRESULT result, LPCWSTR) -> HRESULT {
+          [this, alive](HRESULT result, LPCWSTR) -> HRESULT {
+            if (!CallbackAlive(alive)) return S_OK;
             if (FAILED(result)) {
               log_.Warn(L"Primary Stationhead startup script registration failed " +
                         HResultHex(result));
@@ -288,8 +303,8 @@ void StationheadPlayer::ConfigureWebView() {
 
   webview_->add_NewWindowRequested(
       Callback<ICoreWebView2NewWindowRequestedEventHandler>(
-          [this](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
-            if (!args) return S_OK;
+          [this, alive](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
+            if (!CallbackAlive(alive) || !args) return S_OK;
             // Always mark the request handled so a failure below never falls through to
             // WebView2's default behavior of opening an uncontrolled top-level popup window.
             args->put_Handled(TRUE);
@@ -302,14 +317,21 @@ void StationheadPlayer::ConfigureWebView() {
             if (FAILED(args->GetDeferral(&deferral)) || !deferral) return S_OK;
             ComPtr<ICoreWebView2NewWindowRequestedEventArgs> popupArgs = args;
             CloseAuthWebView();
+            authCallbackAlive_ = std::make_shared<std::atomic<bool>>(true);
+            const auto authAlive = authCallbackAlive_;
             spotifyAuthorization_ = true;
             selectedTab_ = StationheadTabKind::Auth;
             viewVisible_ = true;
             LayoutControllers();
             const HRESULT createResult = environment_->CreateCoreWebView2Controller(
                 authHostWindow_, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                                     [this, popupArgs, deferral, uri](HRESULT result,
+                                     [this, popupArgs, deferral, uri, authAlive](HRESULT result,
                                          ICoreWebView2Controller* controller) -> HRESULT {
+                                       if (!CallbackAlive(authAlive)) {
+                                         if (controller) controller->Close();
+                                         deferral->Complete();
+                                         return S_OK;
+                                       }
                                        if (FAILED(result) || !controller || shuttingDown_) {
                                          if (controller) controller->Close();
                                          spotifyAuthorization_ = false;
@@ -331,6 +353,7 @@ void StationheadPlayer::ConfigureWebView() {
                                        return S_OK;
                                      }).Get());
             if (FAILED(createResult)) {
+              authCallbackAlive_->store(false, std::memory_order_release);
               spotifyAuthorization_ = false;
               deferral->Complete();
               PostChange();
@@ -340,8 +363,8 @@ void StationheadPlayer::ConfigureWebView() {
 
   webview_->add_WebMessageReceived(
       Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-          [this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
-            if (!args) return S_OK;
+          [this, alive](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+            if (!CallbackAlive(alive) || !args) return S_OK;
             LPWSTR rawText = nullptr;
             if (SUCCEEDED(args->TryGetWebMessageAsString(&rawText)) && rawText) {
               const std::wstring message(rawText);
@@ -360,11 +383,9 @@ void StationheadPlayer::ConfigureWebView() {
                 return S_OK;
               }
               if (message == L"stationhead-start-attempted") {
-                if (!usedFallback_ && !audioPlaying_.load(std::memory_order_relaxed)) {
-                  fallbackMonitorAfterAt_ = now + kPrimaryFallbackMonitorGraceMs;
-                  noAudioSinceAt_ = 0;
-                  nextTickAt_ = 0;
-                }
+                // Navigation/native audio state owns fallback timing. The page
+                // message remains accepted only for compatibility with the
+                // injected script and cannot reset a live silence deadline.
                 return S_OK;
               }
               if (message == L"stationhead-login-required") {
@@ -409,7 +430,8 @@ void StationheadPlayer::ConfigureWebView() {
 
   webview_->add_NavigationCompleted(
       Callback<ICoreWebView2NavigationCompletedEventHandler>(
-          [this](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+          [this, alive](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+            if (!CallbackAlive(alive)) return S_OK;
             BOOL success = FALSE;
             COREWEBVIEW2_WEB_ERROR_STATUS webError{};
             if (args) {
@@ -444,7 +466,8 @@ void StationheadPlayer::ConfigureWebView() {
 
   webview_->add_ProcessFailed(
       Callback<ICoreWebView2ProcessFailedEventHandler>(
-          [this](ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs* args) -> HRESULT {
+          [this, alive](ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs* args) -> HRESULT {
+            if (!CallbackAlive(alive)) return S_OK;
             COREWEBVIEW2_PROCESS_FAILED_KIND kind{};
             if (args) args->get_ProcessFailedKind(&kind);
             {
@@ -474,6 +497,7 @@ void StationheadPlayer::ConfigureWebView() {
 
 void StationheadPlayer::ConfigureAuthWebView() {
   if (!authController_ || !authWebview_) return;
+  const auto alive = authCallbackAlive_;
   appliedMuted_.store(-1, std::memory_order_relaxed);
   appliedVolumePercent_.store(-1, std::memory_order_relaxed);
   ComPtr<ICoreWebView2Controller2> controller2;
@@ -491,18 +515,20 @@ void StationheadPlayer::ConfigureAuthWebView() {
   }
   authWebview_->add_NavigationCompleted(
       Callback<ICoreWebView2NavigationCompletedEventHandler>(
-          [this](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+          [this, alive](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+            if (!CallbackAlive(alive)) return S_OK;
             BOOL success = FALSE;
             if (args) args->get_IsSuccess(&success);
             if (success) {
               SelectTab(StationheadTabKind::Auth);
-              authWebview_->PostWebMessageAsJson(L"{\"type\":\"auth-tab-ready\"}");
+              if (authWebview_) authWebview_->PostWebMessageAsJson(L"{\"type\":\"auth-tab-ready\"}");
             }
             return S_OK;
           }).Get(), &authNavigationToken_);
   authWebview_->add_WindowCloseRequested(
       Callback<ICoreWebView2WindowCloseRequestedEventHandler>(
-          [this](ICoreWebView2*, IUnknown*) -> HRESULT {
+          [this, alive](ICoreWebView2*, IUnknown*) -> HRESULT {
+            if (!CallbackAlive(alive)) return S_OK;
             spotifyAuthorization_ = false;
             authPendingUrl_.clear();
             SelectTab(StationheadTabKind::None);
@@ -511,7 +537,8 @@ void StationheadPlayer::ConfigureAuthWebView() {
           }).Get(), &authCloseToken_);
   authWebview_->add_WebMessageReceived(
       Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-          [this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+          [this, alive](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+            if (!CallbackAlive(alive)) return S_OK;
             LPWSTR messageRaw = nullptr;
             if (!args || FAILED(args->get_WebMessageAsJson(&messageRaw)) || !messageRaw) return S_OK;
             const std::wstring messageJson = messageRaw;
@@ -538,7 +565,8 @@ void StationheadPlayer::ConfigureAuthWebView() {
           }).Get(), &authMessageToken_);
   authWebview_->add_ProcessFailed(
       Callback<ICoreWebView2ProcessFailedEventHandler>(
-          [this](ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs*) -> HRESULT {
+          [this, alive](ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs*) -> HRESULT {
+            if (!CallbackAlive(alive)) return S_OK;
             SelectTab(StationheadTabKind::None);
             PostChange();
             return S_OK;
@@ -549,6 +577,7 @@ void StationheadPlayer::ConfigureAuthWebView() {
 
 void StationheadPlayer::CloseWebView() {
   createCallbackAlive_->store(false, std::memory_order_release);
+  CloseAuthWebView();
   if (webview_) {
     if (audioPlayingChangedToken_.value) {
       ComPtr<ICoreWebView2_8> audioView;
@@ -586,6 +615,7 @@ void StationheadPlayer::CloseWebView() {
 }
 
 void StationheadPlayer::CloseAuthWebView() {
+  authCallbackAlive_->store(false, std::memory_order_release);
   if (authWebview_) {
     if (authNavigationToken_.value) authWebview_->remove_NavigationCompleted(authNavigationToken_);
     if (authMessageToken_.value) authWebview_->remove_WebMessageReceived(authMessageToken_);
@@ -625,6 +655,28 @@ void StationheadPlayer::Tick(int64_t nowMs) {
     return;
   }
 
+  const bool silentPrimary =
+      !usedFallback_ && !audioPlaying_.load(std::memory_order_relaxed);
+  if (silentPrimary && fallbackMonitorAfterAt_ > 0 &&
+      nowMs >= fallbackMonitorAfterAt_ && noAudioSinceAt_ == 0) {
+    noAudioSinceAt_ = nowMs;
+  }
+  // Silence recovery is safety-critical and must run before the coordinated
+  // maintenance reload. Otherwise a silent secondary window can keep returning
+  // from the reload-wait branch forever and prevent primary fallback.
+  if (silentPrimary && noAudioSinceAt_ > 0 &&
+      nowMs - noAudioSinceAt_ >= kPrimaryNoAudioFallbackMs &&
+      !config_.fallbackUrl.empty()) {
+    log_.Warn(L"Stationhead primary had no " +
+              std::wstring(nativeAudioTracking_ ? L"WebView2 audio" : L"detected audio") +
+              L" for 360s; switching to fallback");
+    NavigateStationheadUrl(nowMs, config_.fallbackUrl,
+                           L"primary had no audio for 360s; switching to fallback", true);
+    PostChange();
+    nextTickAt_ = nowMs + 1'000;
+    return;
+  }
+
   const int64_t reloadInterval = StationheadReloadIntervalMs(config_.reloadIntervalMinutes);
   if (reloadInterval > 0 && lastReloadAt_ > 0 && nowMs - lastReloadAt_ >= reloadInterval) {
     const bool secondaryConfigured = config_.secondaryEnabled && !config_.secondaryUrl.empty();
@@ -643,33 +695,16 @@ void StationheadPlayer::Tick(int64_t nowMs) {
     return;
   }
 
-  if (!usedFallback_ && !audioPlaying_.load(std::memory_order_relaxed) && noAudioSinceAt_ > 0 &&
-      nowMs - noAudioSinceAt_ >= kPrimaryNoAudioFallbackMs && !config_.fallbackUrl.empty()) {
-    log_.Warn(L"Stationhead primary had no " +
-              std::wstring(nativeAudioTracking_ ? L"WebView2 audio" : L"detected audio") +
-              L" for 360s; switching to fallback");
-    NavigateStationheadUrl(nowMs, config_.fallbackUrl,
-                           L"primary had no audio for 360s; switching to fallback", true);
-    PostChange();
-    nextTickAt_ = nowMs + 1'000;
-    return;
-  }
-
   int64_t next = nowMs + 30 * 60'000;
   const auto consider = [&](int64_t deadline) {
     if (deadline <= nowMs) next = nowMs + 1'000;
     else next = std::min(next, deadline);
   };
   if (reloadInterval > 0 && lastReloadAt_ > 0) consider(lastReloadAt_ + reloadInterval);
-  if (!usedFallback_ && !audioPlaying_.load(std::memory_order_relaxed) &&
-      fallbackMonitorAfterAt_ > 0) {
-    if (nowMs >= fallbackMonitorAfterAt_) {
-      if (noAudioSinceAt_ == 0) noAudioSinceAt_ = nowMs;
-    } else {
-      consider(fallbackMonitorAfterAt_);
-    }
+  if (silentPrimary && fallbackMonitorAfterAt_ > nowMs) {
+    consider(fallbackMonitorAfterAt_);
   }
-  if (!usedFallback_ && !audioPlaying_.load(std::memory_order_relaxed) && noAudioSinceAt_ > 0) {
+  if (silentPrimary && noAudioSinceAt_ > 0) {
     consider(noAudioSinceAt_ + kPrimaryNoAudioFallbackMs);
   }
   nextTickAt_ = std::max(nowMs + 1'000, next);
@@ -707,7 +742,10 @@ void StationheadPlayer::ShowAfterAudioStop() {
   if (!webview_) return;
   selectedTab_ = StationheadTabKind::Stationhead;
   viewVisible_ = true;
-  noAudioSinceAt_ = UnixMillis();
+  const int64_t now = UnixMillis();
+  fallbackMonitorAfterAt_ = now;
+  noAudioSinceAt_ = now;
+  nextTickAt_ = 0;
   {
     std::lock_guard lock(mutex_);
     status_.detail = L"Stationhead audio stopped; player restored";
