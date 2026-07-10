@@ -10,6 +10,7 @@ export async function resetD1TestDatabase(
     db.prepare("DELETE FROM device_commands"),
     db.prepare("DELETE FROM device_configs"),
     db.prepare("DELETE FROM device_metrics"),
+    db.prepare("DELETE FROM environment_samples"),
     db.prepare("DELETE FROM environment_buckets"),
     db.prepare("DELETE FROM device_heartbeats"),
     db.prepare("DELETE FROM current_state"),

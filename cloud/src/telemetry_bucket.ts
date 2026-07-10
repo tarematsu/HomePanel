@@ -30,10 +30,14 @@ interface EnvironmentBucket {
 
 export const ENVIRONMENT_BUCKET_MS = 5 * 60 * 1000;
 
+export function telemetryBucketAt(observedAt: number): number {
+  return Math.floor(observedAt / ENVIRONMENT_BUCKET_MS) * ENVIRONMENT_BUCKET_MS;
+}
+
 export function aggregateTelemetrySamples(samples: TelemetrySample[]): EnvironmentBucket[] {
   const buckets = new Map<number, EnvironmentBucket>();
   for (const sample of samples) {
-    const bucketAt = Math.floor(sample.observedAt / ENVIRONMENT_BUCKET_MS) * ENVIRONMENT_BUCKET_MS;
+    const bucketAt = telemetryBucketAt(sample.observedAt);
     let bucket = buckets.get(bucketAt);
     if (!bucket) {
       bucket = {
@@ -67,16 +71,48 @@ export function aggregateTelemetrySamples(samples: TelemetrySample[]): Environme
   return [...buckets.values()].sort((left, right) => left.bucketAt - right.bucketAt);
 }
 
-export function telemetryBucketStatement(
+export function telemetrySampleStatement(
   env: Env,
   deviceId: string,
-  bucket: EnvironmentBucket,
+  sample: TelemetrySample,
+): D1PreparedStatement {
+  return env.DB.prepare(
+    `INSERT OR IGNORE INTO environment_samples(
+       device_id,sequence,observed_at,co2,temperature,humidity,
+       temperature_corrected,humidity_corrected,bucket_applied
+     ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,0)
+     RETURNING sequence`,
+  ).bind(
+    deviceId,
+    sample.sequence,
+    sample.observedAt,
+    sample.co2 ?? null,
+    sample.temperature ?? null,
+    sample.humidity ?? null,
+    sample.temperatureCorrected ?? null,
+    sample.humidityCorrected ?? null,
+  );
+}
+
+export function pendingTelemetryBucketStatement(
+  env: Env,
+  deviceId: string,
+  bucketAt: number,
 ): D1PreparedStatement {
   return env.DB.prepare(
     `INSERT INTO environment_buckets(
        device_id,bucket_at,sample_count,co2_sum,co2_count,
        temperature_sum,temperature_count,humidity_sum,humidity_count
-     ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
+     )
+     SELECT ?1,?2,COUNT(*),
+       COALESCE(SUM(co2),0),COUNT(co2),
+       COALESCE(SUM(COALESCE(temperature_corrected,temperature)),0),
+       COUNT(COALESCE(temperature_corrected,temperature)),
+       COALESCE(SUM(COALESCE(humidity_corrected,humidity)),0),
+       COUNT(COALESCE(humidity_corrected,humidity))
+       FROM environment_samples
+      WHERE device_id=?1 AND observed_at>=?2 AND observed_at<?3 AND bucket_applied=0
+     HAVING COUNT(*)>0
      ON CONFLICT(device_id,bucket_at) DO UPDATE SET
        sample_count=environment_buckets.sample_count+excluded.sample_count,
        co2_sum=environment_buckets.co2_sum+excluded.co2_sum,
@@ -89,17 +125,19 @@ export function telemetryBucketStatement(
        CASE WHEN co2_count>0 THEN co2_sum/co2_count ELSE NULL END AS co2,
        CASE WHEN temperature_count>0 THEN temperature_sum/temperature_count ELSE NULL END AS temperature,
        CASE WHEN humidity_count>0 THEN humidity_sum/humidity_count ELSE NULL END AS humidity`,
-  ).bind(
-    deviceId,
-    bucket.bucketAt,
-    bucket.sampleCount,
-    bucket.co2Sum,
-    bucket.co2Count,
-    bucket.temperatureSum,
-    bucket.temperatureCount,
-    bucket.humiditySum,
-    bucket.humidityCount,
-  );
+  ).bind(deviceId, bucketAt, bucketAt + ENVIRONMENT_BUCKET_MS);
+}
+
+export function markTelemetryBucketAppliedStatement(
+  env: Env,
+  deviceId: string,
+  bucketAt: number,
+): D1PreparedStatement {
+  return env.DB.prepare(
+    `UPDATE environment_samples
+        SET bucket_applied=1
+      WHERE device_id=?1 AND observed_at>=?2 AND observed_at<?3 AND bucket_applied=0`,
+  ).bind(deviceId, bucketAt, bucketAt + ENVIRONMENT_BUCKET_MS);
 }
 
 export function telemetryHeartbeatStatement(

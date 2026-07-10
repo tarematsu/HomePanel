@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "native/**"
+      - "THIRD_PARTY_NOTICES.md"
       - ".github/workflows/native-windows-build.yml"
   push:
     branches:
       - main
     paths:
       - "native/**"
+      - "THIRD_PARTY_NOTICES.md"
       - ".github/workflows/native-windows-build.yml"
   workflow_dispatch:
 
@@ -173,6 +175,7 @@ jobs:
           Copy-Item native/build-ci/Release/HomePanelUpdater.exe $manual
           Copy-Item native/build-ci/Release/WebView2Loader.dll $manual
           Copy-Item native/config.example.json $manual
+          Copy-Item THIRD_PARTY_NOTICES.md $manual
           Copy-Item native/build-ci/Release/HomePanel.exe HomePanel.exe
           Copy-Item native/build-ci/Release/HomePanelUpdater.exe HomePanelUpdater.exe
           Copy-Item native/build-ci/Release/WebView2Loader.dll WebView2Loader.dll

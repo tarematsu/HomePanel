@@ -3,9 +3,11 @@ import { json } from "./http";
 import { unauthorized } from "./response";
 import type { Env } from "./sources";
 import {
-  aggregateTelemetrySamples,
-  telemetryBucketStatement,
+  markTelemetryBucketAppliedStatement,
+  pendingTelemetryBucketStatement,
+  telemetryBucketAt,
   telemetryHeartbeatStatement,
+  telemetrySampleStatement,
   type EnvironmentHistoryRow,
   type TelemetrySample,
 } from "./telemetry_bucket";
@@ -29,6 +31,7 @@ interface HeartbeatRow {
 
 const MAX_TELEMETRY_SAMPLES = 1440;
 const TELEMETRY_SAMPLES_PER_BATCH = 99;
+const TELEMETRY_BUCKETS_PER_BATCH = 49;
 const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 
 function finiteOptional(value: unknown): number | null | undefined {
@@ -82,66 +85,67 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
   ).bind(deviceId).first<HeartbeatRow>();
   const lastSequence = Number(previous?.last_sequence ?? 0);
   const unique = new Map<number, TelemetrySample>();
-  let duplicates = 0;
+  let requestDuplicates = 0;
   for (const sample of samples) {
-    if (sample.sequence <= lastSequence) continue;
     if (unique.has(sample.sequence)) {
-      duplicates += 1;
+      requestDuplicates += 1;
       continue;
     }
     unique.set(sample.sequence, sample);
   }
-  const accepted = [...unique.values()].sort((left, right) => left.sequence - right.sequence);
+  const uniqueSamples = [...unique.values()].sort((left, right) => left.sequence - right.sequence);
+  const candidates = uniqueSamples.filter(sample => sample.sequence > lastSequence);
   const appVersion = String(input.appVersion ?? "").slice(0, 100) || null;
   const rawOutbox = Number(input.outboxCount);
   const outboxCount = Number.isFinite(rawOutbox) ? Math.max(0, Math.trunc(rawOutbox)) : 0;
   const stationheadOk = input.stationheadOk ? 1 : 0;
   const returnedRows = new Map<number, EnvironmentHistoryRow>();
+  let accepted = 0;
 
-  if (accepted.length) {
-    for (let offset = 0; offset < accepted.length; offset += TELEMETRY_SAMPLES_PER_BATCH) {
-      const chunk = accepted.slice(offset, offset + TELEMETRY_SAMPLES_PER_BATCH);
-      const buckets = aggregateTelemetrySamples(chunk);
-      const statements = buckets.map(bucket => telemetryBucketStatement(env, deviceId, bucket));
+  for (let offset = 0; offset < candidates.length; offset += TELEMETRY_SAMPLES_PER_BATCH) {
+    const chunk = candidates.slice(offset, offset + TELEMETRY_SAMPLES_PER_BATCH);
+    const insertResults = await env.DB.batch(chunk.map(sample => telemetrySampleStatement(env, deviceId, sample)));
+    for (const result of insertResults) accepted += (result.results ?? []).length;
+  }
 
-
-
-      statements.push(telemetryHeartbeatStatement(
-        env,
-        deviceId,
-        now,
-        appVersion,
-        stationheadOk,
-        outboxCount,
-        chunk.at(-1)!.sequence,
-      ));
-      const results = await env.DB.batch(statements);
-      for (let index = 0; index < buckets.length; index += 1) {
-        const rows = (results[index]?.results ?? []) as EnvironmentHistoryRow[];
-        for (const row of rows) returnedRows.set(Number(row.t), row);
-      }
+  const affectedBuckets = [...new Set(uniqueSamples.map(sample => telemetryBucketAt(sample.observedAt)))].sort((left, right) => left - right);
+  for (let offset = 0; offset < affectedBuckets.length; offset += TELEMETRY_BUCKETS_PER_BATCH) {
+    const bucketChunk = affectedBuckets.slice(offset, offset + TELEMETRY_BUCKETS_PER_BATCH);
+    const statements: D1PreparedStatement[] = [];
+    for (const bucketAt of bucketChunk) {
+      statements.push(pendingTelemetryBucketStatement(env, deviceId, bucketAt));
+      statements.push(markTelemetryBucketAppliedStatement(env, deviceId, bucketAt));
     }
-    await mergeEnvironmentRows(env, deviceId, [...returnedRows.values()], now);
-  } else {
-    const heartbeatDue = !previous || now - Number(previous.last_seen_at ?? 0) >= HEARTBEAT_INTERVAL_MS;
-    const heartbeatChanged = !previous
-      || previous.app_version !== appVersion
-      || Number(previous.stationhead_ok) !== stationheadOk
-      || Number(previous.outbox_count) !== outboxCount;
-    if (heartbeatDue || heartbeatChanged) {
-      await telemetryHeartbeatStatement(
-        env,
-        deviceId,
-        now,
-        appVersion,
-        stationheadOk,
-        outboxCount,
-        lastSequence,
-      ).run();
+    const bucketResults = await env.DB.batch(statements);
+    for (let index = 0; index < bucketResults.length; index += 2) {
+      const rows = (bucketResults[index]?.results ?? []) as EnvironmentHistoryRow[];
+      for (const row of rows) returnedRows.set(Number(row.t), row);
     }
   }
 
-  return json(duplicates
-    ? { accepted: accepted.length, duplicates }
-    : { accepted: accepted.length });
+  const highestSequence = uniqueSamples.reduce((highest, sample) => Math.max(highest, sample.sequence), lastSequence);
+  const heartbeatDue = !previous || now - Number(previous.last_seen_at ?? 0) >= HEARTBEAT_INTERVAL_MS;
+  const heartbeatChanged = !previous
+    || previous.app_version !== appVersion
+    || Number(previous.stationhead_ok) !== stationheadOk
+    || Number(previous.outbox_count) !== outboxCount;
+  if (uniqueSamples.length || heartbeatDue || heartbeatChanged) {
+    await telemetryHeartbeatStatement(
+      env,
+      deviceId,
+      now,
+      appVersion,
+      stationheadOk,
+      outboxCount,
+      highestSequence,
+    ).run();
+  }
+
+  if (uniqueSamples.length) {
+    await mergeEnvironmentRows(env, deviceId, [...returnedRows.values()], now);
+  }
+
+  return json(requestDuplicates
+    ? { accepted, duplicates: requestDuplicates }
+    : { accepted });
 }

@@ -3,6 +3,7 @@
 
 
 
+
 #include "cloud_client.h"
 
 namespace hp {
@@ -29,12 +30,13 @@ void CloudClient::EnsureHttpHandlesLocked() {
   parts.lpszUrlPath = path;
   parts.dwUrlPathLength = _countof(path);
   if (!WinHttpCrackUrl(config_.cloudflareBaseUrl.c_str(), 0, 0, &parts)) throw std::runtime_error("invalid Cloudflare base URL");
+  if (parts.nScheme != INTERNET_SCHEME_HTTPS) throw std::runtime_error("Cloudflare base URL must use HTTPS");
 
   host_.assign(host, parts.dwHostNameLength);
   basePath_.assign(path, parts.dwUrlPathLength);
   while (!basePath_.empty() && basePath_.back() == L'/') basePath_.pop_back();
   port_ = parts.nPort;
-  secure_ = parts.nScheme == INTERNET_SCHEME_HTTPS;
+  secure_ = true;
 
   session_ = WinHttpOpen(L"HomePanel/2.6", accessType_,
                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
@@ -56,7 +58,7 @@ HttpResponse CloudClient::Request(const std::wstring& method, const std::wstring
     const std::wstring requestPath = basePath_ + path;
     HINTERNET request = WinHttpOpenRequest(connection_, method.c_str(), requestPath.c_str(), nullptr,
                                            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                           secure_ ? WINHTTP_FLAG_SECURE : 0);
+                                           WINHTTP_FLAG_SECURE);
     if (!request) {
       ResetHttpHandlesLocked();
       if (accessType_ == WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY) accessType_ = WINHTTP_ACCESS_TYPE_NO_PROXY;

@@ -3,7 +3,9 @@
 
 
 
+
 #include "sensors.h"
+#include <limits>
 #include <winrt/Windows.Data.Json.h>
 
 namespace hp {
@@ -28,6 +30,9 @@ bool SensorHub::AppendOutbox(const Sample& sample) {
 void SensorHub::LoadOutbox() {
   std::ifstream ack(outboxAckPath_);
   ack >> acknowledgedSequence_;
+  if (acknowledgedSequence_ < std::numeric_limits<uint64_t>::max()) {
+    nextSequence_ = std::max(nextSequence_, acknowledgedSequence_ + 1);
+  }
   std::ifstream input(outboxPath_);
   std::string line;
   bool repairNeeded = false;
