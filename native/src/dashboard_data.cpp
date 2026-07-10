@@ -95,8 +95,7 @@ bool ParseDashboardSnapshot(const std::string& text, DashboardSnapshot& output, 
     const JsonObject news = json::Object(root, L"news");
     next.newsStatus = ReadStatus(news);
     const JsonArray newsItems = json::Array(news, L"items");
-    next.newsItemCount = static_cast<int>(newsItems.Size());
-    for (uint32_t index = 0; index < newsItems.Size() && index < 10; ++index) {
+    for (uint32_t index = 0; index < newsItems.Size() && next.newsItems.size() < 10; ++index) {
       try {
         if (newsItems.GetAt(index).ValueType() != JsonValueType::Object) continue;
         const JsonObject item = newsItems.GetObjectAt(index);
@@ -105,6 +104,7 @@ bool ParseDashboardSnapshot(const std::string& text, DashboardSnapshot& output, 
       } catch (...) {
       }
     }
+    next.newsItemCount = static_cast<int>(next.newsItems.size());
 
     const JsonObject octopus = json::Object(root, L"octopus");
     next.octopusStatus = ReadStatus(octopus);
