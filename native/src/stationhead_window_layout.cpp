@@ -200,7 +200,7 @@ void StationheadPlayer::SetVisible(bool visible) {
 void StationheadPlayer::LayoutControllers() {
   if (!EnsureHostWindow()) return;
   const bool preview = startupPreviewActive_;
-  const bool showAuth = !preview && selectedTab_ == StationheadTabKind::Auth && authController_;
+  const bool showAuth = !preview && selectedTab_ == StationheadTabKind::Auth;
   ApplyStationheadChildLayout(hostWindow_, authHostWindow_, controller_.Get(), authController_.Get(),
                               bounds_, viewVisible_, showAuth, preview);
   backgroundHostPlaced_ = !(preview || viewVisible_);
@@ -254,7 +254,7 @@ void SecondaryStationheadPlayer::LayoutWindows(bool interactive) {
   const bool wasInteractive = interactive_;
   const bool authWasVisible = authHostWindow_ && IsWindow(authHostWindow_) && IsWindowVisible(authHostWindow_);
   const bool preview = startupPreviewActive_;
-  const bool showAuth = !preview && interactive && spotifyAuthorization_ && authController_;
+  const bool showAuth = !preview && interactive && spotifyAuthorization_;
   EnsureHostWindow();
   ApplyStationheadChildLayout(hostWindow_, authHostWindow_, controller_.Get(), authController_.Get(),
                               bounds_, interactive, showAuth, preview);

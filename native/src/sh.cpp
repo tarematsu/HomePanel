@@ -558,7 +558,7 @@ void StationheadPlayer::ConfigureAuthWebView() {
             showAfterNavigation_ = false;
             authPendingUrl_.clear();
             SelectTab(StationheadTabKind::None);
-            PostChange(StationheadChangeReturnMain | StationheadChangeReleaseAuth);
+            PostChange(StationheadChangeReleaseAuth);
             return S_OK;
           }).Get(), &authCloseToken_);
   authWebview_->add_WebMessageReceived(
@@ -584,7 +584,7 @@ void StationheadPlayer::ConfigureAuthWebView() {
                     : L"Spotify authentication failed or cancelled";
               }
               SelectTab(StationheadTabKind::None);
-              PostChange(StationheadChangeReturnMain | StationheadChangeReleaseAuth);
+              PostChange(StationheadChangeReleaseAuth);
             } catch (...) {
             }
             return S_OK;
@@ -593,7 +593,7 @@ void StationheadPlayer::ConfigureAuthWebView() {
       Callback<ICoreWebView2ProcessFailedEventHandler>(
           [this](ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs*) -> HRESULT {
             SelectTab(StationheadTabKind::None);
-            PostChange(StationheadChangeReturnMain);
+            PostChange();
             return S_OK;
           }).Get(), &authProcessFailedToken_);
   if (!authPendingUrl_.empty()) authWebview_->Navigate(authPendingUrl_.c_str());

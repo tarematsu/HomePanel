@@ -267,21 +267,15 @@ void App::StartDeferredServices(int64_t now, const StationheadStatus& stationhea
   // Stationhead windows drop to the background. Read the secondary status once,
   // and only while the dashboard has not started yet.
   bool secondaryAudioReady = true;
-  bool secondaryLoginRequired = false;
   if (!rendererStarted_ && secondaryStationhead_) {
     const SecondaryStationheadStatus secondaryStatus = secondaryStationhead_->Status();
     secondaryAudioReady = secondaryStatus.playing;
-    secondaryLoginRequired = secondaryStatus.loginRequired;
   }
   const bool dashboardAudioReady = primaryAudioReady && secondaryAudioReady;
-  // A login prompt on either window can never auto-confirm audio, so let it hand
-  // the screen to the dashboard immediately (the prompt itself stays in front).
-  const bool loginRequired = stationheadStatus.loginRequired || secondaryLoginRequired;
   const bool startupDeadlineReached = now - startupAt_ >= 30'000;
   if (primaryAudioReady && playbackReadyAt_ == 0) playbackReadyAt_ = now;
 
-  if (!rendererStarted_ &&
-      (dashboardAudioReady || startupDeadlineReached || loginRequired)) {
+  if (!rendererStarted_ && dashboardAudioReady) {
     renderer_->Initialize();
     rendererStarted_ = true;
     ClearStartupStationheadPreview();
@@ -289,11 +283,7 @@ void App::StartDeferredServices(int64_t now, const StationheadStatus& stationhea
     PublishRenderStateNow();
     renderer_->TickNativePanels(now);
     InvalidateAll();
-    logger_->Info(dashboardAudioReady
-        ? L"Native dashboard started after Stationhead A/B audio confirmation"
-        : (loginRequired
-            ? L"Native dashboard started because Stationhead login is required"
-            : L"Native dashboard started after startup fallback deadline"));
+    logger_->Info(L"Native dashboard started after Stationhead A/B audio confirmation");
   }
 
   if (!cloudStarted_ && (primaryAudioReady || startupDeadlineReached)) {
