@@ -51,7 +51,10 @@ jobs:
           npm run check 2>&1 | tee ../cloud-check.log
 
       - name: Worker tests
-        run: npm test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee ../cloud-test.log
 
       - name: Validate local D1 migrations
         run: npm run migrate:local
@@ -64,12 +67,14 @@ jobs:
           npx wrangler deploy --dry-run --outdir .wrangler-ci-output
           test -n "$(find .wrangler-ci-output -type f -size +0c -print -quit)"
 
-      - name: Upload cloud validation log on failure
+      - name: Upload cloud validation logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: cloud-check-log
-          path: cloud-check.log
+          name: cloud-validation-logs
+          path: |
+            cloud-check.log
+            cloud-test.log
           if-no-files-found: warn
           retention-days: 7
 
