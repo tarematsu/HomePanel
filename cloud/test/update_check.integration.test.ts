@@ -12,9 +12,9 @@ function manifest(version: string): string {
     version,
     signed: false,
     files: [
-      { name: "HomePanel.exe", sha256: "a", size: 1 },
-      { name: "HomePanelUpdater.exe", sha256: "b", size: 1 },
-      { name: "WebView2Loader.dll", sha256: "c", size: 1 },
+      { name: "HomePanel.exe", sha256: "a".repeat(64), size: 1 },
+      { name: "HomePanelUpdater.exe", sha256: "b".repeat(64), size: 1 },
+      { name: "WebView2Loader.dll", sha256: "c".repeat(64), size: 1 },
     ],
   });
 }
@@ -65,7 +65,7 @@ describe("cloud-driven update check", () => {
     await runUpdateCheck(scoped);
     expect(await pendingCommands()).toHaveLength(0);
 
-    // Re-running with the same version stays quiet.
+    // Re-running with the same version and manifest stays quiet.
     await runUpdateCheck(scoped);
     expect(await pendingCommands()).toHaveLength(0);
 
@@ -77,7 +77,7 @@ describe("cloud-driven update check", () => {
     expect(commands.every(command => command.command === "check_update")).toBe(true);
     expect(commands.every(command => command.payload?.includes("2607100002"))).toBe(true);
 
-    // Idempotent while the version stays put, even across repeated runs.
+    // Idempotent while the release identity stays put, even across repeated runs.
     await runUpdateCheck(scoped);
     expect(await pendingCommands()).toHaveLength(2);
 
