@@ -31,7 +31,7 @@ bool RelaunchSelf() {
   CloseHandle(process.hProcess);
   return true;
 }
-}  // namespace
+}
 
 int WINAPI wWinMain(
     _In_ HINSTANCE instance,

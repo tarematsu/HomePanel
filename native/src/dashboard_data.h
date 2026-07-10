@@ -64,4 +64,4 @@ bool ParseDashboardSnapshot(const std::string& text, DashboardSnapshot& output,
                             std::wstring* error = nullptr);
 bool LoadDashboardSnapshot(const fs::path& path, DashboardSnapshot& output, std::wstring* error = nullptr);
 
-}  // namespace hp
+}

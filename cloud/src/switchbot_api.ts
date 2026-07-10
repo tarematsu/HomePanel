@@ -105,4 +105,3 @@ export async function loadSwitchBotSnapshot(env: SwitchBotEnv): Promise<SwitchBo
     return { row, state: null };
   }
 }
-

@@ -204,7 +204,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     try {
       const body = await request.json() as { sources?: unknown };
       if (Array.isArray(body.sources)) names = body.sources.filter((value): value is string => typeof value === "string");
-    } catch { /* empty body refreshes all */ }
+    } catch {   }
     await requestRefresh(env, names);
     ctx.waitUntil(runScheduler(env));
     return json({ queued: true }, { status: 202 });

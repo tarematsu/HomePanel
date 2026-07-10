@@ -76,10 +76,10 @@ export async function mergeEnvironmentRows(
   now: number,
 ): Promise<void> {
   const cutoff = now - ENVIRONMENT_HISTORY_MS;
-  // Re-read the durable aggregate table rather than trusting only rows returned
-  // by the current request. A previous multi-chunk upload may have committed
-  // some chunks before a later chunk failed; the retry correctly skips those
-  // sequences, so they would otherwise never reach the dashboard snapshot.
+
+
+
+
   const stored = await env.DB.prepare(
     `SELECT bucket_at AS t,
        CASE WHEN co2_count>0 THEN co2_sum/co2_count ELSE NULL END AS co2,

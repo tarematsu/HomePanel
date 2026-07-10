@@ -1,4 +1,4 @@
-# Runtime data and local profiles
+
 native/build/
 native/build-*/
 native/build-ci/
@@ -13,7 +13,7 @@ webview2-*/
 *.sqlite
 *.sqlite3
 
-# Environment files and credentials
+
 .env
 .env.*
 !.env.example
@@ -28,12 +28,12 @@ webview2-*/
 credentials.json
 secrets.json
 
-# Cloudflare
+
 cloud/node_modules/
 cloud/.wrangler/
 cloud/dist/
 
-# Local release artifacts
+
 *.zip
 *.sha256
 update-manifest.json
@@ -42,7 +42,7 @@ HomePanelUpdater.exe
 WebView2Loader.dll
 .codex-remote-attachments/
 
-# Editors/OS
+
 .vscode/
 .idea/
 .DS_Store

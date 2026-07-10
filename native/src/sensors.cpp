@@ -138,7 +138,7 @@ bool PrepareSensor(HANDLE serial, std::string& buffer, const std::atomic<bool>& 
 }
 
 
-}  // namespace
+}
 
 SensorHub::SensorHub(HWND window, AppConfig config, fs::path dataDir, Logger& log)
     : window_(window), config_(std::move(config)), switchbotPath_(dataDir / L"switchbot.json"),
@@ -191,10 +191,10 @@ void SensorHub::ApplyCloudSwitchBot(const fs::path& path) {
   }
 }
 
-}  // namespace hp
+}
 
-// Feature groups split out of this file; compiled as part of this translation
-// unit so they share its includes and file-local helpers (unity-build pattern,
-// like renderer_core.cpp). Not listed in CMake on purpose.
+
+
+
 #include "sensors_serial.cpp"
 #include "sensors_outbox.cpp"

@@ -196,9 +196,9 @@ export async function updateState(
   if (previous?.content_hash === hash) {
     const heartbeatDue = now - previous.fetched_at >= STATE_HEARTBEAT_MS;
     const recovered = previous.status !== "ok" || previous.error !== null;
-    // Preserve stable ETags between heartbeats, but refresh volatile timestamp
-    // fields whenever the regular state heartbeat is due or a stale source
-    // recovers. This avoids both permanently stale timestamps and redraw churn.
+
+
+
     if (!heartbeatDue && !recovered) return;
     await env.DB.prepare(
       `UPDATE current_state

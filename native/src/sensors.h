@@ -73,4 +73,4 @@ class SensorHub {
   std::condition_variable stopWake_;
   std::mutex stopMutex_;
 };
-}  // namespace hp
+}

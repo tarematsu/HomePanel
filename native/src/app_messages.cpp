@@ -1,7 +1,7 @@
-// Part of app.cpp's translation unit (see the #include at the end of that
-// file). Win32 window procedure and the main message dispatch (timer, paint,
-// input, and the WM_HP_* cross-thread notifications). Uses the WM_HP_UPDATE_RESULT
-// constant and other file-local declarations from app.cpp.
+
+
+
+
 #include "app.h"
 
 namespace hp {
@@ -92,15 +92,15 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
       PublishRenderStateNow();
       return 0;
     case WM_HP_PRIMARY_RELOAD_READY: {
-      // A may reload only after B has confirmed real audio. Without B, the
-      // primary reload remains available for single-window installations.
+
+
       if (!secondaryStationhead_) return 1;
       if (!secondaryStationhead_->Status().playing) return 0;
       ApplyScheduledStationheadAudioProfile(false);
       return 1;
     }
     case WM_HP_SECONDARY_RELOAD_READY: {
-      // B may reload only after A has confirmed real audio.
+
       if (!stationhead_->Status().audioPlaying) return 0;
       ApplyScheduledStationheadAudioProfile(true);
       return 1;
@@ -161,4 +161,4 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
   return DefWindowProcW(window_, message, wParam, lParam);
 }
 
-}  // namespace hp
+}

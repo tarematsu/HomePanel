@@ -9,7 +9,7 @@ beforeEach(async () => {
   vi.useFakeTimers();
   const testEnv = env as TestEnv;
   await resetD1TestDatabase(testEnv.DB, testEnv.TEST_MIGRATIONS);
-  // Prove the application policy itself suppresses writes, independently of the D1 safety trigger.
+
   await env.DB.exec("DROP TRIGGER IF EXISTS skip_redundant_current_state_heartbeat");
 });
 

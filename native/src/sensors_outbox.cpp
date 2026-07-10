@@ -1,8 +1,8 @@
-// Part of sensors.cpp's translation unit (see the #include at the end of that
-// file). Durable telemetry outbox: append/load/repair the on-disk sample log,
-// compaction, telemetry payload building and acknowledgement. Uses the
-// SampleJson/EscapeJson/AtomicWriteText helpers and the compaction constants
-// from sensors.cpp.
+
+
+
+
+
 #include "sensors.h"
 #include <winrt/Windows.Data.Json.h>
 
@@ -106,4 +106,4 @@ void SensorHub::AcknowledgeTelemetry(size_t count) {
   CompactOutboxLocked();
 }
 
-}  // namespace hp
+}

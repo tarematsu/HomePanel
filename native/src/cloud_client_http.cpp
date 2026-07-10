@@ -1,8 +1,8 @@
-// Part of cloud_client.cpp's translation unit (see the #include at the end of
-// that file). WinHTTP transport: session/connection handle management and the
-// single request/response path with retry, decompression and size limits.
-// Uses the HeaderValue / WinHttpErrorText / kMaxResponseBytes helpers from
-// cloud_client.cpp.
+
+
+
+
+
 #include "cloud_client.h"
 
 namespace hp {
@@ -116,4 +116,4 @@ HttpResponse CloudClient::Request(const std::wstring& method, const std::wstring
   throw std::runtime_error("WinHTTP request failed");
 }
 
-}  // namespace hp
+}

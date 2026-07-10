@@ -1,7 +1,7 @@
-// Part of app.cpp's translation unit (see the #include at the end of that
-// file). Cloud-driven housekeeping: remote command processing, async telemetry
-// upload, and display-cache clearing. Uses the kRestartExitCode constant from
-// app.cpp.
+
+
+
+
 #include "app.h"
 #include <winrt/Windows.Data.Json.h>
 
@@ -32,7 +32,7 @@ bool SavePendingCommandAcks(const fs::path& path, const PendingCommandAcks& pend
   }
   return AtomicWriteText(path, output.str());
 }
-}  // namespace
+}
 
 void App::ProcessRemoteCommands() {
   const fs::path path = dataDir_ / L"commands.json";
@@ -83,9 +83,9 @@ void App::ProcessRemoteCommands() {
       } else if (command == L"reload_dashboard") {
         cloud_->RefreshNow();
       } else if (command == L"check_update") {
-        // A background check may still be using updateThread_. Do not ACK and
-        // discard an install command in that state; leaving it unacknowledged
-        // lets the Worker redeliver it after the normal command timeout.
+
+
+
         if (updateBusy_.load(std::memory_order_acquire)) {
           logger_->Info(L"Update install command deferred because an update check is already running");
           continue;
@@ -97,10 +97,10 @@ void App::ProcessRemoteCommands() {
         result = L"unknown command";
       }
 
-      // Record completion before acknowledging it. If the network fails after
-      // the action, redelivery retries only the ACK instead of repeating the
-      // action. The commands are idempotent, but users should not have to rely
-      // on that fact as a substitute for delivery semantics.
+
+
+
+
       pendingAcks[id] = success;
       if (!SavePendingCommandAcks(pendingAckPath, pendingAcks)) {
         logger_->Warn(L"Failed to persist completed remote command " + std::to_wstring(id));
@@ -154,4 +154,4 @@ void App::ClearDisplayCache() {
   logger_->Info(L"Display cache cleared; WebView user data and telemetry outbox preserved");
 }
 
-}  // namespace hp
+}

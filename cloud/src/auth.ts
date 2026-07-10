@@ -3,8 +3,8 @@ import type { Env } from "./sources";
 
 export const DEVICE_ID_PATTERN = /^[A-Za-z0-9._-]{1,100}$/;
 
-// HOMEPANEL_DEVICE_TOKENS is static per Worker isolate, so the parsed map is
-// cached by raw string value to avoid re-parsing it on every request.
+
+
 const deviceTokenMapCache = new Map<string, Map<string, string>>();
 
 function parseMappedDeviceTokens(raw: string): Map<string, string> {
@@ -51,9 +51,9 @@ export function deviceSecrets(env: Env): Array<string | undefined> {
   return [env.HOMEPANEL_INGEST_SECRET, env.DEVICE_TOKEN];
 }
 
-// Keep API_TOKEN as an optional dedicated credential, while retaining the
-// existing single-token deployment model where DEVICE_TOKEN (or the ingest
-// secret) also authorizes configuration, refresh, and command operations.
+
+
+
 export function actionSecrets(env: Env): Array<string | undefined> {
   return [env.API_TOKEN, env.HOMEPANEL_INGEST_SECRET, env.DEVICE_TOKEN];
 }

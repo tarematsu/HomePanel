@@ -13,9 +13,9 @@ endif()
 option(HOMEPANEL_CI_STRICT "Treat compiler and linker warnings as errors" OFF)
 option(HOMEPANEL_CI_STATIC_ANALYSIS "Run MSVC native code analysis" OFF)
 
-# version.h and the .rc resources are generated at build time by
-# cmake/write_version_files.cmake, the single source of truth for the build
-# number. Nothing else in this file needs to parse the version.
+
+
+
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 set(HOMEPANEL_RADAR_SATELLITE "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ui/radar-satellite.png")
@@ -167,4 +167,4 @@ add_dependencies(HomePanelUpdater homepanel_version_files)
 target_link_libraries(HomePanelUpdater PRIVATE winhttp bcrypt wintrust crypt32 shell32 ole32 user32 windowsapp runtimeobject iphlpapi)
 
 install(TARGETS HomePanel HomePanelUpdater RUNTIME DESTINATION .)
-install(FILES config.example.json "${CMAKE_CURRENT_SOURCE_DIR}/../THIRD_PARTY_NOTICES.md" DESTINATION .)
+install(FILES config.example.json DESTINATION .)

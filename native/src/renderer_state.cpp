@@ -1,6 +1,6 @@
-// Renderer lifecycle and shared state: construction, window visibility,
-// dashboard cache loading/metadata, queued UI actions, and the main-window
-// background paint. Compiled as part of renderer_core.cpp's translation unit.
+
+
+
 #include "web_renderer.h"
 
 namespace hp {
@@ -17,7 +17,7 @@ void PrepareParentWindow(HWND window) {
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
   }
 }
-}  // namespace
+}
 
 Renderer::Renderer(HWND window, int width, int height)
     : window_(window), width_(width), height_(height) {
@@ -138,4 +138,4 @@ void Renderer::NotifyRadarUpdated() {
   radarComposeWake_.notify_all();
 }
 
-}  // namespace hp
+}

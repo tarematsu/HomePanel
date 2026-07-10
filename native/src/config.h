@@ -2,7 +2,7 @@
 #include "common.h"
 
 namespace hp {
-// Compile-time defaults; cloud configuration may override supported values.
+
 struct StationheadConfig {
   std::wstring url = L"https://www.stationhead.com/sakuramankai";
   std::wstring fallbackUrl = L"https://www.stationhead.com/buddy46";
@@ -30,4 +30,4 @@ struct AppConfig {
 AppConfig LoadConfig(const fs::path& path);
 std::wstring LoadProtectedToken(const fs::path& path, const wchar_t* environmentName);
 bool SaveProtectedToken(const fs::path& path, const std::wstring& value);
-}  // namespace hp
+}

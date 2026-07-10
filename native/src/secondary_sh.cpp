@@ -15,7 +15,7 @@ std::wstring HResultHex(HRESULT value) {
   return output.str();
 }
 
-}  // namespace
+}
 
 SecondaryStationheadPlayer::SecondaryStationheadPlayer(
     HWND window, StationheadConfig config, fs::path userDataFolder, Logger& log)
@@ -357,9 +357,9 @@ void SecondaryStationheadPlayer::CloseWebView() {
   }
 }
 
-}  // namespace hp
+}
 
-// Feature groups split out of this file; compiled as part of this translation
-// unit so they share its includes and file-local helpers (unity-build pattern,
-// like renderer_core.cpp). Not listed in CMake on purpose.
+
+
+
 #include "secondary_sh_webview.cpp"

@@ -26,4 +26,4 @@ class SharedWebViewEnvironment {
   std::mutex mutex_;
   std::map<std::wstring, Entry> entries_;
 };
-}  // namespace hp
+}

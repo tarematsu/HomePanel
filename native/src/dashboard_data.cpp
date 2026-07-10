@@ -58,7 +58,7 @@ std::wstring DeviceState(const JsonObject& item) {
   }
   return state;
 }
-}  // namespace
+}
 
 bool ParseDashboardSnapshot(const std::string& text, DashboardSnapshot& output, std::wstring* error) {
   try {
@@ -167,4 +167,4 @@ bool LoadDashboardSnapshot(const fs::path& path, DashboardSnapshot& output, std:
   return ParseDashboardSnapshot(text, output, error);
 }
 
-}  // namespace hp
+}

@@ -84,13 +84,13 @@ std::vector<std::wstring> TokenKeys(const wchar_t* environmentName) {
     return {environmentName, L"DEVICE_TOKEN", L"HOMEPANEL_INGEST_SECRET"};
   }
   if (wcscmp(environmentName, L"HOMEPANEL_ACTION_TOKEN") == 0) {
-    // API_TOKEN remains an optional override. Existing installations may use a
-    // single DEVICE_TOKEN for device sync and administrative operations.
+
+
     return {environmentName, L"API_TOKEN", L"DEVICE_TOKEN", L"HOMEPANEL_INGEST_SECRET"};
   }
   return {environmentName};
 }
-}  // namespace
+}
 
 AppConfig LoadConfig(const fs::path& path) {
   AppConfig config;
@@ -105,13 +105,13 @@ AppConfig LoadConfig(const fs::path& path) {
       config.deviceId = GetString(root, L"deviceId", config.deviceId);
 
     } catch (...) {
-      // Invalid local bootstrap data falls back to compiled defaults.
+
     }
   }
 
-  // Migration-only fallback. Cloud device-config overrides this value after it has
-  // been downloaded, but existing installations with multiple COM devices keep
-  // working during the first cloud-first startup.
+
+
+
   if (config.serialPort.empty()) {
     const fs::path root = path.parent_path().parent_path();
     for (const fs::path& envPath : {root / L".env", root / L"cloud" / L".env"}) {
@@ -175,4 +175,4 @@ std::wstring LoadProtectedToken(const fs::path& path, const wchar_t* environment
   }
   return {};
 }
-}  // namespace hp
+}

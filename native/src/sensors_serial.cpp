@@ -1,8 +1,8 @@
-// Part of sensors.cpp's translation unit (see the #include at the end of that
-// file). UD-CO2S serial device: locating the COM port and the read loop that
-// parses CO2/humidity/temperature samples, applies corrections, and publishes
-// them. Uses the MeasurementValuesValid/SampleValuesValid/ConfigurePort/
-// PrepareSensor/ReadLine/WriteCommand helpers from sensors.cpp.
+
+
+
+
+
 #include "sensors.h"
 
 namespace hp {
@@ -146,9 +146,9 @@ void SensorHub::SerialLoop() {
       const int64_t bucket = sample.observedAt / kTelemetryBucketMs;
       const bool historyBucketAdvanced = bucket != lastPersistedBucket_;
       if (historyBucketAdvanced && AppendOutbox(sample)) lastPersistedBucket_ = bucket;
-      // App::UpdateAirHistory is driven by WM_HP_SENSOR_UPDATED. Send one when
-      // a new five-minute bucket begins even if the rounded display values are
-      // unchanged, otherwise flat periods disappear from the 24-hour graph.
+
+
+
       if (visibleChanged || historyBucketAdvanced) {
         PostMessageW(window_, WM_HP_SENSOR_UPDATED, 0, 0);
       }
@@ -169,4 +169,4 @@ void SensorHub::SerialLoop() {
   }
 }
 
-}  // namespace hp
+}

@@ -77,4 +77,4 @@ inline HBITMAP DecodeImageBytesToBitmap(const void* data, size_t size, int width
   if (FAILED(decoder->GetFrame(0, &frame))) return nullptr;
   return WicSourceToDibSection(factory.Get(), frame.Get(), width, height);
 }
-}  // namespace hp
+}

@@ -20,8 +20,8 @@ function manifest(version: string): string {
 }
 
 function updateEnv(): Env {
-  // Pin the device population for the test: no static token map, one primary
-  // device, plus whatever heartbeats the test inserts.
+
+
   return {
     ...env,
     UPDATE_BUCKET_PREFIX: "updates",
@@ -61,15 +61,15 @@ describe("cloud-driven update check", () => {
       "INSERT INTO device_heartbeats(device_id, last_seen_at, stationhead_ok, outbox_count, last_sequence) VALUES('tablet-2', ?1, 1, 0, 0)",
     ).bind(Date.now()).run();
 
-    // First observation is a baseline: no commands yet.
+
     await runUpdateCheck(scoped);
     expect(await pendingCommands()).toHaveLength(0);
 
-    // Re-running with the same version and manifest stays quiet.
+
     await runUpdateCheck(scoped);
     expect(await pendingCommands()).toHaveLength(0);
 
-    // A new release queues exactly one check_update per known device.
+
     await env.UPDATE_BUCKET!.put(MANIFEST_KEY, manifest("2607100002"));
     await runUpdateCheck(scoped);
     let commands = await pendingCommands();
@@ -77,11 +77,11 @@ describe("cloud-driven update check", () => {
     expect(commands.every(command => command.command === "check_update")).toBe(true);
     expect(commands.every(command => command.payload?.includes("2607100002"))).toBe(true);
 
-    // Idempotent while the release identity stays put, even across repeated runs.
+
     await runUpdateCheck(scoped);
     expect(await pendingCommands()).toHaveLength(2);
 
-    // The next release queues a second round.
+
     await env.UPDATE_BUCKET!.put(MANIFEST_KEY, manifest("2607100003"));
     await runUpdateCheck(scoped);
     commands = await pendingCommands();
@@ -93,7 +93,7 @@ describe("cloud-driven update check", () => {
     const first = await SELF.fetch("https://example.test/v1/update/ping", { method: "POST" });
     expect(first.status).toBe(202);
     const firstBody = await first.json() as { queued: boolean };
-    // A second ping within the throttle window is accepted but not re-queued.
+
     const second = await SELF.fetch("https://example.test/v1/update/ping", { method: "POST" });
     expect(second.status).toBe(202);
     const secondBody = await second.json() as { queued: boolean };

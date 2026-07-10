@@ -64,4 +64,4 @@ void SecondaryStationheadPlayer::EnsureDistinctBrowserIdentity() noexcept {
     settings2->put_UserAgent(userAgent.c_str());
   }
 }
-}  // namespace hp
+}

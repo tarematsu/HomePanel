@@ -72,9 +72,9 @@ JsonObject FirstObject(const JsonObject& object,
 
 int64_t EpochMilliseconds(double value) {
   if (!std::isfinite(value) || value <= 0) return 0;
-  // Playback feeds have historically alternated between Unix seconds and
-  // Unix milliseconds. Treat values below year 5138 in milliseconds as
-  // seconds; duration/progress values never pass through this helper.
+
+
+
   if (value < 100'000'000'000.0) value *= 1000.0;
   return static_cast<int64_t>(value);
 }

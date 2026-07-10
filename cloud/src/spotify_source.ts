@@ -63,9 +63,9 @@ export function playbackFeedUrl(value: string): string {
   } else if (!url.pathname.endsWith("/api/playback")) {
     url.pathname = `${url.pathname.replace(/\/$/, "")}/api/playback`;
   }
-  // Preserve query parameters. Some monitor deployments select the station or
-  // authentication context through the query string; dropping it silently
-  // changes which feed is read.
+
+
+
   url.hash = "";
   return url.toString();
 }
@@ -107,8 +107,8 @@ export function monitorCurrentIndex(payload: MonitorPayload | null): number {
   const queue = payload?.queue ?? [];
   if (!queue.length) return -1;
 
-  // An explicit current marker is more authoritative than queue_status, which
-  // is omitted by some monitor versions and can lag one response behind.
+
+
   const explicit = queue.findIndex(track => track.is_current === true);
   if (explicit >= 0) return explicit;
 

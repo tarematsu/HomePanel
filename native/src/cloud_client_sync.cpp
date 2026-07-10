@@ -1,9 +1,9 @@
-// Part of cloud_client.cpp's translation unit (see the #include at the end of
-// that file). Device sync: the home-presence fallback, radar-tile localization
-// into the local cache, and the main /v1/device/sync exchange that refreshes
-// dashboard/radar/switchbot/stationhead/config and dispatches commands. Uses
-// the JSON usings and VersionOr/StringPayload/IsoLocalNow helpers from
-// cloud_client.cpp.
+
+
+
+
+
+
 #include "cloud_client.h"
 #include <winrt/Windows.Data.Json.h>
 

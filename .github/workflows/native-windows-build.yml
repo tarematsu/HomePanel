@@ -173,7 +173,6 @@ jobs:
           Copy-Item native/build-ci/Release/HomePanelUpdater.exe $manual
           Copy-Item native/build-ci/Release/WebView2Loader.dll $manual
           Copy-Item native/config.example.json $manual
-          Copy-Item THIRD_PARTY_NOTICES.md $manual
           Copy-Item native/build-ci/Release/HomePanel.exe HomePanel.exe
           Copy-Item native/build-ci/Release/HomePanelUpdater.exe HomePanelUpdater.exe
           Copy-Item native/build-ci/Release/WebView2Loader.dll WebView2Loader.dll
@@ -268,8 +267,8 @@ jobs:
                 -Headers @{ Authorization = "Bearer $($env:HOMEPANEL_REFRESH_TOKEN)" } `
                 -ContentType "application/json" -Body '{"sources":["update_check"]}' | Out-Null
             } else {
-              # Token-less path: the Worker verifies the manifest in R2 itself,
-              # so the notification only needs to say "look now".
+
+
               Invoke-RestMethod -Method Post -Uri "$url/v1/update/ping" | Out-Null
             }
             Write-Host "Update rollout triggered; devices will be commanded on their next sync."

@@ -172,9 +172,9 @@ inline BOOL CopyFileWithActiveUpdaterAwareness(
         currentName = currentName ? currentName + 1 : currentExecutable;
         if (_wcsicmp(currentName, L"HomePanel.exe") != 0 &&
             _wcsicmp(currentExecutable, newFileName) != 0) {
-          // A manually downloaded updater may be newer than the installed copy.
-          // Stage the executable that is actually running so its fixes survive
-          // the handoff to the hidden runner process.
+
+
+
           return ::CopyFileW(currentExecutable, newFileName, failIfExists);
         }
       }
@@ -183,7 +183,7 @@ inline BOOL CopyFileWithActiveUpdaterAwareness(
   return ::CopyFileW(existingFileName, newFileName, failIfExists);
 }
 
-// Atomically writes bytes to path via a .tmp sibling, then ReplaceFile/MoveFile.
+
 inline bool AtomicWriteBytes(const fs::path& path, const void* data, DWORD size) {
   std::error_code directoryError;
   fs::create_directories(path.parent_path(), directoryError);
@@ -218,7 +218,7 @@ inline bool AtomicWriteBytes(const fs::path& path, const std::vector<uint8_t>& b
 inline bool AtomicWriteText(const fs::path& path, const std::string& text) {
   return AtomicWriteBytes(path, text.data(), static_cast<DWORD>(text.size()));
 }
-}  // namespace hp
+}
 
 #ifdef _MSC_VER
 #define _wgetenv(name) (::hp::SafeWideGetEnv(name))

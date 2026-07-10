@@ -64,4 +64,4 @@ inline std::wstring Stringify(const JsonObject& object, const wchar_t* name) {
   }
   return {};
 }
-}  // namespace hp::json
+}

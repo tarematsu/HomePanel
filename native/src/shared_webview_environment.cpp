@@ -3,15 +3,15 @@
 
 namespace hp {
 namespace {
-// --disable-component-update used to be included here to cut down on
-// background network chatter, but it also blocks Chromium's component
-// updater from ever installing/updating the Widevine CDM inside this
-// app's isolated WebView2 user-data folder. Stationhead/Spotify playback
-// requires Widevine (EME); regular Edge (component updates enabled, CDM
-// already provisioned) plays audio fine, while this isolated profile with
-// component updates disabled produces silent Media Foundation Protected
-// Media Path (mfpmp.exe) output. Leave component updates enabled so the
-// CDM can be installed/kept current.
+
+
+
+
+
+
+
+
+
 constexpr wchar_t kWebView2Arguments[] =
     L"--disable-domain-reliability "
     L"--disable-breakpad "
@@ -19,8 +19,8 @@ constexpr wchar_t kWebView2Arguments[] =
     L"--disable-sync "
     L"--metrics-recording-only "
     L"--autoplay-policy=no-user-gesture-required "
-    // Stationhead windows are kept behind the dashboard (occluded); keep their
-    // renderer running so auto-play and audio continue while not on screen.
+
+
     L"--disable-backgrounding-occluded-windows "
     L"--disable-features=MediaRouter,Translate,OptimizationGuideModelDownloading,AutofillServerCommunication,HardwareSecureDecryption,HardwareSecureDecryptionExperiment,HardwareSecureDecryptionFallback";
 
@@ -31,7 +31,7 @@ void ApplyWebView2ProcessHints() noexcept {
                             kWebView2Arguments);
   });
 }
-}  // namespace
+}
 
 SharedWebViewEnvironment& SharedWebViewEnvironment::Instance() {
   static SharedWebViewEnvironment instance;
@@ -87,10 +87,10 @@ void SharedWebViewEnvironment::Acquire(const fs::path& userDataFolder,
     return;
   }
 
-  // The WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS environment variable is only
-  // honored on a best-effort basis by the loader in some runtime versions,
-  // so also set AdditionalBrowserArguments explicitly on the environment
-  // options object, which is the documented, reliable mechanism.
+
+
+
+
   ApplyWebView2ProcessHints();
   ComPtr<CoreWebView2EnvironmentOptions> options =
       Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
@@ -130,4 +130,4 @@ void SharedWebViewEnvironment::Complete(const std::wstring& key, HRESULT result,
     callback(result, readyEnvironment.Get());
   }
 }
-}  // namespace hp
+}

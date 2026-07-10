@@ -57,7 +57,7 @@ StationheadStatus BuildRenderStationheadState(const AppStationheadHandle& statio
   return state;
 }
 
-}  // namespace
+}
 
 App::App(HINSTANCE instance) : instance_(instance) { current_ = this; }
 
@@ -154,8 +154,8 @@ void App::StartServices() {
   newsIndex_ = 0;
   lastNewsRotateAt_ = newsCount_ > 1 ? startupAt_ : 0;
 
-  // Stationhead owns the first shared WebView2 environment/controller so its heavy
-  // page bootstrap is not queued behind the dashboard renderer.
+
+
   const fs::path stationheadData = dataDir_ / L"webview2-stationhead";
   stationhead_ = std::make_unique<StationheadPlayer>(
       window_, config_.stationhead, stationheadData, *logger_);
@@ -171,8 +171,8 @@ void App::StartServices() {
   }
   stationhead_->Start();
   logger_->Info(L"Stationhead startup was prioritized before native dashboard initialization");
-  // Windows A and B are started together and then temporarily shown as a split
-  // preview, so startup order is visually deterministic: A/B first, dashboard next.
+
+
   if (secondaryStationhead_) {
     secondaryStationhead_->Start();
     secondaryStarted_ = true;
@@ -232,9 +232,9 @@ void App::ClearStartupStationheadPreview() {
 
 void App::StartDeferredServices(int64_t now, const StationheadStatus& stationheadStatus) {
   const bool primaryAudioReady = stationheadStatus.audioPlaying;
-  // Keep the split startup preview until at least one Stationhead window has
-  // confirmed audio. The dashboard can then start, while any still-pending
-  // Stationhead surface remains independently raised on its half of the screen.
+
+
+
   bool secondaryAudioReady = true;
   if (!rendererStarted_ && secondaryStationhead_) {
     const SecondaryStationheadStatus secondaryStatus = secondaryStationhead_->Status();
@@ -417,7 +417,7 @@ void App::ApplyStationheadWindowPlacement(const StationheadStatus& primaryStatus
   // This runs on every tick. Re-apply the placement only when the pending
   // state or geometry changed, or a player posted a state change (which can
   // reposition its own windows, e.g. a reload's SetStartupBounds) - steady
-  // ticks must not re-run SetWindowPos/SelectTab every second.
+
   if (!stationheadPlacementDirty_ && primaryPending == placedPrimaryPending_ &&
       secondaryPending == placedSecondaryPending_ && EqualRect(&bounds, &placedBounds_)) {
     return;
@@ -543,11 +543,11 @@ void App::LogUnhandled(DWORD code, void* address) {
     logger_->Error(text.str());
   }
 }
-}  // namespace hp
+}
 
-// Feature groups split out of this file; compiled as part of this translation
-// unit so they share its includes and file-local helpers (unity-build pattern,
-// like renderer_core.cpp). Not listed in CMake on purpose.
+
+
+
 #include "app_air_history.cpp"
 #include "app_update.cpp"
 #include "app_messages.cpp"

@@ -29,7 +29,7 @@ bool Boolean(const JsonObject& object, const wchar_t* key, bool fallback) {
 std::wstring Text(const JsonObject& object, const wchar_t* key, const std::wstring& fallback) {
   try { return object.GetNamedString(key, fallback).c_str(); } catch (...) { return fallback; }
 }
-}  // namespace
+}
 
 bool ApplyCloudConfig(AppConfig& config, const fs::path& path) {
   try {
@@ -68,13 +68,13 @@ bool ApplyCloudConfig(AppConfig& config, const fs::path& path) {
         ? Text(secondary, L"url", config.stationhead.fallbackUrl)
         : config.stationhead.fallbackUrl;
     if (config.stationhead.secondaryUrl.empty()) config.stationhead.secondaryUrl = config.stationhead.fallbackUrl;
-    // Window B is fixed to buddy46. Older device-config caches can otherwise
-    // resurrect the previous secondary station.
+
+
     if (_wcsicmp(config.stationhead.secondaryUrl.c_str(), kCanonicalSecondaryStationheadUrl) != 0) {
       config.stationhead.secondaryUrl = kCanonicalSecondaryStationheadUrl;
     }
-    // Both players use a 50-minute maintenance cycle. The players coordinate
-    // before navigation so only the currently muted side reloads.
+
+
     config.stationhead.reloadIntervalMinutes = 50;
     config.stationhead.secondaryReloadIntervalMinutes = 50;
 
@@ -83,4 +83,4 @@ bool ApplyCloudConfig(AppConfig& config, const fs::path& path) {
     return false;
   }
 }
-}  // namespace hp
+}

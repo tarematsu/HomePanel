@@ -13,7 +13,7 @@ constexpr COLORREF kWidgetSurfaceAlt = RGB(24, 31, 41);
 constexpr COLORREF kWidgetText = RGB(255, 255, 255);
 constexpr COLORREF kWidgetMuted = RGB(255, 255, 255);
 constexpr COLORREF kWidgetSubtle = RGB(255, 255, 255);
-// Accents follow iOS dark-mode system colors (systemBlue/Green/Orange/Yellow/Red).
+
 constexpr COLORREF kWidgetBlue = RGB(10, 132, 255);
 constexpr COLORREF kWidgetBlueMuted = RGB(64, 156, 255);
 constexpr COLORREF kWidgetGreen = RGB(48, 209, 88);
@@ -33,7 +33,7 @@ void PlaceNativeWindow(HWND hwnd, const RECT& rect, bool visible) {
   ShowWindow(hwnd, visible ? SW_SHOWNA : SW_HIDE);
 }
 
-// Returns a fraction of a rect's span so intra-panel layout is proportional.
+
 int SpanX(const RECT& rect, int permille) {
   return static_cast<int>((rect.right - rect.left) * permille / 1000);
 }
@@ -41,9 +41,9 @@ int SpanY(const RECT& rect, int permille) {
   return static_cast<int>((rect.bottom - rect.top) * permille / 1000);
 }
 
-// BIZ UDPGothic is Morisawa's universal-design gothic bundled with Windows 10
-// 1809+; it stays legible at dashboard viewing distance. Fall back to
-// Yu Gothic UI on systems that do not ship it.
+
+
+
 const wchar_t* DashboardFontFace() {
   static const wchar_t* face = [] {
     LOGFONTW probe{};
@@ -70,8 +70,8 @@ HFONT CreateUiFont(int height, int weight) {
                      DEFAULT_PITCH | FF_DONTCARE, DashboardFontFace());
 }
 
-// Panels repaint as often as once a second; reuse HFONTs by (height, weight)
-// instead of creating and destroying one on every WM_PAINT.
+
+
 HFONT CachedUiFont(int height, int weight) {
   static std::map<std::pair<int, int>, HFONT> cache;
   const auto key = std::make_pair(height, weight);
@@ -149,8 +149,8 @@ HBITMAP SolidColorBitmap(COLORREF color) {
   return bitmap;
 }
 
-// Fills a rounded-rect region with an alpha-blended solid color instead of an
-// opaque brush, so the panel's sampled radar background shows through.
+
+
 void FillRoundRectTranslucent(HDC dc, const RECT& rect, COLORREF color, int radius, BYTE alpha) {
   HRGN clip = CreateRoundRectRgn(rect.left, rect.top, rect.right + 1, rect.bottom + 1, radius, radius);
   SelectClipRgn(dc, clip);
@@ -232,8 +232,8 @@ void DrawHistoryLine(HDC dc, const std::vector<AirHistorySample>& samples, const
   DeleteObject(pen);
 }
 
-// Soft drop shadow for the one text that still floats directly on the radar
-// map (the caption); panel text sits on the frosted tint and needs none.
+
+
 void DrawShadowedText(HDC dc, const std::wstring& text, RECT rect, int format, COLORREF color) {
   RECT shadowRect = rect;
   OffsetRect(&shadowRect, 0, 2);
@@ -243,11 +243,11 @@ void DrawShadowedText(HDC dc, const std::wstring& text, RECT rect, int format, C
   DrawTextInRect(dc, text, rect, format);
 }
 
-// Maps a panel's absoluteRect (its position within the overall dashboard,
-// i.e. bounds_) back into the radar canvas's own coordinate space, using the
-// same "cover" fit (uniform scale, centered crop) that the full-screen radar
-// background itself is drawn with. This keeps every floating panel's sampled
-// background pixel-aligned with what's actually behind it.
+
+
+
+
+
 RECT RadarSampleRectFor(const RECT& absoluteRect, const RECT& clientBounds) {
   const int clientWidth = std::max(1L, clientBounds.right - clientBounds.left);
   const int clientHeight = std::max(1L, clientBounds.bottom - clientBounds.top);
@@ -305,9 +305,9 @@ void AlphaBlendSolidColor(HDC dc, const RECT& rect, COLORREF color, BYTE alpha) 
   DeleteDC(colorDc);
 }
 
-// A short, slightly dark separator centered on the boundary between two
-// information blocks. It only covers the middle portion of the boundary so
-// it reads as a hint rather than a hard grid line.
+
+
+
 void DrawHorizontalDivider(HDC dc, const RECT& area, int y) {
   const int inset = static_cast<int>((area.right - area.left) * 225 / 1000);
   const RECT line{area.left + inset, y, area.right - inset, y + 2};
@@ -327,7 +327,7 @@ struct ControlsButtonRects {
   RECT status{};
 };
 
-// Clock, controls, and status text are centered as one vertical group.
+
 ControlsButtonRects ControlsButtonsFromSection(const RECT& section) {
   const int width = std::max(1L, section.right - section.left);
   const int height = std::max(1L, section.bottom - section.top);
@@ -357,8 +357,8 @@ struct StationheadRowRects {
   RECT button{};
 };
 
-// The stationhead section holds two equal rows; the audio toggle button sits
-// on the right side of each row.
+
+
 StationheadRowRects StationheadRowFromSection(const RECT& section, int row) {
   const int gap = SpanY(section, 60);
   const int rowHeight = (section.bottom - section.top - gap) / 2;
@@ -372,7 +372,7 @@ StationheadRowRects StationheadRowFromSection(const RECT& section, int row) {
   rects.button = RECT{buttonRight - buttonWidth, buttonTop, buttonRight, buttonTop + buttonHeight};
   return rects;
 }
-}  // namespace
+}
 
 const std::array<Renderer::NativePanelSlot, 3>& Renderer::NativePanelSlots() {
   static const std::array<NativePanelSlot, 3> slots{{
@@ -419,11 +419,11 @@ Renderer::NativePanelPaintScope::NativePanelPaintScope(Renderer& renderer, HWND 
   }
   previousBitmap = SelectObject(dc, bitmap);
 
-  // Clip everything to the invalidated region up front: the back buffer only
-  // changes where the destructor will blit, and the radar background is
-  // always stretched with the same full-panel mapping (per-dirty-rect source
-  // rounding would create one-pixel seams between sections at non-1:1
-  // radar-canvas scales).
+
+
+
+
+
   HRGN dirtyClip = CreateRectRgnIndirect(&dirty);
   SelectClipRgn(dc, dirtyClip);
   {
@@ -490,9 +490,9 @@ bool Renderer::EnsureNativeStaticWindows() {
 
 void Renderer::ApplyNativeStaticBounds() {
   const NativeDashboardLayout layout = ComputeNativeDashboardLayout(bounds_);
-  // Radar is placed first so every subsequent PlaceNativeWindow (which moves
-  // its window to the top of the z-order) stacks that panel above it; radar
-  // fills the whole client area as the background the other panels float on.
+
+
+
   for (const NativePanelSlot& slot : NativePanelSlots()) {
     const HWND hwnd = this->*slot.window;
     if (!hwnd || !IsWindow(hwnd)) continue;
@@ -851,7 +851,7 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& content) {
       const int barHeight = static_cast<int>((chart.bottom - chart.top - valueBand) * value / maximum);
       const int x = chart.left + i * step + (step - barWidth) / 2;
       RECT barRect{x, chart.bottom - barHeight, x + barWidth, chart.bottom};
-      DrawWidgetCard(dc, barRect, kWidgetCyan, /*radius=*/3, /*alpha=*/190);
+      DrawWidgetCard(dc, barRect, kWidgetCyan,  3,  190);
       RECT valueRect{x - step / 2, barRect.top - valueBand, x + barWidth + step / 2, barRect.top};
       DrawTextInRect(dc, NumberOrDash(value, value >= 10 ? 0 : 1), valueRect,
                      DT_CENTER | DT_SINGLELINE | DT_VCENTER);
@@ -932,7 +932,7 @@ void Renderer::DrawStationheadSection(HDC dc, const RECT& content) {
       if (fillRect.right > fillRect.left) {
         DrawWidgetPill(dc, fillRect, kWidgetGreen);
       }
-      // Elapsed time under the bar's left end, track length under its right.
+
       RECT timeRect{textLeft, barRect.bottom + rowHeight * 3 / 100,
                     textRight, rowRect.bottom - rowHeight * 3 / 100};
       DrawTextInRect(dc, TrackTimeText(playback.progressMs), timeRect,
@@ -960,7 +960,7 @@ void Renderer::DrawStationheadSection(HDC dc, const RECT& content) {
           playbackB.available && !playbackB.hasTrack ? L"次の曲を待機中"
               : nativeStationhead_.secondaryAudioMuted ? L"音声OFF" : L"音声ON");
 
-  // Divider between the two playback rows, centered on the row gap.
+
   const StationheadRowRects rowA = StationheadRowFromSection(content, 0);
   const StationheadRowRects rowB = StationheadRowFromSection(content, 1);
   DrawHorizontalDivider(dc, content, (rowA.row.bottom + rowB.row.top) / 2);
@@ -991,7 +991,7 @@ void Renderer::DrawClockControlsSection(HDC dc, const RECT& content) {
       {L"再起動", buttons.restart},
   }};
   for (const auto& [label, rect] : labels) {
-    DrawWidgetCard(dc, rect, kWidgetSurfaceAlt, /*radius=*/14, /*alpha=*/170);
+    DrawWidgetCard(dc, rect, kWidgetSurfaceAlt,  14,  170);
     DrawTextInRect(dc, label, rect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   }
 
@@ -1125,9 +1125,9 @@ HBITMAP Renderer::NativeArtworkBitmap(const std::wstring& url, int width, int he
     if (character == L'/') character = L'\\';
   }
 
-  // A failed decode is cached as a nullptr entry too: the stationhead panel
-  // repaints every second during playback, and retrying the disk read + WIC
-  // decode on each paint would burn CPU for a file that stays missing.
+
+
+
   return CacheNativeBitmap(key, DecodeImageFileToBitmap(dataDir_ / relative, width, height));
 }
 
@@ -1157,13 +1157,13 @@ HBITMAP Renderer::NativeWeatherIconBitmap(const std::wstring& icon, bool night, 
     bitmap = decodeIcon(fallback + (night ? L"_night.png" : L"_day.png"));
     if (!bitmap && night) bitmap = decodeIcon(fallback + L"_day.png");
   }
-  // Cache decode failures as nullptr entries so repaints don't retry the
-  // whole fallback chain of disk reads on every frame.
+
+
   return CacheNativeBitmap(key, bitmap);
 }
 
-// Inserts a decoded (or failed: nullptr) bitmap into the shared LRU cache,
-// evicting the least recently used entry once the cache is full.
+
+
 HBITMAP Renderer::CacheNativeBitmap(const std::wstring& key, HBITMAP bitmap) {
   if (nativeArtworkBitmaps_.size() >= kNativeBitmapCacheLimit) {
     auto oldest = nativeArtworkBitmaps_.begin();
@@ -1176,4 +1176,4 @@ HBITMAP Renderer::CacheNativeBitmap(const std::wstring& key, HBITMAP bitmap) {
   nativeArtworkBitmaps_[key] = ArtworkBitmapCacheEntry{bitmap, ++nativeArtworkUseCounter_};
   return bitmap;
 }
-}  // namespace hp
+}

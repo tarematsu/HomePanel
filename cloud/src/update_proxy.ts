@@ -100,9 +100,9 @@ function canonicalManifest(manifest: UpdateManifest): string {
   });
 }
 
-// Reads and validates the complete release identity. Tracking the manifest hash
-// as well as the version allows CI to repair a bad publication without inventing
-// a fake new version number.
+
+
+
 export async function readUpdateManifestIdentity(env: Env): Promise<{ version: string; manifestHash: string }> {
   const manifest = parseManifest(await readObjectText(env, updateKey(env, "latest/update-manifest.json")));
   return { version: manifest.version, manifestHash: await sha256(canonicalManifest(manifest)) };

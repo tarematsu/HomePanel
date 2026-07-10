@@ -133,7 +133,7 @@ async function authenticateOctopus(env: Env, forceCredentials = false): Promise<
       octopusToken = activeToken;
       return activeToken.value;
     } catch {
-      // A stale or revoked refresh token must not block a fresh email/password login.
+
     }
   }
   octopusToken = await requestOctopusToken(credentialInput(env));

@@ -1,7 +1,7 @@
-// Part of app.cpp's translation unit (see the #include at the end of that
-// file). Self-update: async manifest check and launching the verified,
-// signature/hash-checked HomePanelUpdater. Uses the InstalledHomePanelVersion
-// helper from app.cpp plus shared quoting helpers from common.h.
+
+
+
+
 #include "app.h"
 
 namespace hp {

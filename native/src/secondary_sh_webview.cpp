@@ -1,15 +1,15 @@
-// Part of secondary_sh.cpp's translation unit (see the #include at the end of
-// that file). Main WebView2 configuration for the secondary Stationhead player:
-// settings, resource blocking, the injected autoplay script, and the new-window /
-// message / navigation / process-failed handlers. Uses the anonymous-namespace
-// helpers (kProfileName, HResultHex, CallbackAlive) from secondary_sh.cpp.
+
+
+
+
+
 #include "secondary_sh.h"
 #include "sh_shared.h"
 
 namespace hp {
 
 void SecondaryStationheadPlayer::ConfigureWebView() {
-  // Fresh WebView: force the next ApplyAudioState/ApplyVolume to push state.
+
   appliedMuted_.store(-1, std::memory_order_relaxed);
   appliedVolumePercent_.store(-1, std::memory_order_relaxed);
   const auto alive = callbackAlive_;
@@ -25,9 +25,9 @@ void SecondaryStationheadPlayer::ConfigureWebView() {
   }
   ApplyStationheadResourceBlocking(environment_.Get(), webview_.Get(), config_, resourceBlockingArmed_, resourceRequestedToken_);
 
-  // Use WebView2's actual document audio state. Stationhead can play through
-  // internal frames/media pipelines that are invisible to the injected DOM
-  // heuristic, which otherwise makes an audible B window look stopped.
+
+
+
   ComPtr<ICoreWebView2_8> audioView;
   if (SUCCEEDED(webview_.As(&audioView)) && audioView) {
     const HRESULT audioResult = audioView->add_IsDocumentPlayingAudioChanged(
@@ -78,8 +78,8 @@ void SecondaryStationheadPlayer::ConfigureWebView() {
       Callback<ICoreWebView2NewWindowRequestedEventHandler>(
           [this, alive](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
             if (!args) return S_OK;
-            // Always mark the request handled so a failure below never falls through to
-            // WebView2's default behavior of opening an uncontrolled top-level popup window.
+
+
             args->put_Handled(TRUE);
             if (!CallbackAlive(alive) || shuttingDown_ || !environment_) return S_OK;
             LPWSTR uriRaw = nullptr;
@@ -177,8 +177,8 @@ void SecondaryStationheadPlayer::ConfigureWebView() {
             }
             if (success) {
               lastReloadAt_ = UnixMillis();
-              // A navigation replaced the document, so the injected volume
-              // script state is gone; force ApplyVolume to re-run it.
+
+
               appliedVolumePercent_.store(-1, std::memory_order_relaxed);
               ApplyAudioState();
             } else {

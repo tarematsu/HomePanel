@@ -18,7 +18,7 @@ std::wstring HResultHex(HRESULT hr) {
          << static_cast<unsigned long>(hr);
   return output.str();
 }
-}  // namespace
+}
 
 StationheadPlayer::StationheadPlayer(HWND window, StationheadConfig config,
                                      fs::path userDataFolder, Logger& log)
@@ -90,9 +90,9 @@ void StationheadPlayer::ApplyAudioPlaybackState(bool playing, int64_t nowMs,
     return;
   }
 
-  // Re-arm silence monitoring whenever primary playback transitions from
-  // playing to stopped. Navigation also arms this timer, so recovery no longer
-  // depends on the injected script finding and clicking a particular DOM node.
+
+
+
   if (!usedFallback_ &&
       (changed || (fallbackMonitorAfterAt_ == 0 && noAudioSinceAt_ == 0))) {
     fallbackMonitorAfterAt_ = nowMs + kPrimaryFallbackMonitorGraceMs;
@@ -222,7 +222,7 @@ void StationheadPlayer::EnsureAuthController(const std::wstring& url) {
 
 void StationheadPlayer::ConfigureWebView() {
   const auto alive = createCallbackAlive_;
-  // Fresh WebView: force the next ApplyMute/ApplyVolume to actually push state.
+
   appliedMuted_.store(-1, std::memory_order_relaxed);
   appliedVolumePercent_.store(-1, std::memory_order_relaxed);
   SetStartupBounds();
@@ -244,10 +244,10 @@ void StationheadPlayer::ConfigureWebView() {
   ApplyStationheadResourceBlocking(environment_.Get(), webview_.Get(), config_,
                                    resourceBlockingArmed_, resourceRequestedToken_);
 
-  // WebView2 exposes the actual document audio state, including playback that
-  // the top-level DOM cannot see (for example iframe/internal media pipelines).
-  // Prefer it over the injected page heuristic so audible playback can never be
-  // mistaken for six minutes of silence and redirected to the fallback station.
+
+
+
+
   ComPtr<ICoreWebView2_8> audioView;
   if (SUCCEEDED(webview_.As(&audioView)) && audioView) {
     const HRESULT audioHandlerResult = audioView->add_IsDocumentPlayingAudioChanged(
@@ -305,8 +305,8 @@ void StationheadPlayer::ConfigureWebView() {
       Callback<ICoreWebView2NewWindowRequestedEventHandler>(
           [this, alive](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
             if (!CallbackAlive(alive) || !args) return S_OK;
-            // Always mark the request handled so a failure below never falls through to
-            // WebView2's default behavior of opening an uncontrolled top-level popup window.
+
+
             args->put_Handled(TRUE);
             if (!environment_ || !EnsureAuthHostWindow()) return S_OK;
             LPWSTR uriRaw = nullptr;
@@ -383,9 +383,9 @@ void StationheadPlayer::ConfigureWebView() {
                 return S_OK;
               }
               if (message == L"stationhead-start-attempted") {
-                // Navigation/native audio state owns fallback timing. The page
-                // message remains accepted only for compatibility with the
-                // injected script and cannot reset a live silence deadline.
+
+
+
                 return S_OK;
               }
               if (message == L"stationhead-login-required") {
@@ -453,8 +453,8 @@ void StationheadPlayer::ConfigureWebView() {
             }
             if (success) {
               lastReloadAt_ = now;
-              // A navigation replaced the document, so the injected volume
-              // script state is gone; force ApplyVolume to re-run it.
+
+
               appliedVolumePercent_.store(-1, std::memory_order_relaxed);
               ApplyMute();
             } else {

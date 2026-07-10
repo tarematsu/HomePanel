@@ -160,8 +160,8 @@ async function runOne(env: Env, job: JobRow): Promise<void> {
           observedAt: now,
         }, undefined, snapshot.row);
       } else if (job.name !== "cleanup" && job.name !== "update_check" && !sourceFailureRecorded) {
-        // update_check failures stay in jobs.last_error; they are not device
-        // dashboard sources.
+
+
         await updateState(env, { source: job.name, payload: null, observedAt: Date.now() }, message);
       }
     } catch (stateError) {
@@ -178,9 +178,9 @@ async function runOne(env: Env, job: JobRow): Promise<void> {
 
 export async function runScheduler(env: Env): Promise<void> {
   await ensureSystemJobs(env);
-  // A refresh can make all source jobs due at once, while each D1 lease
-  // acquisition intentionally caps parallelism at three. Drain successive
-  // batches in the same invocation so later jobs do not wait for another cron.
+
+
+
   for (let batch = 0; batch < MAX_SCHEDULER_BATCHES; batch += 1) {
     const now = Math.floor(Date.now() / 1000);
     const jobs = await acquireDueJobs(env, now);

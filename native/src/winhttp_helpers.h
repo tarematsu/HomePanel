@@ -3,9 +3,9 @@
 #include "common.h"
 
 namespace hp {
-// Reads a WinHTTP response header value of unknown length via the standard
-// query-for-size-then-fetch pattern used by both the Cloudflare client and
-// the artwork cache downloader.
+
+
+
 inline std::wstring QueryHeaderValue(HINTERNET request, DWORD query) {
   DWORD size = 0;
   WinHttpQueryHeaders(request, query, WINHTTP_HEADER_NAME_BY_INDEX, nullptr, &size, WINHTTP_NO_HEADER_INDEX);
@@ -38,11 +38,11 @@ inline std::wstring WinHttpRequestPathFromUrl(const URL_COMPONENTS& parts) {
   return path;
 }
 
-// One-shot WinHTTP GET shared by the artwork cache and the native playback
-// bridge. Tries automatic proxy detection first and falls back to a direct
-// connection (tablets can sit on networks where WPAD never resolves).
-// Returns true with *body filled on HTTP 200; otherwise returns false and,
-// when error is non-null, stores a short description of the last failure.
+
+
+
+
+
 inline bool WinHttpDownload(const wchar_t* rawUrl, size_t maximumBytes,
                             std::vector<uint8_t>* body,
                             std::wstring* contentType = nullptr,
@@ -153,4 +153,4 @@ inline bool WinHttpDownload(const std::wstring& rawUrl, size_t maximumBytes,
   return WinHttpDownload(rawUrl.c_str(), maximumBytes, body, contentType, error,
                          userAgent, extraHeaders);
 }
-}  // namespace hp
+}

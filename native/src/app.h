@@ -12,8 +12,8 @@ namespace hp {
 class App;
 
 inline bool StationheadNeedsForeground(const StationheadStatus& status) noexcept {
-  // If Stationhead is not producing audio, keep its surface available for the
-  // likely login/start prompt instead of waiting for brittle page text scans.
+
+
   return !status.audioPlaying;
 }
 
@@ -27,14 +27,14 @@ enum class WorkspaceTab {
   Auth = 2,
 };
 
-// Shared boilerplate for the two Stationhead window handles: bounds/audio
-// state plumbing and raising the playback surface above or below the
-// dashboard. The primary and secondary players have very different startup
-// and auth flows (kept in the derived classes below), but the "how do we
-// apply bounds/mute/volume and decide whether the window should be on top"
-// logic was duplicated near-verbatim between them. Derived classes supply
-// IsInteractive(status) for the one rule that differs (which status fields
-// count as "the user is looking at this window right now").
+
+
+
+
+
+
+
+
 template <typename Derived, typename PlayerT>
 class StationheadHandleBase {
  public:
@@ -134,8 +134,8 @@ class StationheadHandleBase {
   double audioVolume_ = 1.0;
 };
 
-// App-facing owner for the primary player. Its playback surface remains behind
-// the dashboard unless the user explicitly opens the Stationhead or auth tab.
+
+
 class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, StationheadPlayer> {
  public:
   AppStationheadHandle() = default;
@@ -161,11 +161,11 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
     ApplyAudioState();
     ApplyBounds();
   }
-  // The periodic tick only converges audio state (cheap, deduplicated in the
-  // player). Bounds and z-order are re-asserted on explicit events only:
-  // startup/layout changes via SetBounds/SelectTab, login prompts via
-  // ShowForLogin, and each playback confirmation after a (re)load, where the
-  // player itself drops its window behind the dashboard again.
+
+
+
+
+
   void Tick(int64_t nowMs) {
     if (!player_) return;
     player_->Tick(nowMs);
@@ -234,9 +234,9 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
     ApplyBounds();
   }
 
-  // The primary Stationhead surface stays behind the dashboard except when a
-  // it is not producing audio. That covers login prompts and stopped playback
-  // without depending on Stationhead's current button text.
+
+
+
   bool IsInteractive(const StationheadStatus& status) const noexcept {
     return StationheadNeedsForeground(status);
   }
@@ -245,8 +245,8 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
   StationheadTabKind selectedTab_ = StationheadTabKind::None;
 };
 
-// The secondary player retains its isolated WebView2 profile. Its audio output
-// is user-toggleable and its surface is temporarily raised for account setup.
+
+
 class AppSecondaryStationheadHandle
     : public StationheadHandleBase<AppSecondaryStationheadHandle, SecondaryStationheadPlayer> {
  public:
@@ -273,7 +273,7 @@ class AppSecondaryStationheadHandle
     ApplyAudioState();
     ApplyBounds();
   }
-  // See AppStationheadHandle::Tick: periodic ticks only converge audio state.
+
   void Tick(int64_t nowMs) {
     if (!player_) return;
     player_->Tick(nowMs);
@@ -310,10 +310,10 @@ class App {
   void LogUnhandled(DWORD code, void* address);
   void ToggleStationheadAudioA() {
     stationhead_->ToggleAudioMuted();
-    // Reflect the manual change in the render state immediately so the button
-    // label updates on the very next paint instead of lagging until the next
-    // Tick rebuild (idle ticks can be up to 30s apart). The 50-minute auto
-    // rotation still re-asserts its A/B pattern on schedule.
+
+
+
+
     ApplyScheduledStationheadAudioProfile(!stationhead_->AudioMuted());
     renderState_.toast = stationhead_->AudioMuted()
         ? L"Stationhead A 音声OFF"
@@ -406,7 +406,7 @@ class App {
   uint64_t lastRadarFrameStamp_ = 0;
   int64_t toastUntil_ = 0;
   int64_t nextAppTickAt_ = 0;
-  // News rotation managed by native timer; index sent to WebView in state JSON
+
   int newsIndex_ = 0;
   int newsCount_ = 0;
   int64_t lastNewsRotateAt_ = 0;
@@ -420,4 +420,4 @@ class App {
   RECT workspaceBounds_{0, 0, 1, 1};
   inline static App* current_ = nullptr;
 };
-}  // namespace hp
+}

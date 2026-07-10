@@ -72,19 +72,19 @@ inline constexpr int kRadarCanvasWidth = 1920;
 inline constexpr int kRadarCanvasHeight = 1280;
 inline constexpr COLORREF kNativeDashboardBackground = RGB(7, 10, 16);
 
-// Overlay layout: the radar map fills the entire client area as a living
-// background. Two full-width merged panels float over it: the top panel
-// (air quality | news | energy) and the bottom panel (stationhead |
-// clock+controls | weather). Everything is derived proportionally from the
-// client size so any resolution lays out the same way.
+
+
+
+
+
 struct NativeDashboardLayout {
   RECT top{};
   RECT bottom{};
   RECT radar{};
 };
 
-// A merged panel is split into three horizontal sections: the former corner
-// cards on the left/right and the former center strip in the middle.
+
+
 struct NativePanelSections {
   RECT left{};
   RECT center{};
@@ -101,8 +101,8 @@ inline RECT NormalizeInsetRect(RECT rect, int left, int top, int right, int bott
   return rect;
 }
 
-// Insets a rect by fractions (permille) of its own size, so padding scales
-// with the panel instead of being an absolute pixel count.
+
+
 inline RECT RelativeInsetRect(const RECT& rect, int horizontalPermille, int verticalPermille) {
   const int width = std::max(1L, rect.right - rect.left);
   const int height = std::max(1L, rect.bottom - rect.top);
@@ -115,8 +115,8 @@ inline NativeDashboardLayout ComputeNativeDashboardLayout(const RECT& bounds) {
   const int clientHeight = std::max(1L, bounds.bottom - bounds.top);
   const int marginX = clientWidth * 2 / 100;
   const int marginY = clientHeight * 3 / 100;
-  // Top and bottom panels share one height: the former 26%/31% pair, shrunk
-  // by 10% and unified at the midpoint.
+
+
   const int panelHeight = clientHeight * 256 / 1000;
 
   NativeDashboardLayout layout;
@@ -128,8 +128,8 @@ inline NativeDashboardLayout ComputeNativeDashboardLayout(const RECT& bounds) {
   return layout;
 }
 
-// Left/right sections take 33% of the panel width each; the center strip is
-// what remains after two relative gutters.
+
+
 inline NativePanelSections SplitPanelSections(const RECT& panel) {
   const int width = std::max(1L, panel.right - panel.left);
   const int gutter = width * 15 / 1000;
@@ -180,14 +180,14 @@ class Renderer {
     int width = 0;
     int height = 0;
   };
-  // Shared BeginPaint/back-buffer setup and BitBlt/EndPaint teardown for every
-  // PaintNativeXxx panel; each panel only supplies the drawing in between.
-  // The back layer is always sampled from the live radar frame at this
-  // panel's absoluteRect (its position within the overall dashboard), so
-  // every floating panel reads as a window looking through to the map
-  // behind it. Passing tintAlpha > 0 blends a dark frosted-glass tint over
-  // a cornerRadius-rounded region on top of that sample; tintAlpha == 0
-  // (used by the radar panel itself) leaves the sampled map untouched.
+
+
+
+
+
+
+
+
   struct NativePanelPaintScope {
     NativePanelPaintScope(Renderer& renderer, HWND hwnd, const RECT& absoluteRect,
                          BYTE tintAlpha = 168, int cornerRadius = 22,
@@ -203,9 +203,9 @@ class Renderer {
     HDC dc = nullptr;
     HGDIOBJ previousBitmap = nullptr;
     RECT bounds{};
-    // Region actually invalidated this paint. Sampling/tinting/drawing are
-    // clipped to it and the destructor blits only this rect, so a 1s clock
-    // tick repaints just the clock section instead of the whole panel.
+
+
+
     RECT dirty{};
   };
 
@@ -213,8 +213,8 @@ class Renderer {
   void ApplyNativeStaticBounds();
   void DestroyNativeStaticWindows();
   void UpdateNativeStaticPanels(const RenderState& state);
-  // Shared WM_NCCREATE/GWLP_USERDATA thunk for the native panel window
-  // classes; Handler picks which instance method a given class dispatches to.
+
+
   template <LRESULT (Renderer::*Handler)(HWND, UINT, WPARAM, LPARAM)>
   static LRESULT CALLBACK NativeWndProcThunk(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     Renderer* renderer = reinterpret_cast<Renderer*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -227,8 +227,8 @@ class Renderer {
     return DefWindowProcW(hwnd, message, wparam, lparam);
   }
   LRESULT HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
-  // Unified typography: every label picks one of exactly three sizes, all
-  // derived from the dashboard height.
+
+
   enum class FontTier { Small, Medium, Large };
   HFONT TierFont(FontTier tier) const;
   enum class PanelSection { Left, Center, Right };
@@ -261,8 +261,8 @@ class Renderer {
   void InvalidateAllNativePanels();
   RECT ClientBounds() const;
 
-  // One entry per native panel window. Radar comes first so placement loops
-  // stack the merged top/bottom panels above the full-screen radar background.
+
+
   struct NativePanelSlot {
     HWND Renderer::* window;
     RECT NativeDashboardLayout::* rect;
@@ -319,4 +319,4 @@ class Renderer {
   std::atomic<bool> radarComposeStarted_{false};
   std::atomic<bool> radarComposeStopping_{false};
 };
-}  // namespace hp
+}

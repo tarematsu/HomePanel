@@ -1,6 +1,6 @@
-// Part of app.cpp's translation unit (see the #include at the end of that
-// file). CO2/temperature/humidity 24h history: load/save to air-history.json
-// and the rolling-bucket update fed from sensor snapshots.
+
+
+
 #include "app.h"
 #include <winrt/Windows.Data.Json.h>
 
@@ -89,4 +89,4 @@ void App::UpdateAirHistory(const SensorSnapshot& sensors) {
   MarkRenderStateDirty();
 }
 
-}  // namespace hp
+}

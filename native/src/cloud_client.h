@@ -78,4 +78,4 @@ class CloudClient {
   bool cacheMetadataDirty_ = false;
   bool presenceFallbackActive_ = false;
 };
-}  // namespace hp
+}

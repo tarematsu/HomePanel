@@ -1,7 +1,7 @@
-/**
- * HMAC-SHA-256 signing key cache keyed by secret.
- * Avoids repeated importKey calls across requests within the same Worker isolate.
- */
+
+
+
+
 const keyCache = new Map<string, Promise<CryptoKey>>();
 
 export function cachedHmacKey(secret: string): Promise<CryptoKey> {
@@ -22,10 +22,10 @@ export function cachedHmacKey(secret: string): Promise<CryptoKey> {
   return promise;
 }
 
-/**
- * Constant-time string comparison to prevent timing attacks on secrets.
- * Both strings are UTF-8 encoded before comparison.
- */
+
+
+
+
 export function constantTimeEqual(left: string, right: string): boolean {
   const a = new TextEncoder().encode(left);
   const b = new TextEncoder().encode(right);

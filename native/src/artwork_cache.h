@@ -65,7 +65,7 @@ inline std::wstring CacheArtworkUrl(const fs::path& dataDir,
   std::vector<uint8_t> bytes;
   std::wstring contentType;
   if (!WinHttpDownload(artworkUrl.c_str(), 8 * 1024 * 1024, &bytes, &contentType,
-                       /*error=*/nullptr, userAgent)) {
+                        nullptr, userAgent)) {
     return artworkUrl;
   }
 
@@ -75,4 +75,4 @@ inline std::wstring CacheArtworkUrl(const fs::path& dataDir,
   return L"https://data.homepanel/spotify-artwork-cache/" +
       cached.filename().wstring();
 }
-}  // namespace hp
+}

@@ -58,9 +58,9 @@ void ApplyStationheadChildLayout(HWND hostWindow,
     } else {
       SetWindowRgn(hostWindow, nullptr, FALSE);
       ShowWindow(hostWindow, SW_SHOWNOACTIVATE);
-      // Background playback remains behind the dashboard. Login/setup or an
-      // explicitly selected Stationhead surface must be raised immediately,
-      // including secondary-window login prompts raised from WebView callbacks.
+
+
+
       SetWindowPos(hostWindow, (previewVisible || contentVisible) ? HWND_TOP : HWND_BOTTOM,
                    bounds.left, bounds.top, hostWidth, hostHeight,
                    SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -96,7 +96,7 @@ void FocusStationheadSurface(bool allowFocus,
   else if (controller) controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
 }
 
-}  // namespace
+}
 
 bool StationheadPlayer::EnsureHostWindow() {
   if (hostWindow_ && IsWindow(hostWindow_)) return true;
@@ -257,4 +257,4 @@ void SecondaryStationheadPlayer::SetStartupBounds() {
   LayoutWindows(false);
 }
 
-}  // namespace hp
+}

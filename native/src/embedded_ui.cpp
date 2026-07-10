@@ -124,7 +124,7 @@ void RemoveObsoleteDashboardFiles(const fs::path& folder) {
   }
   fs::remove_all(folder / L"vendor", error);
 }
-}  // namespace
+}
 
 bool InstallRuntimeAssets() noexcept {
   try {
@@ -156,4 +156,4 @@ bool InstallRuntimeAssets() noexcept {
   }
 }
 
-}  // namespace hp
+}

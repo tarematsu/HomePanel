@@ -3,11 +3,11 @@
 #include "config.h"
 
 namespace hp {
-// Shared "50-minute rule": periodic maintenance reload of a long-running
-// Stationhead WebView to avoid unbounded session/memory growth. Both the
-// primary and secondary players compute this the same way; callers keep
-// their own gating conditions (e.g. only reload while audio is playing).
-// A non-positive interval means the reload is disabled.
+
+
+
+
+
 inline int64_t StationheadReloadIntervalMs(int intervalMinutes) noexcept {
   return intervalMinutes > 0 ? static_cast<int64_t>(intervalMinutes) * 60'000 : 0;
 }
@@ -182,12 +182,12 @@ inline std::wstring StationheadLowerAscii(const wchar_t* text) {
 // stream and the core playback REST endpoints (/timestamp,
 // /pusher/presenceAuth, /channels/alias/*, /me/country) are left untouched.
 // The Pusher realtime WebSocket is NOT handled here (WebSocket upgrades don't
-// raise WebResourceRequested); it is blocked separately at the network layer
-// by BlockStationheadRealtimeSockets so no new chat/presence is received.
-// Matched as case-insensitive substrings of the full URI.
+
+
+
 inline bool StationheadRequestIsBlockable(const std::wstring& uriLower) {
   static constexpr const wchar_t* kNeedles[] = {
-      // Analytics / remote-config / crash / marketing / push telemetry.
+
       L"firebaseinstallations.googleapis.com",
       L"firebaseremoteconfig.googleapis.com",
       L"firebase.googleapis.com",
@@ -227,7 +227,7 @@ inline bool StationheadRequestIsBlockable(const std::wstring& uriLower) {
       L"tiktok.com",
       L"snapchat.com",
       L"pinterest.com",
-      // Non-playback Stationhead surfaces (chat / tipping / social threads / streams).
+
       L"/chathistory",
       L"/streams",
       L"/tippingstatus",
@@ -261,15 +261,15 @@ inline bool StationheadCorePlaybackRequest(const std::wstring& uriLower) {
        uriLower.find(L"gew") != std::wstring::npos);
 }
 
-// Realtime chat, presence and reactions are delivered over the Pusher
-// WebSocket, which WebResourceRequested cannot intercept (WS upgrades don't
-// raise the event). Block the Pusher socket hosts at the network layer via the
-// DevTools Protocol so no new chat is received - at startup and for the whole
-// life of the WebView, not just during the startup burst. The separate audio
-// stream and the REST playback endpoints (served from stationhead.com, e.g.
-// /pusher/presenceAuth, /channels/alias/*) are on different hosts and are
-// unaffected. CDP domain state persists across navigations, so this only needs
-// to run once per WebView (re-applied when a WebView is recreated).
+
+
+
+
+
+
+
+
+
 inline void BlockStationheadRealtimeSockets(ICoreWebView2* webview) {
   if (!webview) return;
   webview->CallDevToolsProtocolMethod(L"Network.enable", L"{}", nullptr);
@@ -286,24 +286,24 @@ inline void BlockStationheadRealtimeSockets(ICoreWebView2* webview) {
       nullptr);
 }
 
-// Strips resource requests from a Stationhead WebView down to what background
-// audio playback needs. Two tiers:
-//   * Analytics/social requests (StationheadRequestIsBlockable) are dropped
-//     unconditionally, including at startup - they are never needed by the
-//     "click Start Listening" automation or by playback, so cutting them
-//     early reduces startup CPU/network/memory.
-//   * Third-party images (artwork/avatars) are dropped from startup; same-site
-//     stationhead.com images and all fonts are dropped only once armed is true
-//     (playback confirmed). Blocking same-site images earlier can collapse
-//     icon-only controls to zero size and break getBoundingClientRect()-based
-//     auto-play detection, leaving the window stuck visible. The config flags
-//     blockImagesAfterPlayback/blockFontsAfterPlayback still gate this tier.
-//   * After playback is armed, additional stylesheets are blocked. The page's
-//     already-loaded CSS remains in memory; this only prevents late UI/theme
-//     fetches from waking the renderer/GPU for a hidden audio window.
-// Shared by the primary and secondary players so both apply the same rules.
-// The token must be removed via remove_WebResourceRequested(token) on close,
-// and armed reset to false at that point.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 inline void ApplyStationheadResourceBlocking(ICoreWebView2Environment* environment,
                                               ICoreWebView2* webview,
                                               const StationheadConfig& config,
@@ -345,11 +345,11 @@ inline void ApplyStationheadResourceBlocking(ICoreWebView2Environment* environme
               if (SUCCEEDED(args->get_ResourceContext(&context))) {
                 const bool armedNow = armed.load(std::memory_order_relaxed);
                 if (blockImages && context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE) {
-                  // Third-party artwork/avatars are never the auto-play button
-                  // and are dropped from startup. Same-site (stationhead)
-                  // images are kept until playback is armed so icon-only
-                  // controls keep their geometry for the coordinate-based
-                  // auto-play click.
+
+
+
+
+
                   block = armedNow ||
                           (!lower.empty() && lower.find(L"stationhead.com") == std::wstring::npos);
                 } else if (blockFonts && context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT) {
@@ -381,4 +381,4 @@ inline void ApplyStationheadResourceBlocking(ICoreWebView2Environment* environme
       &token);
   BlockStationheadRealtimeSockets(webview);
 }
-}  // namespace hp
+}

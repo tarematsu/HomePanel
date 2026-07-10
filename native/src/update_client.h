@@ -23,4 +23,4 @@ bool IsVersionNewer(const std::wstring& candidate, const std::wstring& current);
 std::wstring Sha256Hex(const std::vector<uint8_t>& bytes);
 bool VerifyAuthenticode(const fs::path& path);
 
-}  // namespace hp
+}

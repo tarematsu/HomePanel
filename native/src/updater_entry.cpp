@@ -158,8 +158,8 @@ int HardenedRunStandalone(const fs::path& root) {
     return 0;
   }
 
-  // The Worker issues download URLs that expire after ten minutes. Refresh after
-  // the user confirms so a long-open confirmation dialog cannot invalidate them.
+
+
   const std::string manifestJson = FetchAuthorizedManifest(root);
   const UpdateManifest manifest = ParseUpdateManifest(manifestJson);
   if (IsVersionNewer(installedVersion, manifest.version)) {
@@ -293,8 +293,8 @@ void HardenedInstallPendingUpdate(const Arguments& arguments) {
   RestartHomePanel(arguments.root);
 }
 
-}  // namespace
-}  // namespace hp
+}
+}
 
 namespace {
 
@@ -371,7 +371,7 @@ int RelaunchFromHomePanelRoot(
   return 0;
 }
 
-}  // namespace
+}
 
 int WINAPI wWinMain(
     _In_ HINSTANCE,

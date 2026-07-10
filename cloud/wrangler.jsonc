@@ -22,10 +22,10 @@
       "bucket_name": "homepanel-updates"
     }
   ]
-  // Production Variables and Secrets are intentionally not stored here.
-  // Configure CITY_NAME, WEATHERNEWS_URL, STATIONHEAD_MONITOR_URL,
-  // STATIONHEAD_HEALTH_URL, STATIONHEAD_HEALTH_STALE_MS,
-  // STATIONHEAD_ALERT_TO, STATIONHEAD_ALERT_FROM, RESEND_API_KEY,
-  // HOMEPANEL_PUBLIC_URL, RADAR_CENTER_LAT, RADAR_CENTER_LON,
-  // and authentication/service secrets in Cloudflare dashboard or CI.
+
+
+
+
+
+
 }

@@ -83,7 +83,7 @@ int VersionOr(const JsonObject& versions, const wchar_t* name, int fallback) {
 std::string WinHttpErrorText(const char* action) {
   return std::string(action) + " failed (" + std::to_string(GetLastError()) + ")";
 }
-}  // namespace
+}
 
 CloudClient::CloudClient(HWND window, AppConfig config, fs::path dataDir, std::wstring deviceToken,
                          std::wstring actionToken, Logger& log)
@@ -114,9 +114,9 @@ void CloudClient::Stop() {
 }
 
 void CloudClient::StartNetworkChangeWatcher() {
-  // Cloud sync/Spotify polling back off up to 15 minutes after repeated
-  // failures. Cancel every outstanding NotifyAddrChange request before the
-  // stack OVERLAPPED and its event are destroyed during shutdown.
+
+
+
   networkChangeStopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   if (!networkChangeStopEvent_) return;
   networkChangeThread_ = std::thread([this] {
@@ -289,10 +289,10 @@ bool CloudClient::AcknowledgeCommand(int64_t id, bool success, const std::wstrin
   }
   return false;
 }
-}  // namespace hp
+}
 
-// Feature groups split out of this file; compiled as part of this translation
-// unit so they share its includes and file-local helpers (unity-build pattern,
-// like renderer_core.cpp). Not listed in CMake on purpose.
+
+
+
 #include "cloud_client_http.cpp"
 #include "cloud_client_sync.cpp"
