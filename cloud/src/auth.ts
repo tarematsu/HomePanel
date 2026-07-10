@@ -51,8 +51,12 @@ export function deviceSecrets(env: Env): Array<string | undefined> {
   return [env.HOMEPANEL_INGEST_SECRET, env.DEVICE_TOKEN];
 }
 
+// Administrative operations can change configuration, queue commands and
+// force source refreshes. Never authorize those operations with a device or
+// ingestion credential; compromise of one display must not grant fleet-wide
+// control.
 export function actionSecrets(env: Env): Array<string | undefined> {
-  return [env.API_TOKEN, env.HOMEPANEL_INGEST_SECRET, env.DEVICE_TOKEN];
+  return [env.API_TOKEN];
 }
 
 export function authorizedAnyDevice(request: Request, env: Env): boolean {
