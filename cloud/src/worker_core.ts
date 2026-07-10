@@ -87,7 +87,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     return json({ ok: true, d1: "unchecked", workerVersion: WORKER_VERSION, now: new Date().toISOString() });
   }
 
-  if (request.method === "GET" && url.pathname.startsWith("/v1/radar/tile/")) return proxyRadarTile(request);
+  if (request.method === "GET" && url.pathname.startsWith("/v1/radar/tile/")) return proxyRadarTile(request, env);
 
   if (request.method === "GET" && url.pathname.startsWith("/v1/wx-icon/")) {
     const match = url.pathname.match(/^\/v1\/wx-icon\/(\d+)_(day|night)\.png$/);
