@@ -84,8 +84,9 @@ inline bool StationheadRequestIsBlockable(const std::wstring& uriLower) {
       L"braze.com",
       L"onesignal.com",
       L"intercom.io",
-      // Non-playback Stationhead surfaces (chat / tipping / social threads).
+      // Non-playback Stationhead surfaces (chat / tipping / social threads / streams).
       L"/chathistory",
+      L"/streams",
       L"/tippingstatus",
       L"/posts/trending",
       L"/threads/",
