@@ -74,11 +74,22 @@ void App::ProcessRemoteCommands() {
         return;
       } else if (command == L"reconnect_stationhead") {
         stationhead_->Reconnect();
+        if (secondaryStationhead_) secondaryStationhead_->Reconnect();
+        result = secondaryStationhead_
+            ? L"primary and secondary Stationhead reconnect started"
+            : L"primary Stationhead reconnect started";
       } else if (command == L"clear_display_cache") {
         ClearDisplayCache();
       } else if (command == L"reload_dashboard") {
         cloud_->RefreshNow();
       } else if (command == L"check_update") {
+        // A background check may still be using updateThread_. Do not ACK and
+        // discard an install command in that state; leaving it unacknowledged
+        // lets the Worker redeliver it after the normal command timeout.
+        if (updateBusy_.load(std::memory_order_acquire)) {
+          logger_->Info(L"Update install command deferred because an update check is already running");
+          continue;
+        }
         CheckForUpdateAsync(true);
         result = L"verified update check started";
       } else {
