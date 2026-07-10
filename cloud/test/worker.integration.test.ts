@@ -3,6 +3,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { resetD1TestDatabase } from "./d1_test_utils";
 
 type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1] };
+type TelemetryReceipt = {
+  accepted: number;
+  acknowledgedSequences: number[];
+  nextSequence: number;
+  duplicates?: number;
+};
 
 beforeEach(async () => {
   const testEnv = env as TestEnv;
@@ -17,6 +23,11 @@ async function postTelemetry(body: unknown, token = "test-device"): Promise<Resp
     headers: { ...auth(token), "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+async function readTelemetry(response: Response): Promise<TelemetryReceipt> {
+  expect(response.status).toBe(200);
+  return response.json<TelemetryReceipt>();
 }
 
 describe("HomePanel Worker integration", () => {
@@ -55,10 +66,10 @@ describe("HomePanel Worker integration", () => {
         humidityCorrected: 48.2,
       }],
     };
-    const first = await postTelemetry(body);
-    const second = await postTelemetry(body);
-    await expect(first.json()).resolves.toEqual({ accepted: 1 });
-    await expect(second.json()).resolves.toEqual({ accepted: 0 });
+    const first = await readTelemetry(await postTelemetry(body));
+    const second = await readTelemetry(await postTelemetry(body));
+    expect(first).toMatchObject({ accepted: 1, acknowledgedSequences: [10], nextSequence: 11 });
+    expect(second).toMatchObject({ accepted: 0, acknowledgedSequences: [10], nextSequence: 11 });
 
     const bucket = await env.DB.prepare(
       "SELECT sample_count,co2_sum,temperature_sum,humidity_sum FROM environment_buckets WHERE device_id=?1",
@@ -75,14 +86,19 @@ describe("HomePanel Worker integration", () => {
 
   it("deduplicates equal sequences inside one telemetry request", async () => {
     const observedAt = Date.now() - 1000;
-    const response = await postTelemetry({
+    const receipt = await readTelemetry(await postTelemetry({
       deviceId: "ci-device",
       samples: [
         { sequence: 20, observedAt, co2: 700 },
         { sequence: 20, observedAt, co2: 999 },
       ],
+    }));
+    expect(receipt).toMatchObject({
+      accepted: 1,
+      acknowledgedSequences: [20],
+      nextSequence: 21,
+      duplicates: 1,
     });
-    await expect(response.json()).resolves.toEqual({ accepted: 1, duplicates: 1 });
     const bucket = await env.DB.prepare(
       "SELECT sample_count,co2_sum FROM environment_buckets WHERE device_id=?1",
     ).bind("ci-device").first<{ sample_count: number; co2_sum: number }>();
@@ -96,9 +112,12 @@ describe("HomePanel Worker integration", () => {
       observedAt,
       co2: 500 + index % 10,
     }));
-    const response = await postTelemetry({ deviceId: "ci-device", samples });
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ accepted: 501 });
+    const receipt = await readTelemetry(await postTelemetry({ deviceId: "ci-device", samples }));
+    expect(receipt.accepted).toBe(501);
+    expect(receipt.acknowledgedSequences).toHaveLength(501);
+    expect(receipt.acknowledgedSequences[0]).toBe(1);
+    expect(receipt.acknowledgedSequences.at(-1)).toBe(501);
+    expect(receipt.nextSequence).toBe(502);
     const bucket = await env.DB.prepare(
       "SELECT sample_count FROM environment_buckets WHERE device_id=?1",
     ).bind("ci-device").first<{ sample_count: number }>();
@@ -113,10 +132,14 @@ describe("HomePanel Worker integration", () => {
       co2: 600 + index,
     }));
     const body = { deviceId: "ci-device", appVersion: "2.7.0", samples };
-    const first = await postTelemetry(body);
-    const retry = await postTelemetry(body);
-    await expect(first.json()).resolves.toEqual({ accepted: 120 });
-    await expect(retry.json()).resolves.toEqual({ accepted: 0 });
+    const first = await readTelemetry(await postTelemetry(body));
+    const retry = await readTelemetry(await postTelemetry(body));
+    expect(first.accepted).toBe(120);
+    expect(first.acknowledgedSequences).toHaveLength(120);
+    expect(first.nextSequence).toBe(121);
+    expect(retry.accepted).toBe(0);
+    expect(retry.acknowledgedSequences).toHaveLength(120);
+    expect(retry.nextSequence).toBe(121);
 
     const aggregate = await env.DB.prepare(
       "SELECT COUNT(*) AS buckets,SUM(sample_count) AS samples FROM environment_buckets WHERE device_id=?1",
