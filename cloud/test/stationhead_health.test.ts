@@ -7,6 +7,26 @@ import {
   type StationheadHealthSnapshot,
 } from "../src/stationhead_health";
 
+function snapshot(overrides: Partial<StationheadHealthSnapshot> = {}): StationheadHealthSnapshot {
+  return {
+    configured: true,
+    reachable: true,
+    healthy: true,
+    statusCode: 200,
+    sampledAt: 2_000_000,
+    lastRunAt: 1_990_000,
+    lastSuccessAt: 1_980_000,
+    ageMs: 20_000,
+    staleAfterMs: 900_000,
+    reason: null,
+    alertConfigured: true,
+    alertPending: false,
+    recoveryPending: false,
+    alertEventKey: null,
+    ...overrides,
+  };
+}
+
 describe("Stationhead external health monitoring", () => {
   it("derives the health endpoint from the playback monitor URL", () => {
     expect(stationheadHealthUrl({
@@ -90,33 +110,50 @@ describe("Stationhead external health monitoring", () => {
     expect(result.reason).toContain("HTTP 503");
   });
 
-  it("keeps the same recovery alert key across retries while success timestamps advance", () => {
-    const previous = {
-      configured: true,
-      reachable: true,
-      healthy: true,
-      statusCode: 200,
-      sampledAt: 2_000_000,
-      lastRunAt: 1_990_000,
-      lastSuccessAt: 1_980_000,
-      ageMs: 20_000,
-      staleAfterMs: 900_000,
-      reason: null,
-      alertConfigured: true,
-      alertPending: false,
+  it("keeps the same recovery alert key across recovery retries while success timestamps advance", () => {
+    const previous = snapshot({
       recoveryPending: true,
       alertEventKey: "homepanel-stationhead-recovered-900000",
-    } satisfies StationheadHealthSnapshot;
-    const current = {
-      ...previous,
+    });
+    const current = snapshot({
       sampledAt: 2_060_000,
       lastRunAt: 2_050_000,
       lastSuccessAt: 2_040_000,
-      recoveryPending: false,
-      alertEventKey: null,
-    } satisfies StationheadHealthSnapshot;
+    });
 
     expect(alertTransitionKey(current, previous, true))
       .toBe("homepanel-stationhead-recovered-900000");
+  });
+
+  it("does not reuse a failed outage key for a later recovery notification", () => {
+    const previous = snapshot({
+      healthy: false,
+      statusCode: 503,
+      alertPending: true,
+      alertEventKey: "homepanel-stationhead-down-1980000",
+    });
+    const current = snapshot({
+      sampledAt: 2_060_000,
+      lastSuccessAt: 2_040_000,
+    });
+
+    expect(alertTransitionKey(current, previous, true))
+      .toBe("homepanel-stationhead-recovered-1980000");
+  });
+
+  it("does not reuse a failed recovery key for a later outage notification", () => {
+    const previous = snapshot({
+      recoveryPending: true,
+      alertEventKey: "homepanel-stationhead-recovered-1980000",
+    });
+    const current = snapshot({
+      healthy: false,
+      statusCode: 503,
+      sampledAt: 2_060_000,
+      lastSuccessAt: 2_040_000,
+    });
+
+    expect(alertTransitionKey(current, previous, false))
+      .toBe("homepanel-stationhead-down-2040000");
   });
 });
