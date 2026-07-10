@@ -15,6 +15,7 @@ export interface EnvironmentHistoryRow {
   co2: number | null;
   temperature: number | null;
   humidity: number | null;
+  applied_count?: number;
 }
 
 interface EnvironmentBucket {
@@ -144,7 +145,10 @@ export function pendingTelemetryBucketStatement(
      RETURNING bucket_at AS t,
        CASE WHEN co2_count>0 THEN co2_sum/co2_count ELSE NULL END AS co2,
        CASE WHEN temperature_count>0 THEN temperature_sum/temperature_count ELSE NULL END AS temperature,
-       CASE WHEN humidity_count>0 THEN humidity_sum/humidity_count ELSE NULL END AS humidity`,
+       CASE WHEN humidity_count>0 THEN humidity_sum/humidity_count ELSE NULL END AS humidity,
+       (SELECT COUNT(*) FROM environment_samples
+         WHERE device_id=?1 AND observed_at>=?2 AND observed_at<?3 AND bucket_applied=0
+       ) AS applied_count`,
   ).bind(deviceId, bucketAt, bucketAt + ENVIRONMENT_BUCKET_MS);
 }
 
