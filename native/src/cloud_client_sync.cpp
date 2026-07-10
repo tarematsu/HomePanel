@@ -128,25 +128,36 @@ void CloudClient::Synchronize() {
   const int nextStationhead = VersionOr(versions, L"stationhead", stationheadVersion_);
   const int nextConfig = VersionOr(versions, L"config", deviceConfigVersion_);
 
+  bool dashboardApplied = false;
+  bool radarApplied = false;
+  bool switchbotApplied = false;
+  bool stationheadApplied = false;
+  bool configApplied = false;
+
   if (auto payload = StringPayload(root, L"dashboard")) {
     if (!AtomicWriteBytes(dashboardPath, *payload)) throw std::runtime_error("dashboard data cache write failed");
+    dashboardApplied = true;
     PostMessageW(window_, WM_HP_CLOUD_UPDATED, 0, 0);
   }
   if (auto payload = StringPayload(root, L"radar")) {
     if (!AtomicWriteBytes(radarPath, LocalizeRadarTiles(*payload))) throw std::runtime_error("radar cache write failed");
+    radarApplied = true;
     PostMessageW(window_, WM_HP_RADAR_UPDATED, 0, 0);
   }
   if (auto payload = StringPayload(root, L"switchbot")) {
     if (!AtomicWriteBytes(switchbotPath, *payload)) throw std::runtime_error("SwitchBot cache write failed");
+    switchbotApplied = true;
     presenceFallbackActive_ = false;
     PostMessageW(window_, WM_HP_SWITCHBOT_UPDATED, 0, 0);
   }
   if (auto payload = StringPayload(root, L"stationhead")) {
     if (!AtomicWriteBytes(stationheadPath, *payload)) throw std::runtime_error("Stationhead state cache write failed");
+    stationheadApplied = true;
     PostMessageW(window_, WM_HP_STATIONHEAD_CHANGED, 0, 0);
   }
   if (auto payload = StringPayload(root, L"deviceConfig")) {
     if (!AtomicWriteBytes(deviceConfigPath, *payload)) throw std::runtime_error("device config cache write failed");
+    configApplied = true;
     PostMessageW(window_, WM_HP_CONFIG_UPDATED, 0, 0);
   }
 
@@ -164,14 +175,27 @@ void CloudClient::Synchronize() {
     }
   }
 
-  if (dashboardVersion_ != nextDashboard || radarVersion_ != nextRadar ||
-      switchbotVersion_ != nextSwitchbot || stationheadVersion_ != nextStationhead ||
-      deviceConfigVersion_ != nextConfig) {
-    dashboardVersion_ = nextDashboard;
-    radarVersion_ = nextRadar;
-    switchbotVersion_ = nextSwitchbot;
-    stationheadVersion_ = nextStationhead;
-    deviceConfigVersion_ = nextConfig;
+  const auto acceptedVersion = [this](const wchar_t* name, int current, int next, bool payloadApplied) {
+    if (next == current || payloadApplied) return next;
+    log_.Warn(std::wstring(L"Cloud sync withheld ") + name +
+              L" version " + std::to_wstring(next) +
+              L" because its payload was absent");
+    return current;
+  };
+  const int acceptedDashboard = acceptedVersion(L"dashboard", dashboardVersion_, nextDashboard, dashboardApplied);
+  const int acceptedRadar = acceptedVersion(L"radar", radarVersion_, nextRadar, radarApplied);
+  const int acceptedSwitchbot = acceptedVersion(L"switchbot", switchbotVersion_, nextSwitchbot, switchbotApplied);
+  const int acceptedStationhead = acceptedVersion(L"stationhead", stationheadVersion_, nextStationhead, stationheadApplied);
+  const int acceptedConfig = acceptedVersion(L"device config", deviceConfigVersion_, nextConfig, configApplied);
+
+  if (dashboardVersion_ != acceptedDashboard || radarVersion_ != acceptedRadar ||
+      switchbotVersion_ != acceptedSwitchbot || stationheadVersion_ != acceptedStationhead ||
+      deviceConfigVersion_ != acceptedConfig) {
+    dashboardVersion_ = acceptedDashboard;
+    radarVersion_ = acceptedRadar;
+    switchbotVersion_ = acceptedSwitchbot;
+    stationheadVersion_ = acceptedStationhead;
+    deviceConfigVersion_ = acceptedConfig;
     cacheMetadataDirty_ = true;
   }
   if (cacheMetadataDirty_) SaveCacheMetadata();
