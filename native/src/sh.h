@@ -67,6 +67,7 @@ class StationheadPlayer {
  private:
   void ApplyMute() const noexcept;
   void ApplyVolume() const noexcept;
+  void ApplyAudioPlaybackState(bool playing, int64_t nowMs, const std::wstring& source);
   void Create();
   void EnsureAuthController(const std::wstring& url);
   bool EnsureHostWindow();
@@ -107,6 +108,7 @@ class StationheadPlayer {
   EventRegistrationToken webMessageToken_{};
   EventRegistrationToken processFailedToken_{};
   EventRegistrationToken resourceRequestedToken_{};
+  EventRegistrationToken audioPlayingChangedToken_{};
   std::atomic<bool> resourceBlockingArmed_{false};
   EventRegistrationToken authNavigationToken_{};
   EventRegistrationToken authMessageToken_{};
@@ -134,6 +136,7 @@ class StationheadPlayer {
   std::wstring authPendingUrl_;
   bool spotifyAuthorization_ = false;
   bool loginSessionActive_ = false;
+  bool nativeAudioTracking_ = false;
   bool viewVisible_ = false;
   bool startupPreviewActive_ = false;
   bool usedFallback_ = false;
