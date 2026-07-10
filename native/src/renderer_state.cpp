@@ -4,6 +4,8 @@
 #include "web_renderer.h"
 
 namespace hp {
+bool InstallRuntimeAssets() noexcept;
+
 namespace {
 void PrepareParentWindow(HWND window) {
   static HBRUSH background = CreateSolidBrush(kNativeDashboardBackground);
@@ -34,6 +36,9 @@ Renderer::~Renderer() {
 }
 
 void Renderer::Initialize() {
+  if (!InstallRuntimeAssets()) {
+    throw std::runtime_error("runtime dashboard asset installation failed");
+  }
   PrepareParentWindow(window_);
   EnsureNativeStaticWindows();
   StartNativePlaybackBridge();
