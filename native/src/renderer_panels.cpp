@@ -879,7 +879,7 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& content) {
     const int step = std::max(1, static_cast<int>(plot.right - plot.left) / std::max(1, count));
     const int pairGap = std::max(1, step / 18);
     const int barWidth = std::max(2, std::min(step * 3 / 10, (step - pairGap * 3) / 2));
-    const int usableHeight = std::max(1, plot.bottom - plot.top - valueBand);
+    const int usableHeight = std::max(1, static_cast<int>(plot.bottom - plot.top) - valueBand);
 
     for (int i = 0; i < count; ++i) {
       const auto& item = nativeDashboard_.octopusHistory[i];
