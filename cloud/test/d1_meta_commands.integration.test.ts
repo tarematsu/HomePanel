@@ -100,6 +100,55 @@ describe("D1 meta and command optimizations", () => {
     ]);
   });
 
+  it("preserves sync versions while returning only payloads with stale client versions", async () => {
+    const stateVersions = {
+      weather: 2,
+      news: 3,
+      octopus: 4,
+      switchbot: 5,
+      stationhead: 6,
+      environment: 7,
+      radar: 8,
+    } as const;
+    for (const [source, version] of Object.entries(stateVersions)) {
+      await insertState(source, version, "ok", { marker: source });
+    }
+    const configUpdatedAt = Date.now();
+    await env.DB.prepare(
+      "INSERT INTO device_configs(device_id,version,payload,updated_at) VALUES(?1,?2,?3,?4)",
+    ).bind("homepanel-device", 9, JSON.stringify({ cloudPollSeconds: 300 }), configUpdatedAt).run();
+
+    const baseUrl = "https://homepanel.test/v1/device/sync?deviceId=homepanel-device&dashboardVersion=27&radarVersion=8&switchbotVersion=5&stationheadVersion=6&configVersion=9";
+    const matching = await SELF.fetch(baseUrl, { headers: auth("test-device") });
+    expect(matching.status).toBe(200);
+    await expect(matching.json()).resolves.toEqual({
+      workerVersion: "2.11.0",
+      versions: { dashboard: 27, radar: 8, switchbot: 5, stationhead: 6, config: 9 },
+      commands: [],
+    });
+
+    const stale = await SELF.fetch(
+      baseUrl.replace("radarVersion=8", "radarVersion=7")
+        .replace("switchbotVersion=5", "switchbotVersion=4")
+        .replace("configVersion=9", "configVersion=8"),
+      { headers: auth("test-device") },
+    );
+    expect(stale.status).toBe(200);
+    await expect(stale.json()).resolves.toEqual({
+      workerVersion: "2.11.0",
+      versions: { dashboard: 27, radar: 8, switchbot: 5, stationhead: 6, config: 9 },
+      commands: [],
+      radar: JSON.stringify({ marker: "radar" }),
+      switchbot: JSON.stringify({ marker: "switchbot" }),
+      deviceConfig: JSON.stringify({
+        deviceId: "homepanel-device",
+        version: 9,
+        updatedAt: configUpdatedAt,
+        config: { cloudPollSeconds: 300 },
+      }),
+    });
+  });
+
   it("sets SwitchBot to five minutes and Octopus to six hours", async () => {
     const rows = await env.DB.prepare(
       "SELECT name, interval_seconds FROM jobs WHERE name IN ('switchbot','octopus') ORDER BY name",

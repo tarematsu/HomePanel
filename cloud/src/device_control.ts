@@ -161,13 +161,26 @@ export async function getDeviceSync(request: Request, env: Env): Promise<Respons
   };
   const now = Date.now();
   const rowsResult = await env.DB.prepare(
-    `SELECT 'state' AS kind, source, version, payload, observed_at, fetched_at,
+    `SELECT 'state' AS kind, source, version,
+            CASE
+              WHEN source IN ('weather','news','octopus','switchbot','stationhead','environment')
+                   AND (SELECT COALESCE(SUM(version), 0)
+                          FROM current_state
+                         WHERE source IN ('weather','news','octopus','switchbot','stationhead','environment'))<>?4
+                THEN payload
+              WHEN source='radar' AND version<>?5 THEN payload
+              WHEN source='switchbot' AND version<>?6 THEN payload
+              WHEN source='stationhead' AND version<>?7 THEN payload
+              ELSE NULL
+            END AS payload,
+            observed_at, fetched_at,
             last_success_at, status, error, content_hash,
             NULL AS updated_at, 0 AS pending
        FROM current_state
-      WHERE source IN ('weather','news','octopus','switchbot','stationhead','spotify','environment','radar')
+      WHERE source IN ('weather','news','octopus','switchbot','stationhead','environment','radar')
      UNION ALL
-     SELECT 'config' AS kind, 'config' AS source, version, payload,
+     SELECT 'config' AS kind, 'config' AS source, version,
+            CASE WHEN version<>?8 THEN payload ELSE NULL END,
             NULL, NULL, NULL, NULL, NULL, NULL, updated_at, 0
        FROM device_configs
       WHERE device_id=?1
@@ -181,15 +194,24 @@ export async function getDeviceSync(request: Request, env: Env): Promise<Respons
                  AND (expires_at IS NULL OR expires_at>?2)
                  AND (delivered_at IS NULL OR delivered_at<=?3)
             )`,
-  ).bind(deviceId, now, now - COMMAND_REDELIVERY_MS).all<SyncRow>();
+  ).bind(
+    deviceId,
+    now,
+    now - COMMAND_REDELIVERY_MS,
+    requested.dashboard,
+    requested.radar,
+    requested.switchbot,
+    requested.stationhead,
+    requested.config,
+  ).all<SyncRow>();
   const rows = rowsResult.results ?? [];
   const states: Record<string, StateRow> = {};
   for (const row of rows) {
-    if (row.kind !== "state" || !row.payload || !row.status) continue;
+    if (row.kind !== "state" || !row.status) continue;
     states[row.source] = {
       source: row.source,
       version: Number(row.version),
-      payload: row.payload,
+      payload: row.payload ?? "",
       observed_at: row.observed_at,
       fetched_at: Number(row.fetched_at ?? 0),
       last_success_at: row.last_success_at,
@@ -199,11 +221,7 @@ export async function getDeviceSync(request: Request, env: Env): Promise<Respons
     };
   }
   const configRow = rows.find(row => row.kind === "config");
-  const config: DeviceConfigRow | null = configRow?.payload ? {
-    version: Number(configRow.version),
-    payload: configRow.payload,
-    updated_at: Number(configRow.updated_at ?? 0),
-  } : null;
+  const configVersion = Number(configRow?.version ?? 0);
   const hasPendingCommands = Number(rows.find(row => row.kind === "commands")?.pending ?? 0) === 1;
   const commands = hasPendingCommands ? await pendingCommands(env, deviceId, now) : [];
   const currentDashboardVersion = dashboardVersion(states);
@@ -217,7 +235,7 @@ export async function getDeviceSync(request: Request, env: Env): Promise<Respons
       radar: radarVersion,
       switchbot: switchbotVersion,
       stationhead: stationheadVersion,
-      config: config?.version ?? 0,
+      config: configVersion,
     },
     commands,
   };
@@ -228,14 +246,13 @@ export async function getDeviceSync(request: Request, env: Env): Promise<Respons
     const row = states[source];
     if (row && row.version !== requested[source]) response[source] = row.payload;
   }
-  const configVersion = config?.version ?? 0;
   if (configVersion !== requested.config) {
     let value: unknown = {};
-    try { value = config?.payload ? JSON.parse(config.payload) : {}; } catch { value = {}; }
+    try { value = configRow?.payload ? JSON.parse(configRow.payload) : {}; } catch { value = {}; }
     response.deviceConfig = JSON.stringify({
       deviceId,
       version: configVersion,
-      updatedAt: config?.updated_at ?? 0,
+      updatedAt: Number(configRow?.updated_at ?? 0),
       config: value,
     });
   }

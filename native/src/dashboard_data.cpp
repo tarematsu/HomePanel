@@ -60,14 +60,8 @@ std::wstring DeviceState(const JsonObject& item) {
 }
 }  // namespace
 
-bool LoadDashboardSnapshot(const fs::path& path, DashboardSnapshot& output, std::wstring* error) {
+bool ParseDashboardSnapshot(const std::string& text, DashboardSnapshot& output, std::wstring* error) {
   try {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-      if (error) *error = L"dashboard.json not found";
-      return false;
-    }
-    const std::string text((std::istreambuf_iterator<char>(input)), {});
     if (text.empty()) {
       if (error) *error = L"dashboard.json is empty";
       return false;
@@ -101,6 +95,7 @@ bool LoadDashboardSnapshot(const fs::path& path, DashboardSnapshot& output, std:
     const JsonObject news = json::Object(root, L"news");
     next.newsStatus = ReadStatus(news);
     const JsonArray newsItems = json::Array(news, L"items");
+    next.newsItemCount = static_cast<int>(newsItems.Size());
     for (uint32_t index = 0; index < newsItems.Size() && index < 10; ++index) {
       try {
         if (newsItems.GetAt(index).ValueType() != JsonValueType::Object) continue;
@@ -160,6 +155,16 @@ bool LoadDashboardSnapshot(const fs::path& path, DashboardSnapshot& output, std:
     if (error) *error = L"unknown dashboard parse error";
   }
   return false;
+}
+
+bool LoadDashboardSnapshot(const fs::path& path, DashboardSnapshot& output, std::wstring* error) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    if (error) *error = L"dashboard.json not found";
+    return false;
+  }
+  const std::string text((std::istreambuf_iterator<char>(input)), {});
+  return ParseDashboardSnapshot(text, output, error);
 }
 
 }  // namespace hp

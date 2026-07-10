@@ -469,6 +469,7 @@ bool Renderer::EnsureNativeStaticWindows() {
 
   const NativeDashboardLayout layout = ComputeNativeDashboardLayout(bounds_);
   bool allCreated = true;
+  bool createdAny = false;
   for (const NativePanelSlot& slot : NativePanelSlots()) {
     HWND& hwnd = this->*slot.window;
     if (hwnd && IsWindow(hwnd)) continue;
@@ -479,9 +480,11 @@ bool Renderer::EnsureNativeStaticWindows() {
         std::max(1L, rect.bottom - rect.top), window_,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(slot.id)),
         GetModuleHandleW(nullptr), this);
-    allCreated = allCreated && hwnd && IsWindow(hwnd);
+    const bool created = hwnd && IsWindow(hwnd);
+    allCreated = allCreated && created;
+    createdAny = createdAny || created;
   }
-  ApplyNativeStaticBounds();
+  if (createdAny) ApplyNativeStaticBounds();
   return allCreated;
 }
 

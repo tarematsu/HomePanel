@@ -260,7 +260,6 @@ class Renderer {
   void ComposeRadarFrame();
   void InvalidateAllNativePanels();
   RECT ClientBounds() const;
-  void ParseDashboardMetadata(const std::wstring& json);
 
   // One entry per native panel window. Radar comes first so placement loops
   // stack the merged top/bottom panels above the full-screen radar background.

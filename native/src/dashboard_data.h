@@ -45,6 +45,7 @@ struct DashboardSnapshot {
 
   PanelDataStatus newsStatus;
   std::vector<NewsItemData> newsItems;
+  int newsItemCount = 0;
 
   PanelDataStatus octopusStatus;
   double lastMonthUsage = std::numeric_limits<double>::quiet_NaN();
@@ -59,6 +60,8 @@ struct DashboardSnapshot {
   std::vector<SwitchBotDeviceData> switchBotDevices;
 };
 
+bool ParseDashboardSnapshot(const std::string& text, DashboardSnapshot& output,
+                            std::wstring* error = nullptr);
 bool LoadDashboardSnapshot(const fs::path& path, DashboardSnapshot& output, std::wstring* error = nullptr);
 
 }  // namespace hp

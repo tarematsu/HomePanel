@@ -2,8 +2,6 @@
 // dashboard cache loading/metadata, queued UI actions, and the main-window
 // background paint. Compiled as part of renderer_core.cpp's translation unit.
 #include "web_renderer.h"
-#include "json_helpers.h"
-#include <winrt/Windows.Data.Json.h>
 
 namespace hp {
 namespace {
@@ -72,15 +70,14 @@ bool Renderer::LoadDashboard(const fs::path& jsonPath, bool* changed) {
   try {
     std::ifstream input(jsonPath, std::ios::binary);
     if (!input) return false;
-    const std::string text((std::istreambuf_iterator<char>(input)), {});
+    std::string text((std::istreambuf_iterator<char>(input)), {});
     if (text.empty()) return false;
     if (text == dashboardUtf8_) return true;
-    const std::wstring wide = Utf8ToWide(text);
-    ParseDashboardMetadata(wide);
     DashboardSnapshot snapshot;
-    LoadDashboardSnapshot(jsonPath, snapshot);
+    if (!ParseDashboardSnapshot(text, snapshot)) return false;
+    newsCount_ = snapshot.newsItemCount;
     nativeDashboard_ = std::move(snapshot);
-    dashboardUtf8_ = text;
+    dashboardUtf8_ = std::move(text);
     ++dashboardSourceRevision_;
     if (changed) *changed = true;
     return true;
@@ -136,10 +133,4 @@ void Renderer::NotifyRadarUpdated() {
   radarComposeWake_.notify_all();
 }
 
-using winrt::Windows::Data::Json::JsonObject;
-
-void Renderer::ParseDashboardMetadata(const std::wstring& json) {
-  const JsonObject root = JsonObject::Parse(json);
-  newsCount_ = static_cast<int>(json::Array(json::Object(root, L"news"), L"items").Size());
-}
 }  // namespace hp

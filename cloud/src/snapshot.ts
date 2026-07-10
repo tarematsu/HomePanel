@@ -98,11 +98,11 @@ export function dashboardPayload(rows: Record<string, StateRow>): DashboardState
   return states;
 }
 
-export function dashboardVersion(rows: Record<string, StateRow>): number {
+export function dashboardVersion(rows: Record<string, Pick<StateRow, "version">>): number {
   return DASHBOARD_SOURCE_NAMES.reduce((sum, source) => sum + Number(rows[source]?.version ?? 0), 0);
 }
 
-function dashboardStatus(rows: Record<string, StateRow>): StateRow["status"] {
+function dashboardStatus(rows: Record<string, Pick<StateRow, "status">>): StateRow["status"] {
   const statuses = DASHBOARD_SOURCE_NAMES.map(source => rows[source]?.status).filter(Boolean);
   if (statuses.includes("error")) return "error";
   if (statuses.includes("stale")) return "stale";
@@ -230,17 +230,31 @@ export interface MetaPayload {
   workerVersion: string;
 }
 
+type StateMetadataRow = Pick<StateRow, "source" | "version" | "fetched_at" | "status">;
+
 export async function buildMeta(env: Env): Promise<MetaPayload> {
-  const rows = await readStates(env, [...DASHBOARD_SOURCE_NAMES, "radar"]);
+  const sources = [...DASHBOARD_SOURCE_NAMES, "radar"];
+  const placeholders = sources.map(() => "?").join(",");
+  const result = await env.DB.prepare(
+    `SELECT source, version, fetched_at, status
+       FROM current_state WHERE source IN (${placeholders})`,
+  ).bind(...sources).all<StateMetadataRow>();
+  const rows: Record<string, StateMetadataRow> = {};
+  for (const row of result.results ?? []) rows[row.source] = row;
   const radar = rows.radar;
-  const dashboard = await dashboardSnapshotFromRows(rows);
-  const status: MetaPayload["status"] = dashboard.status === "error" || radar?.status === "error"
+  const version = dashboardVersion(rows);
+  const statusForDashboard = dashboardStatus(rows);
+  const status: MetaPayload["status"] = statusForDashboard === "error" || radar?.status === "error"
     ? "error"
-    : dashboard.status === "stale" || radar?.status === "stale" ? "stale" : "ok";
-  const generated = Math.max(Number(dashboard.fetched_at ?? 0), Number(radar?.fetched_at ?? 0));
+    : statusForDashboard === "stale" || radar?.status === "stale" ? "stale" : "ok";
+  const dashboardFetchedAt = Math.max(
+    0,
+    ...DASHBOARD_SOURCE_NAMES.map(source => Number(rows[source]?.fetched_at ?? 0)),
+  ) || Date.now();
+  const generated = Math.max(dashboardFetchedAt, Number(radar?.fetched_at ?? 0));
   return {
-    version: dashboard.version + Number(radar?.version ?? 0),
-    dashboardVersion: dashboard.version,
+    version: version + Number(radar?.version ?? 0),
+    dashboardVersion: version,
     radarVersion: Number(radar?.version ?? 0),
     generatedAt: new Date(generated || Date.now()).toISOString(),
     status,
