@@ -20,19 +20,21 @@ beforeEach(async () => {
 });
 
 describe("repository audit regressions", () => {
-  it("does not grant administrative command access to a device token", async () => {
-    const response = await SELF.fetch(
+  it("allows DEVICE_TOKEN for administrative commands and rejects unknown tokens", async () => {
+    const request = (token: string) => SELF.fetch(
       "https://homepanel.test/v1/device/commands",
       {
         method: "POST",
-        headers: auth("test-device"),
+        headers: auth(token),
         body: JSON.stringify({
           deviceId: "homepanel-device",
           command: "restart_app",
         }),
       },
     );
-    expect(response.status).toBe(401);
+
+    expect((await request("test-device")).status).toBe(202);
+    expect((await request("not-a-configured-token")).status).toBe(401);
   });
 
   it("reports an uninitialized data set as stale instead of healthy", async () => {
