@@ -103,15 +103,17 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
       const chunk = accepted.slice(offset, offset + TELEMETRY_SAMPLES_PER_BATCH);
       const buckets = aggregateTelemetrySamples(chunk);
       const statements = buckets.map(bucket => telemetryBucketStatement(env, deviceId, bucket));
-      statements.push(telemetryHeartbeatStatement(
-        env,
-        deviceId,
-        now,
-        appVersion,
-        stationheadOk,
-        outboxCount,
-        chunk.at(-1)!.sequence,
-      ));
+      if (offset + chunk.length === accepted.length) {
+        statements.push(telemetryHeartbeatStatement(
+          env,
+          deviceId,
+          now,
+          appVersion,
+          stationheadOk,
+          outboxCount,
+          chunk.at(-1)!.sequence,
+        ));
+      }
       const results = await env.DB.batch(statements);
       for (let index = 0; index < buckets.length; index += 1) {
         const rows = (results[index]?.results ?? []) as EnvironmentHistoryRow[];
