@@ -6,9 +6,13 @@
 
 #include "sensors.h"
 #include <limits>
+#include <set>
 #include <winrt/Windows.Data.Json.h>
 
 namespace hp {
+namespace {
+constexpr uint64_t kMaxTelemetrySequence = 9'007'199'254'740'990ULL;
+}
 
 bool SensorHub::AppendOutbox(const Sample& sample) {
   if (!SampleValuesValid(sample)) return false;
@@ -98,17 +102,64 @@ std::string SensorHub::BuildTelemetryPayload(const std::wstring& deviceId, const
   return out.str();
 }
 
-void SensorHub::AcknowledgeTelemetry(size_t count) {
+void SensorHub::ApplyTelemetryReceipt(const std::vector<uint64_t>& acknowledgedSequences,
+                                      uint64_t nextSequence) {
   std::lock_guard lock(mutex_);
-  count = std::min(count, outbox_.size());
-  if (!count) return;
-  const uint64_t sequence = outbox_[count - 1].sequence;
-  if (!WriteAcknowledgedSequenceLocked(sequence)) return;
-  for (size_t i = 0; i < count; ++i) outbox_.pop_front();
-  acknowledgedSequence_ = std::max(acknowledgedSequence_, sequence);
-  acknowledgedSinceCompaction_ += count;
+  const std::set<uint64_t> acknowledged(acknowledgedSequences.begin(), acknowledgedSequences.end());
+  uint64_t persistedAck = acknowledgedSequence_;
+  for (const uint64_t sequence : acknowledged) persistedAck = std::max(persistedAck, sequence);
+  if (nextSequence > 0) persistedAck = std::max(persistedAck, nextSequence - 1);
+
+  std::deque<Sample> updated;
+  size_t removed = 0;
+  for (const auto& sample : outbox_) {
+    if (acknowledged.contains(sample.sequence)) {
+      ++removed;
+      continue;
+    }
+    updated.push_back(sample);
+  }
+
+  uint64_t candidate = persistedAck == std::numeric_limits<uint64_t>::max()
+      ? persistedAck
+      : persistedAck + 1;
+  size_t rebased = 0;
+  for (auto& sample : updated) {
+    if (candidate > kMaxTelemetrySequence) {
+      log_.Warn(L"Telemetry sequence space is exhausted; preserving the outbox for manual recovery");
+      return;
+    }
+    if (sample.sequence < candidate) {
+      sample.sequence = candidate;
+      ++rebased;
+    }
+    if (sample.sequence >= kMaxTelemetrySequence) {
+      candidate = kMaxTelemetrySequence + 1;
+    } else {
+      candidate = sample.sequence + 1;
+    }
+  }
+
+  const bool outboxChanged = removed > 0 || rebased > 0;
+  if (outboxChanged && !RewriteOutboxLocked(updated)) {
+    log_.Warn(L"Failed to persist telemetry acknowledgement; retaining the existing outbox");
+    return;
+  }
+  if (persistedAck > acknowledgedSequence_ && !WriteAcknowledgedSequenceLocked(persistedAck)) {
+    log_.Warn(L"Failed to persist the telemetry acknowledgement high-water mark");
+  }
+
+  if (outboxChanged) {
+    outbox_ = std::move(updated);
+    acknowledgedSinceCompaction_ = 0;
+  }
+  acknowledgedSequence_ = std::max(acknowledgedSequence_, persistedAck);
+  nextSequence_ = std::max(nextSequence_, candidate);
   state_.outboxCount = outbox_.size();
-  CompactOutboxLocked();
+  if (rebased > 0) {
+    log_.Warn(L"Rebased " + std::to_wstring(rebased) +
+              L" telemetry samples above the server sequence high-water mark");
+  }
 }
 
 }
