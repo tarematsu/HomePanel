@@ -26,6 +26,11 @@ export interface Env {
   CITY_NAME?: string;
   WEATHERNEWS_URL?: string;
   STATIONHEAD_MONITOR_URL?: string;
+  STATIONHEAD_HEALTH_URL?: string;
+  STATIONHEAD_HEALTH_STALE_MS?: string;
+  STATIONHEAD_ALERT_TO?: string;
+  STATIONHEAD_ALERT_FROM?: string;
+  RESEND_API_KEY?: string;
   RADAR_CENTER_LAT?: string;
   RADAR_CENTER_LON?: string;
   RADAR_ZOOM?: string;

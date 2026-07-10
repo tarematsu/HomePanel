@@ -22,6 +22,9 @@ Set these in `wrangler.jsonc` or the deploy environment:
 CITY_NAME
 WEATHERNEWS_URL
 STATIONHEAD_MONITOR_URL
+STATIONHEAD_HEALTH_URL
+STATIONHEAD_HEALTH_STALE_MS
+STATIONHEAD_ALERT_FROM
 HOMEPANEL_PUBLIC_URL
 HOMEPANEL_PRIMARY_DEVICE_ID
 RADAR_CENTER_LAT
@@ -32,6 +35,8 @@ SWITCHBOT_EXIT_CONFIRM_SECONDS
 SWITCHBOT_FALLBACK_POLL_SECONDS
 UPDATE_BUCKET_PREFIX
 ```
+
+`STATIONHEAD_HEALTH_URL` is optional when `STATIONHEAD_MONITOR_URL` points to the Stationhead deployment. HomePanel derives `/api/health` from the playback URL. The independent `stationhead_health` scheduler job runs every five minutes and stores its result separately from playback data.
 
 ## Cloudflare Secrets
 
@@ -50,7 +55,21 @@ SPOTIFY_CLIENT_ID
 SPOTIFY_CLIENT_SECRET
 SPOTIFY_REDIRECT_URI
 SPOTIFY_TOKEN_ENCRYPTION_KEY
+RESEND_API_KEY
+STATIONHEAD_ALERT_TO
 ```
+
+When both `RESEND_API_KEY` and `STATIONHEAD_ALERT_TO` are configured, HomePanel sends one notification when Stationhead becomes unhealthy and one when it recovers. Monitoring and state storage continue without email configuration.
+
+## Stationhead monitoring
+
+- Source state: `current_state.source = 'stationhead_health'`
+- Polling cadence: five minutes
+- Manual refresh source: `stationhead_health`
+- Read endpoint: `GET /v1/stationhead-health` with a configured HomePanel token
+- Playback collection and collector-health monitoring are independent jobs
+
+The Stationhead application remains responsible for exposing `/api/health`; HomePanel Cloud owns polling, transition detection, and optional notification delivery.
 
 ## R2
 

@@ -2,6 +2,7 @@ import { executeSource, type Env, type SourceResult } from "./sources";
 import { updateState } from "./snapshot";
 import { runUpdateCheck } from "./update_check";
 import { fetchStationhead } from "./spotify_source";
+import { runStationheadHealthMonitor } from "./stationhead_health";
 import { configuredIds, loadSwitchBotSnapshot } from "./switchbot_api";
 import { fetchSwitchBotOptimized } from "./switchbot_poll";
 import { failSafeSwitchBotState } from "./switchbot_state";
@@ -23,8 +24,25 @@ const SUCCESS_RUN_LOG_INTERVAL_SECONDS = 6 * 60 * 60;
 const DAY_MS = 86_400_000;
 const DAY_SECONDS = 86_400;
 const POWER_RETENTION_MS = 90 * DAY_MS;
-const REFRESHABLE_JOBS = ["weather", "news", "switchbot", "octopus", "stationhead", "radar", "update_check"] as const;
+const REFRESHABLE_JOBS = [
+  "weather",
+  "news",
+  "switchbot",
+  "octopus",
+  "stationhead",
+  "stationhead_health",
+  "radar",
+  "update_check",
+] as const;
 const REFRESHABLE_JOB_SET = new Set<string>(REFRESHABLE_JOBS);
+
+export async function ensureSystemJobs(env: Env): Promise<void> {
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO jobs(
+       name,interval_seconds,next_run_at,lease_until,last_success_at,last_error,consecutive_failures
+     ) VALUES('stationhead_health',300,0,NULL,NULL,NULL,0)`,
+  ).run();
+}
 
 export async function acquireDueJobs(env: Env, nowSeconds: number): Promise<JobRow[]> {
   const result = await env.DB.prepare(
@@ -119,6 +137,9 @@ async function runOne(env: Env, job: JobRow): Promise<void> {
     else if (job.name === "stationhead") {
       sourceFailureRecorded = true;
       await refreshStationheadMonitor(env);
+    } else if (job.name === "stationhead_health") {
+      sourceFailureRecorded = true;
+      await runStationheadHealthMonitor(env);
     } else {
       const result: SourceResult = job.name === "switchbot"
         ? await fetchSwitchBotOptimized(env)
@@ -157,10 +178,10 @@ async function runOne(env: Env, job: JobRow): Promise<void> {
 }
 
 export async function runScheduler(env: Env): Promise<void> {
-  // A refresh can make all seven source jobs due at once, while each D1 lease
+  await ensureSystemJobs(env);
+  // A refresh can make all source jobs due at once, while each D1 lease
   // acquisition intentionally caps parallelism at three. Drain successive
-  // batches in the same invocation so the fourth through seventh jobs do not
-  // sit idle until the next five-minute cron.
+  // batches in the same invocation so later jobs do not wait for another cron.
   for (let batch = 0; batch < MAX_SCHEDULER_BATCHES; batch += 1) {
     const now = Math.floor(Date.now() / 1000);
     const jobs = await acquireDueJobs(env, now);
@@ -174,6 +195,7 @@ export async function runScheduler(env: Env): Promise<void> {
 }
 
 export async function requestRefresh(env: Env, names?: string[]): Promise<void> {
+  await ensureSystemJobs(env);
   const selected = names?.length
     ? [...new Set(names.filter(name => REFRESHABLE_JOB_SET.has(name)))]
     : [...REFRESHABLE_JOBS];

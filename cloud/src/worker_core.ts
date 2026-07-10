@@ -132,7 +132,14 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     return updateFileResponse(request, env, decodeURIComponent(url.pathname.slice(updateFilePrefix.length)));
   }
 
-  if (["/v1/meta", "/v1/dashboard.json", "/v1/radar", "/v1/switchbot", "/v1/stationhead"].includes(url.pathname)) {
+  if ([
+    "/v1/meta",
+    "/v1/dashboard.json",
+    "/v1/radar",
+    "/v1/switchbot",
+    "/v1/stationhead",
+    "/v1/stationhead-health",
+  ].includes(url.pathname)) {
     if (request.method !== "GET") return methodNotAllowed(["GET"]);
     if (!authorizedAnyDevice(request, env)) return unauthorized();
     if (url.pathname === "/v1/meta") {
@@ -142,6 +149,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (url.pathname === "/v1/dashboard.json") return dashboardJsonResponse(request, env);
     if (url.pathname === "/v1/switchbot") return stateJson(request, env, "switchbot");
     if (url.pathname === "/v1/stationhead") return stationheadState(request, env, ctx);
+    if (url.pathname === "/v1/stationhead-health") return stateJson(request, env, "stationhead_health");
     return stateJson(request, env, "radar");
   }
 

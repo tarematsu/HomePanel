@@ -23,6 +23,7 @@ class CloudClient {
   bool AcknowledgeCommand(int64_t id, bool success, const std::wstring& result);
   std::wstring LastSuccessText() const;
   std::wstring WorkerVersion() const;
+  std::wstring StationheadHealthText() const;
   int ConsecutiveFailures() const { return failures_.load(); }
 
  private:
@@ -67,6 +68,7 @@ class CloudClient {
 
   std::wstring lastSuccess_;
   std::wstring workerVersion_;
+  std::wstring stationheadHealthText_ = L"Stationhead収集: 確認中";
   int dashboardVersion_ = -1;
   int radarVersion_ = -1;
   int switchbotVersion_ = -1;
