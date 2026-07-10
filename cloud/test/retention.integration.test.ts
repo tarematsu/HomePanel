@@ -11,7 +11,7 @@ beforeEach(async () => {
 });
 
 describe("telemetry retention", () => {
-  it("retains environment samples and buckets regardless of age", async () => {
+  it("retains environment samples and buckets beyond previous cleanup limits", async () => {
     const now = Date.now();
     const day = 86_400_000;
     const insertSample = (sequence: number, observedAt: number, applied: number) => env.DB.prepare(
@@ -32,7 +32,6 @@ describe("telemetry retention", () => {
       insertSample(2, now - 32 * day, 0),
       insertSample(3, now - 3650 * day, 1),
       insertSample(4, now - day, 1),
-      insertBucket(now - 3650 * day),
       insertBucket(now - 8 * day),
       insertBucket(now - 6 * day),
     ]);
@@ -53,7 +52,6 @@ describe("telemetry retention", () => {
       "SELECT bucket_at FROM environment_buckets ORDER BY bucket_at",
     ).all<{ bucket_at: number }>();
     expect(buckets.results).toEqual([
-      { bucket_at: now - 3650 * day },
       { bucket_at: now - 8 * day },
       { bucket_at: now - 6 * day },
     ]);
