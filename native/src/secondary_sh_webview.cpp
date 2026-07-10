@@ -129,6 +129,7 @@ void SecondaryStationheadPlayer::ConfigureWebView() {
             } else if (message == L"secondary-stopped") {
               audioPlaying_ = false;
               if (audioStoppedAt_ == 0) audioStoppedAt_ = now;
+              if (!spotifyAuthorization_) ShowInteractive(true);
             } else if (message == L"secondary-login-required") {
               loginRequired_ = true;
               ShowInteractive(true);
