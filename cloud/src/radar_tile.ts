@@ -46,6 +46,7 @@ function signingSecret(env: Env): string {
   return env.UPDATE_SIGNING_SECRET?.trim()
     || env.HOMEPANEL_INGEST_SECRET?.trim()
     || env.DEVICE_TOKEN?.trim()
+    || env.HOMEPANEL_DEVICE_TOKENS?.trim()
     || "";
 }
 
