@@ -838,23 +838,75 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& content) {
     double maximum = 1.0;
     for (const auto& item : nativeDashboard_.octopusHistory) {
       if (std::isfinite(item.value)) maximum = std::max(maximum, item.value);
+      if (std::isfinite(item.previousYearValue)) maximum = std::max(maximum, item.previousYearValue);
     }
-    const int count = static_cast<int>(nativeDashboard_.octopusHistory.size());
-    const int step = std::max(1, static_cast<int>(chart.right - chart.left) / std::max(1, count));
-    const int barWidth = std::max(2, step * 7 / 10);
-    const int valueBand = SpanY(content, 90);
-    SetTextColor(dc, kWidgetMuted);
+
+    const int legendHeight = SpanY(content, 100);
+    const int weekdayHeight = SpanY(content, 80);
+    const int valueBand = SpanY(content, 80);
+    RECT legend{chart.left, chart.top, chart.right, chart.top + legendHeight};
     previousFont = SelectObject(dc, TierFont(FontTier::Small));
+
+    std::wstring currentLegend = L"今週";
+    if (nativeDashboard_.currentEnergyIsoYear > 0 && nativeDashboard_.currentEnergyIsoWeek > 0) {
+      currentLegend += L" " + std::to_wstring(nativeDashboard_.currentEnergyIsoYear)
+          + L" W" + std::to_wstring(nativeDashboard_.currentEnergyIsoWeek);
+    }
+    std::wstring previousLegend = L"前年同週";
+    if (nativeDashboard_.previousEnergyIsoYear > 0 && nativeDashboard_.previousEnergyIsoWeek > 0) {
+      previousLegend += L" " + std::to_wstring(nativeDashboard_.previousEnergyIsoYear)
+          + L" W" + std::to_wstring(nativeDashboard_.previousEnergyIsoWeek);
+    }
+
+    const int legendHalf = (legend.right - legend.left) / 2;
+    const int swatchSize = std::max(6, SpanY(content, 35));
+    RECT currentSwatch{legend.left, legend.top + (legendHeight - swatchSize) / 2,
+                       legend.left + swatchSize, legend.top + (legendHeight + swatchSize) / 2};
+    RECT previousSwatch{legend.left + legendHalf, currentSwatch.top,
+                        legend.left + legendHalf + swatchSize, currentSwatch.bottom};
+    DrawWidgetCard(dc, currentSwatch, kWidgetCyan, 3, 210);
+    DrawWidgetCard(dc, previousSwatch, kWidgetBlueMuted, 3, 135);
+    SetTextColor(dc, kWidgetMuted);
+    RECT currentLegendRect{currentSwatch.right + SpanX(content, 15), legend.top,
+                           legend.left + legendHalf - SpanX(content, 10), legend.bottom};
+    RECT previousLegendRect{previousSwatch.right + SpanX(content, 15), legend.top,
+                            legend.right, legend.bottom};
+    DrawTextInRect(dc, currentLegend, currentLegendRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    DrawTextInRect(dc, previousLegend, previousLegendRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+
+    RECT plot{chart.left, legend.bottom, chart.right, chart.bottom - weekdayHeight};
+    const int count = static_cast<int>(nativeDashboard_.octopusHistory.size());
+    const int step = std::max(1, static_cast<int>(plot.right - plot.left) / std::max(1, count));
+    const int pairGap = std::max(1, step / 18);
+    const int barWidth = std::max(2, std::min(step * 3 / 10, (step - pairGap * 3) / 2));
+    const int usableHeight = std::max(1, plot.bottom - plot.top - valueBand);
+
     for (int i = 0; i < count; ++i) {
-      const double value = std::isfinite(nativeDashboard_.octopusHistory[i].value)
-          ? nativeDashboard_.octopusHistory[i].value : 0.0;
-      const int barHeight = static_cast<int>((chart.bottom - chart.top - valueBand) * value / maximum);
-      const int x = chart.left + i * step + (step - barWidth) / 2;
-      RECT barRect{x, chart.bottom - barHeight, x + barWidth, chart.bottom};
-      DrawWidgetCard(dc, barRect, kWidgetCyan,  3,  190);
-      RECT valueRect{x - step / 2, barRect.top - valueBand, x + barWidth + step / 2, barRect.top};
-      DrawTextInRect(dc, NumberOrDash(value, value >= 10 ? 0 : 1), valueRect,
-                     DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+      const auto& item = nativeDashboard_.octopusHistory[i];
+      const int center = plot.left + i * step + step / 2;
+      const int currentX = center - pairGap / 2 - barWidth;
+      const int previousX = center + (pairGap + 1) / 2;
+
+      const auto drawBar = [&](double value, int x, COLORREF color, BYTE alpha) {
+        if (!std::isfinite(value)) return;
+        const int barHeight = static_cast<int>(usableHeight * value / maximum);
+        RECT barRect{x, plot.bottom - barHeight, x + barWidth, plot.bottom};
+        DrawWidgetCard(dc, barRect, color, 3, alpha);
+        SetTextColor(dc, color);
+        RECT valueRect{x - step / 5, barRect.top - valueBand,
+                       x + barWidth + step / 5, barRect.top};
+        DrawTextInRect(dc, NumberOrDash(value, value >= 10 ? 0 : 1), valueRect,
+                       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+      };
+
+      drawBar(item.value, currentX, kWidgetCyan, 210);
+      drawBar(item.previousYearValue, previousX, kWidgetBlueMuted, 135);
+
+      SetTextColor(dc, kWidgetMuted);
+      const std::wstring weekday = item.weekday.empty() ? L"-" : item.weekday;
+      RECT weekdayRect{plot.left + i * step, plot.bottom,
+                       plot.left + (i + 1) * step, chart.bottom};
+      DrawTextInRect(dc, weekday, weekdayRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     }
     SelectObject(dc, previousFont);
   }
