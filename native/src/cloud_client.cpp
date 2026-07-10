@@ -7,6 +7,7 @@ namespace hp {
 namespace {
 constexpr size_t kMaxResponseBytes = 16 * 1024 * 1024;
 constexpr UINT kStationheadHealthUpdatedMessage = WM_APP + 10;
+constexpr double kMaxJsonInteger = 9'007'199'254'740'991.0;
 using winrt::Windows::Data::Json::JsonArray;
 using winrt::Windows::Data::Json::JsonObject;
 using winrt::Windows::Data::Json::JsonValue;
@@ -264,15 +265,48 @@ std::string CloudClient::FetchUpdateManifest() {
   return std::string(response.body.begin(), response.body.end());
 }
 
-bool CloudClient::SendTelemetry(const std::string& jsonBody) {
+TelemetryReceipt CloudClient::SendTelemetry(const std::string& jsonBody) {
   try {
     const auto response = Request(L"POST", L"/v1/telemetry", deviceToken_, {}, jsonBody);
-    if (response.status == 200) return true;
-    log_.Warn(L"Telemetry returned HTTP " + std::to_wstring(response.status));
+    if (response.status != 200) {
+      log_.Warn(L"Telemetry returned HTTP " + std::to_wstring(response.status));
+      return {};
+    }
+
+    const JsonObject object = JsonObject::Parse(Utf8ToWide(std::string(response.body.begin(), response.body.end())));
+    if (!object.HasKey(L"acknowledgedSequences") ||
+        object.GetNamedValue(L"acknowledgedSequences").ValueType() != JsonValueType::Array) {
+      throw std::runtime_error("telemetry response omitted acknowledgedSequences");
+    }
+    const double nextValue = object.GetNamedNumber(L"nextSequence", -1);
+    if (!std::isfinite(nextValue) || std::floor(nextValue) != nextValue ||
+        nextValue <= 0 || nextValue > kMaxJsonInteger) {
+      throw std::runtime_error("telemetry response contained invalid nextSequence");
+    }
+
+    TelemetryReceipt receipt;
+    receipt.nextSequence = static_cast<uint64_t>(nextValue);
+    for (const auto& value : object.GetNamedArray(L"acknowledgedSequences")) {
+      if (value.ValueType() != JsonValueType::Number) {
+        throw std::runtime_error("telemetry response contained a non-numeric acknowledgement");
+      }
+      const double sequence = value.GetNumber();
+      if (!std::isfinite(sequence) || std::floor(sequence) != sequence ||
+          sequence <= 0 || sequence > kMaxJsonInteger) {
+        throw std::runtime_error("telemetry response contained an invalid acknowledgement");
+      }
+      receipt.acknowledgedSequences.push_back(static_cast<uint64_t>(sequence));
+    }
+    std::sort(receipt.acknowledgedSequences.begin(), receipt.acknowledgedSequences.end());
+    receipt.acknowledgedSequences.erase(
+        std::unique(receipt.acknowledgedSequences.begin(), receipt.acknowledgedSequences.end()),
+        receipt.acknowledgedSequences.end());
+    receipt.success = true;
+    return receipt;
   } catch (const std::exception& error) {
     log_.Warn(L"Telemetry failed: " + Utf8ToWide(error.what()));
   }
-  return false;
+  return {};
 }
 
 bool CloudClient::AcknowledgeCommand(int64_t id, bool success, const std::wstring& result) {

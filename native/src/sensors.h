@@ -33,7 +33,8 @@ class SensorHub {
   void ApplyCloudSwitchBot(const fs::path& path);
   std::string BuildTelemetryPayload(const std::wstring& deviceId, const std::string& appVersion,
                                     bool stationheadOk, size_t maxSamples = 500);
-  void AcknowledgeTelemetry(size_t count);
+  void ApplyTelemetryReceipt(const std::vector<uint64_t>& acknowledgedSequences,
+                             uint64_t nextSequence);
 
  public:
   struct Sample {
@@ -73,4 +74,4 @@ class SensorHub {
   std::condition_variable stopWake_;
   std::mutex stopMutex_;
 };
-}
+}  // namespace hp

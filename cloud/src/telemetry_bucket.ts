@@ -15,6 +15,7 @@ export interface EnvironmentHistoryRow {
   co2: number | null;
   temperature: number | null;
   humidity: number | null;
+  applied_count?: number;
 }
 
 interface EnvironmentBucket {
@@ -77,10 +78,30 @@ export function telemetrySampleStatement(
   sample: TelemetrySample,
 ): D1PreparedStatement {
   return env.DB.prepare(
-    `INSERT OR IGNORE INTO environment_samples(
+    `INSERT INTO environment_samples(
        device_id,sequence,observed_at,co2,temperature,humidity,
        temperature_corrected,humidity_corrected,bucket_applied
      ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,0)
+     ON CONFLICT(device_id,sequence) DO UPDATE SET
+       observed_at=excluded.observed_at,
+       co2=excluded.co2,
+       temperature=excluded.temperature,
+       humidity=excluded.humidity,
+       temperature_corrected=excluded.temperature_corrected,
+       humidity_corrected=excluded.humidity_corrected,
+       bucket_applied=CASE
+         WHEN excluded.observed_at>environment_samples.observed_at THEN 0
+         ELSE environment_samples.bucket_applied
+       END
+     WHERE excluded.observed_at>environment_samples.observed_at
+        OR (
+          excluded.observed_at=environment_samples.observed_at
+          AND excluded.co2 IS environment_samples.co2
+          AND excluded.temperature IS environment_samples.temperature
+          AND excluded.humidity IS environment_samples.humidity
+          AND excluded.temperature_corrected IS environment_samples.temperature_corrected
+          AND excluded.humidity_corrected IS environment_samples.humidity_corrected
+        )
      RETURNING sequence`,
   ).bind(
     deviceId,
@@ -124,7 +145,10 @@ export function pendingTelemetryBucketStatement(
      RETURNING bucket_at AS t,
        CASE WHEN co2_count>0 THEN co2_sum/co2_count ELSE NULL END AS co2,
        CASE WHEN temperature_count>0 THEN temperature_sum/temperature_count ELSE NULL END AS temperature,
-       CASE WHEN humidity_count>0 THEN humidity_sum/humidity_count ELSE NULL END AS humidity`,
+       CASE WHEN humidity_count>0 THEN humidity_sum/humidity_count ELSE NULL END AS humidity,
+       (SELECT COUNT(*) FROM environment_samples
+         WHERE device_id=?1 AND observed_at>=?2 AND observed_at<?3 AND bucket_applied=0
+       ) AS applied_count`,
   ).bind(deviceId, bucketAt, bucketAt + ENVIRONMENT_BUCKET_MS);
 }
 

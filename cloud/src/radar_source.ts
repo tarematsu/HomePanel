@@ -1,8 +1,10 @@
 import { fetchJson } from "./http";
+import { signedRadarTilePath } from "./radar_tile";
 import type { Env, SourceResult } from "./sources";
 
 const DEFAULT_RADAR_CENTER = { lat: 35.8923181, lon: 139.4858691 };
 const DEFAULT_RADAR_ZOOM = 10;
+const RADAR_TILE_URL_LIFETIME_SECONDS = 30 * 60;
 
 function jmaTimestampToMillis(value: string): number {
   if (!/^\d{14}$/.test(value)) return 0;
@@ -55,15 +57,16 @@ export async function fetchRadar(env: Env): Promise<SourceResult> {
     .filter(entry => entry.elements?.includes("hrpns") && entry.basetime === current.basetime && jmaTimestampToMillis(entry.validtime) > jmaTimestampToMillis(current.validtime))
     .sort((a, b) => a.validtime.localeCompare(b.validtime))]
     .slice(0, 13);
-  const frames = entries.map(entry => ({
+  const expires = Math.floor(Date.now() / 1000) + RADAR_TILE_URL_LIFETIME_SECONDS;
+  const frames = await Promise.all(entries.map(async entry => ({
     baseTime: entry.basetime,
     validTime: entry.validtime,
     validAt: jmaTimestampToMillis(entry.validtime),
-    tiles: layout.map(tile => ({
-      ...tile,
-      url: `/v1/radar/tile/jma/${entry.basetime}/${entry.validtime}/${zoom}/${tile.x}/${tile.y}.png`,
+    tiles: await Promise.all(layout.map(async tile => {
+      const pathname = `/v1/radar/tile/jma/${entry.basetime}/${entry.validtime}/${zoom}/${tile.x}/${tile.y}.png`;
+      return { ...tile, url: await signedRadarTilePath(env, pathname, expires) };
     })),
-  }));
+  })));
   return {
     source: "radar",
     payload: {

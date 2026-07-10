@@ -5,6 +5,7 @@
 
 
 #include "cloud_client.h"
+#include <set>
 #include <winrt/Windows.Data.Json.h>
 
 namespace hp {
@@ -83,32 +84,47 @@ void CloudClient::ApplyPresenceFallback() {
 }
 
 std::vector<uint8_t> CloudClient::LocalizeRadarTiles(const std::vector<uint8_t>& body) {
-  const auto localPathFor = [this](const std::wstring& url) -> fs::path {
-    fs::path path = dataDir_ / L"radar-cache";
+  const fs::path cacheRoot = dataDir_ / L"radar-cache";
+  const auto pathOnly = [](const std::wstring& url) {
+    const size_t query = url.find_first_of(L"?#");
+    return url.substr(0, query);
+  };
+  const auto localPathFor = [&](const std::wstring& url) -> fs::path {
+    const std::wstring pathname = pathOnly(url);
+    fs::path path = cacheRoot;
     size_t start = 0;
-    while (start < url.size() && url[start] == L'/') ++start;
-    while (start < url.size()) {
-      const size_t slash = url.find(L'/', start);
-      const std::wstring part = url.substr(start, slash == std::wstring::npos ? std::wstring::npos : slash - start);
-      if (part.empty() || part == L"." || part == L"..") throw std::runtime_error("invalid radar tile path");
+    while (start < pathname.size() && pathname[start] == L'/') ++start;
+    while (start < pathname.size()) {
+      const size_t slash = pathname.find(L'/', start);
+      const std::wstring part = pathname.substr(
+          start, slash == std::wstring::npos ? std::wstring::npos : slash - start);
+      if (part.empty() || part == L"." || part == L".." ||
+          part.find_first_of(L"\\:*?\"<>|") != std::wstring::npos) {
+        throw std::runtime_error("invalid radar tile path");
+      }
       path /= part;
       if (slash == std::wstring::npos) break;
       start = slash + 1;
     }
-    return path;
+    return path.lexically_normal();
   };
-  const auto localUrlFor = [](const std::wstring& url) {
-    return L"https://data.homepanel/radar-cache" + (url.empty() || url.front() == L'/' ? url : L"/" + url);
+  const auto localUrlFor = [&](const std::wstring& url) {
+    const std::wstring pathname = pathOnly(url);
+    return L"https://data.homepanel/radar-cache" +
+        (pathname.empty() || pathname.front() == L'/' ? pathname : L"/" + pathname);
   };
   const auto remoteUrlFor = [this](const std::wstring& url) {
     std::wstring base = config_.cloudflareBaseUrl;
     while (!base.empty() && base.back() == L'/') base.pop_back();
     return base + (url.empty() || url.front() == L'/' ? url : L"/" + url);
   };
+
+  std::set<std::wstring> retained;
   const auto localizeTile = [&](JsonObject item) {
     const std::wstring url = item.GetNamedString(L"url", L"").c_str();
     if (url.empty() || url.front() != L'/') return;
     const fs::path target = localPathFor(url);
+    retained.insert(target.wstring());
     std::error_code error;
     if (!fs::exists(target, error) || fs::file_size(target, error) == 0) {
       const auto response = Request(L"GET", url, deviceToken_);
@@ -138,6 +154,37 @@ std::vector<uint8_t> CloudClient::LocalizeRadarTiles(const std::vector<uint8_t>&
       }
     }
   }
+
+  if (!retained.empty()) {
+    std::vector<fs::path> staleFiles;
+    std::vector<fs::path> directories;
+    std::error_code walkError;
+    fs::recursive_directory_iterator iterator(
+        cacheRoot, fs::directory_options::skip_permission_denied, walkError);
+    const fs::recursive_directory_iterator end;
+    while (!walkError && iterator != end) {
+      const fs::path current = iterator->path().lexically_normal();
+      std::error_code itemError;
+      if (iterator->is_regular_file(itemError) && !retained.contains(current.wstring())) {
+        staleFiles.push_back(current);
+      } else if (!itemError && iterator->is_directory(itemError)) {
+        directories.push_back(current);
+      }
+      iterator.increment(walkError);
+    }
+    for (const auto& stale : staleFiles) {
+      std::error_code ignored;
+      fs::remove(stale, ignored);
+    }
+    std::sort(directories.begin(), directories.end(), [](const fs::path& left, const fs::path& right) {
+      return left.native().size() > right.native().size();
+    });
+    for (const auto& directory : directories) {
+      std::error_code ignored;
+      fs::remove(directory, ignored);
+    }
+  }
+
   const std::string text = WideToUtf8(root.Stringify().c_str());
   return {text.begin(), text.end()};
 }
@@ -264,7 +311,6 @@ void CloudClient::Synchronize() {
     log_.Warn(L"Stationhead health read failed without interrupting dashboard sync");
     nextHealthText = L"Stationhead収集: 状態取得失敗";
   }
-
   UpdateStationheadHealthText(std::move(nextHealthText));
   {
     std::lock_guard lock(stateMutex_);

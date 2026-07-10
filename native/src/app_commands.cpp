@@ -133,7 +133,10 @@ void App::SendTelemetryAsync() {
       const size_t count = std::min<size_t>(500, sensor.outboxCount);
       std::string body = sensors_->BuildTelemetryPayload(
           config_.deviceId, WideToUtf8(kVersion), station.playing, count);
-      if (cloud_->SendTelemetry(body) && count) sensors_->AcknowledgeTelemetry(count);
+      const TelemetryReceipt receipt = cloud_->SendTelemetry(body);
+      if (receipt.success) {
+        sensors_->ApplyTelemetryReceipt(receipt.acknowledgedSequences, receipt.nextSequence);
+      }
     } catch (const std::exception& error) {
       if (logger_) logger_->Warn(L"Telemetry worker failed: " + Utf8ToWide(error.what()));
     } catch (...) {
