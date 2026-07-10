@@ -1,0 +1,38 @@
+name: Fix energy renderer type
+
+on:
+  push:
+    branches:
+      - agent/align-energy-year-over-year-week
+    paths:
+      - .github/workflows/fix-energy-renderer-type.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - name: Fix Win32 integer type mismatch
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path("native/src/renderer_panels.cpp")
+          text = path.read_text(encoding="utf-8")
+          old = "const int usableHeight = std::max(1, plot.bottom - plot.top - valueBand);"
+          new = "const int usableHeight = std::max(1, static_cast<int>(plot.bottom - plot.top) - valueBand);"
+          if text.count(old) != 1:
+              raise SystemExit("expected renderer expression was not found exactly once")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+      - name: Commit type fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add native/src/renderer_panels.cpp
+          git commit -m "Fix energy renderer Win32 type mismatch"
+          git push origin HEAD:${{ github.ref_name }}
