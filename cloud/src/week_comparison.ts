@@ -1,5 +1,4 @@
-import { JST_MS } from "./sources";
-
+const JST_MS = 9 * 60 * 60 * 1000;
 const DAY_MS = 86_400_000;
 
 export interface IsoWeekInfo {
