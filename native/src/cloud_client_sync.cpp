@@ -9,8 +9,6 @@
 
 namespace hp {
 namespace {
-constexpr UINT kStationheadHealthUpdatedMessage = WM_APP + 10;
-
 int64_t HealthNumber(const JsonObject& root, const wchar_t* name) {
   try {
     const double value = root.GetNamedNumber(name, -1);
@@ -267,13 +265,12 @@ void CloudClient::Synchronize() {
     nextHealthText = L"Stationhead収集: 状態取得失敗";
   }
 
+  UpdateStationheadHealthText(std::move(nextHealthText));
   {
     std::lock_guard lock(stateMutex_);
-    stationheadHealthText_ = std::move(nextHealthText);
     lastSuccess_ = IsoLocalNow();
     workerVersion_ = root.GetNamedString(L"workerVersion", L"").c_str();
   }
-  PostMessageW(window_, kStationheadHealthUpdatedMessage, 0, 0);
   failures_ = 0;
 }
 
