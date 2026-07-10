@@ -10,6 +10,12 @@ struct HttpResponse {
   std::wstring etag;
 };
 
+struct TelemetryReceipt {
+  bool success = false;
+  std::vector<uint64_t> acknowledgedSequences;
+  uint64_t nextSequence = 0;
+};
+
 class CloudClient {
  public:
   CloudClient(HWND window, AppConfig config, fs::path dataDir, std::wstring deviceToken, std::wstring actionToken, Logger& log);
@@ -19,7 +25,7 @@ class CloudClient {
   void RefreshNow();
   bool RequestRemoteRefresh();
   std::string FetchUpdateManifest();
-  bool SendTelemetry(const std::string& json);
+  TelemetryReceipt SendTelemetry(const std::string& json);
   bool AcknowledgeCommand(int64_t id, bool success, const std::wstring& result);
   std::wstring LastSuccessText() const;
   std::wstring WorkerVersion() const;
@@ -78,4 +84,4 @@ class CloudClient {
   bool cacheMetadataDirty_ = false;
   bool presenceFallbackActive_ = false;
 };
-}
+}  // namespace hp
