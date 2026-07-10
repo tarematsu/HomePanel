@@ -1,6 +1,7 @@
 #include "common.h"
 #include "version.h"
 
+namespace hp {
 namespace {
 std::string ReadResource(int id) {
   HMODULE module = GetModuleHandleW(nullptr);
@@ -13,23 +14,23 @@ std::string ReadResource(int id) {
   return std::string(bytes, bytes + size);
 }
 
-bool FileMatches(const hp::fs::path& path, const std::string& content) {
+bool FileMatches(const fs::path& path, const std::string& content) {
   std::error_code error;
-  if (!hp::fs::is_regular_file(path, error) || hp::fs::file_size(path, error) != content.size()) return false;
+  if (!fs::is_regular_file(path, error) || fs::file_size(path, error) != content.size()) return false;
   std::ifstream input(path, std::ios::binary);
   if (!input) return false;
   return std::equal(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>(), content.begin(), content.end());
 }
 
-bool NonEmptyFile(const hp::fs::path& path) {
+bool NonEmptyFile(const fs::path& path) {
   std::error_code error;
-  return hp::fs::is_regular_file(path, error) && hp::fs::file_size(path, error) > 0;
+  return fs::is_regular_file(path, error) && fs::file_size(path, error) > 0;
 }
 
-bool WriteContent(const hp::fs::path& path, const std::string& content) {
+bool WriteContent(const fs::path& path, const std::string& content) {
   if (content.empty()) return false;
   if (FileMatches(path, content)) return true;
-  return hp::AtomicWriteBytes(path, content.data(), static_cast<DWORD>(content.size()));
+  return AtomicWriteBytes(path, content.data(), static_cast<DWORD>(content.size()));
 }
 
 struct RuntimeAsset {
@@ -53,11 +54,11 @@ uint64_t HashBytes(const std::string& content) {
   return hash;
 }
 
-std::string ExecutableStamp(const hp::fs::path& executable) {
+std::string ExecutableStamp(const fs::path& executable) {
   std::error_code error;
-  const auto size = hp::fs::file_size(executable, error);
+  const auto size = fs::file_size(executable, error);
   std::ostringstream stamp;
-  stamp << hp::WideToUtf8(hp::kVersion) << "|native-assets-v2";
+  stamp << WideToUtf8(kVersion) << "|native-assets-v2";
   if (!error) stamp << '|' << size;
   for (const RuntimeAsset& asset : kRuntimeAssets) {
     const std::string content = ReadResource(asset.id);
@@ -70,7 +71,7 @@ std::string ExecutableStamp(const hp::fs::path& executable) {
   return stamp.str();
 }
 
-bool RuntimeAssetsReady(const hp::fs::path& folder, const std::string& stamp) {
+bool RuntimeAssetsReady(const fs::path& folder, const std::string& stamp) {
   if (!FileMatches(folder / L"native-assets.signature", stamp)) return false;
   for (const RuntimeAsset& asset : kRuntimeAssets) {
     if (!NonEmptyFile(folder / asset.name)) return false;
@@ -81,7 +82,7 @@ bool RuntimeAssetsReady(const hp::fs::path& folder, const std::string& stamp) {
   return true;
 }
 
-void RemoveObsoleteDashboardFiles(const hp::fs::path& folder) {
+void RemoveObsoleteDashboardFiles(const fs::path& folder) {
   static constexpr const wchar_t* kFiles[] = {
       L"index.html",
       L"styles.css",
@@ -118,20 +119,22 @@ void RemoveObsoleteDashboardFiles(const hp::fs::path& folder) {
   };
   std::error_code error;
   for (const wchar_t* name : kFiles) {
-    hp::fs::remove(folder / name, error);
+    fs::remove(folder / name, error);
     error.clear();
   }
-  hp::fs::remove_all(folder / L"vendor", error);
+  fs::remove_all(folder / L"vendor", error);
 }
+}  // namespace
 
-struct RuntimeAssetInstaller {
-  RuntimeAssetInstaller() {
+bool InstallRuntimeAssets() noexcept {
+  try {
     wchar_t executableRaw[MAX_PATH * 4]{};
-    if (!GetModuleFileNameW(nullptr, executableRaw, _countof(executableRaw))) return;
-    const hp::fs::path executable(executableRaw);
-    const hp::fs::path folder = executable.parent_path() / L"ui";
+    if (!GetModuleFileNameW(nullptr, executableRaw, _countof(executableRaw))) return false;
+    const fs::path executable(executableRaw);
+    const fs::path folder = executable.parent_path() / L"ui";
     std::error_code error;
-    hp::fs::create_directories(folder, error);
+    fs::create_directories(folder, error);
+    if (error) return false;
 
     const std::string signature = ExecutableStamp(executable);
     if (!RuntimeAssetsReady(folder, signature)) {
@@ -139,15 +142,18 @@ struct RuntimeAssetInstaller {
       for (const RuntimeAsset& asset : kRuntimeAssets) {
         installed = WriteContent(folder / asset.name, ReadResource(asset.id)) && installed;
       }
-      hp::fs::create_directories(folder / L"weather-icons", error);
+      fs::create_directories(folder / L"weather-icons", error);
+      if (error) installed = false;
       for (const RuntimeAsset& asset : kWeatherIconAssets) {
         installed = WriteContent(folder / asset.name, ReadResource(asset.id)) && installed;
       }
-      if (installed) WriteContent(folder / L"native-assets.signature", signature);
+      if (!installed || !WriteContent(folder / L"native-assets.signature", signature)) return false;
     }
     RemoveObsoleteDashboardFiles(folder);
+    return true;
+  } catch (...) {
+    return false;
   }
-};
+}
 
-RuntimeAssetInstaller installer;
-}  // namespace
+}  // namespace hp
