@@ -138,16 +138,20 @@ function formatJst(timestamp: number | null): string {
   }).format(new Date(timestamp));
 }
 
+function transitionKey(snapshot: StationheadHealthSnapshot, recovery: boolean): string {
+  const anchor = snapshot.lastSuccessAt == null ? "never" : String(snapshot.lastSuccessAt);
+  return `homepanel-stationhead-${recovery ? "recovered" : "down"}-${anchor}`;
+}
+
 async function sendTransitionAlert(env: Env, snapshot: StationheadHealthSnapshot, recovery: boolean): Promise<void> {
   const config = alertConfig(env);
   if (!config.enabled) return;
-  const event = recovery ? "recovered" : "down";
   const response = await fetch(RESEND_ENDPOINT, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
       "Content-Type": "application/json",
-      "Idempotency-Key": `homepanel-stationhead-${event}-${snapshot.lastSuccessAt ?? snapshot.sampledAt}`,
+      "Idempotency-Key": transitionKey(snapshot, recovery),
     },
     body: JSON.stringify({
       from: config.from,
@@ -244,8 +248,9 @@ export async function runStationheadHealthMonitor(env: Env, now = Date.now()): P
   const alerts = alertConfig(env);
   current.alertConfigured = alerts.enabled;
 
+  const alertsNewlyEnabled = alerts.enabled && previous?.alertConfigured !== true;
   const downTransition = !current.healthy
-    && (previous?.healthy !== false || previous.alertPending === true);
+    && (previous?.healthy !== false || previous.alertPending === true || alertsNewlyEnabled);
   const recoveryTransition = current.healthy
     && (previous?.healthy === false || previous?.recoveryPending === true);
 
