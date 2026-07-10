@@ -1,0 +1,81 @@
+name: Export cleaned tree
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - synchronize
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloud/package-lock.json
+
+      - name: Install cloud dependencies
+        working-directory: cloud
+        run: npm ci --no-audit --no-fund
+
+      - name: Apply cleanup
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import textwrap
+
+          source = Path('.github/workflows/run-strip-on-pr.yml').read_text(encoding='utf-8')
+
+          def extract(start: str, end: str, output: Path) -> None:
+              body = source.split(start, 1)[1].split(end, 1)[0]
+              output.write_text(textwrap.dedent(body).lstrip('\n'), encoding='utf-8')
+
+          temporary = Path(os.environ['RUNNER_TEMP'])
+          extract("<<'NODE'", "\n          NODE\n", temporary / 'strip-ts.cjs')
+          extract("<<'PY'", "\n          PY\n", temporary / 'strip-repo.py')
+          PY
+          node "$RUNNER_TEMP/strip-ts.cjs"
+          python "$RUNNER_TEMP/strip-repo.py"
+          rm -f .github/workflows/export-cleaned-tree.yml
+
+      - name: Validate and record status
+        shell: bash
+        run: |
+          set +e
+          git diff --check > "$RUNNER_TEMP/diff-check.log" 2>&1
+          diff_status=$?
+          (cd cloud && npm run check) > "$RUNNER_TEMP/cloud-check.log" 2>&1
+          check_status=$?
+          (cd cloud && npm test) > "$RUNNER_TEMP/cloud-test.log" 2>&1
+          test_status=$?
+          printf 'diff_status=%s\ncheck_status=%s\ntest_status=%s\n' "$diff_status" "$check_status" "$test_status" > validation-status.txt
+          cp "$RUNNER_TEMP/diff-check.log" validation-diff.log
+          cp "$RUNNER_TEMP/cloud-check.log" validation-check.log
+          cp "$RUNNER_TEMP/cloud-test.log" validation-test.log
+          exit 0
+
+      - name: Package cleaned repository
+        shell: bash
+        run: |
+          tar --exclude='./cloud/node_modules' --exclude='./native/packages' --exclude='./coverage' --exclude='./.wrangler' -czf "$RUNNER_TEMP/cleaned-repository.tar.gz" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cleaned-repository
+          path: ${{ runner.temp }}/cleaned-repository.tar.gz
+          if-no-files-found: error
+          retention-days: 1
