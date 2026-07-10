@@ -6,7 +6,7 @@
 
 namespace hp {
 namespace {
-constexpr int64_t kNativePlaybackPollMs = 60'000;
+constexpr int64_t kNativePlaybackPollMs = 10 * 60'000;
 constexpr size_t kMaxPlaybackResponseBytes = 4 * 1024 * 1024;
 constexpr int64_t kPlaybackTransitionHoldMs = 1'000;
 using winrt::Windows::Data::Json::JsonArray;
