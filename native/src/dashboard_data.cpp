@@ -12,6 +12,11 @@ double NumberOrNaN(const JsonObject& object, const wchar_t* name) {
   return json::Number(object, name, std::numeric_limits<double>::quiet_NaN());
 }
 
+int IntegerOrZero(const JsonObject& object, const wchar_t* name) {
+  const double value = NumberOrNaN(object, name);
+  return std::isfinite(value) ? static_cast<int>(std::lround(value)) : 0;
+}
+
 PanelDataStatus ReadStatus(const JsonObject& object) {
   PanelDataStatus status;
   const std::wstring value = json::Text(object, L"__status", L"waiting");
@@ -110,13 +115,24 @@ bool ParseDashboardSnapshot(const std::string& text, DashboardSnapshot& output, 
     next.octopusStatus = ReadStatus(octopus);
     next.lastMonthUsage = NumberOrNaN(json::Object(octopus, L"lastMonth"), L"usage");
     next.projectedUsage = NumberOrNaN(json::Object(octopus, L"thisMonth"), L"projectedUsage");
+    const JsonObject comparison = json::Object(octopus, L"comparison");
+    next.currentEnergyIsoYear = IntegerOrZero(comparison, L"currentIsoYear");
+    next.currentEnergyIsoWeek = IntegerOrZero(comparison, L"currentIsoWeek");
+    next.previousEnergyIsoYear = IntegerOrZero(comparison, L"previousIsoYear");
+    next.previousEnergyIsoWeek = IntegerOrZero(comparison, L"previousIsoWeek");
     const JsonArray history = json::Array(octopus, L"history");
-    const uint32_t historyStart = history.Size() > 10 ? history.Size() - 10 : 0;
+    const uint32_t historyStart = history.Size() > 7 ? history.Size() - 7 : 0;
     for (uint32_t index = historyStart; index < history.Size(); ++index) {
       try {
         if (history.GetAt(index).ValueType() != JsonValueType::Object) continue;
         const JsonObject item = history.GetObjectAt(index);
-        next.octopusHistory.push_back({json::Text(item, L"date"), NumberOrNaN(item, L"value")});
+        next.octopusHistory.push_back({
+            json::Text(item, L"weekday"),
+            json::Text(item, L"date"),
+            NumberOrNaN(item, L"value"),
+            json::Text(item, L"previousYearDate"),
+            NumberOrNaN(item, L"previousYearValue"),
+        });
       } catch (...) {
       }
     }
@@ -167,4 +183,4 @@ bool LoadDashboardSnapshot(const fs::path& path, DashboardSnapshot& output, std:
   return ParseDashboardSnapshot(text, output, error);
 }
 
-}
+}  // namespace hp
