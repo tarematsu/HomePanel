@@ -62,7 +62,8 @@ describe("repository audit regressions", () => {
     const row = await env.DB.prepare(
       `SELECT COUNT(*) AS total,
               SUM(CASE WHEN lease_until IS NULL AND next_run_at>0 THEN 1 ELSE 0 END) AS finished
-         FROM jobs`,
+         FROM jobs
+        WHERE name LIKE 'audit-unknown-%'`,
     ).first<{ total: number; finished: number }>();
     expect(Number(row?.total)).toBe(7);
     expect(Number(row?.finished)).toBe(7);
