@@ -18,6 +18,7 @@ export interface JobRow {
 
 const LEASE_SECONDS = 120;
 const MAX_PARALLEL = 3;
+const MAX_SCHEDULER_BATCHES = 10;
 const SUCCESS_RUN_LOG_INTERVAL_SECONDS = 6 * 60 * 60;
 const DAY_MS = 86_400_000;
 const DAY_SECONDS = 86_400;
@@ -156,12 +157,20 @@ async function runOne(env: Env, job: JobRow): Promise<void> {
 }
 
 export async function runScheduler(env: Env): Promise<void> {
-  const now = Math.floor(Date.now() / 1000);
-  const jobs = await acquireDueJobs(env, now);
-  const results = await Promise.allSettled(jobs.map(job => runOne(env, job)));
-  results.forEach((result, index) => {
-    if (result.status === "rejected") console.error(`Scheduled job ${jobs[index]?.name ?? index} failed to finalize`, result.reason);
-  });
+  // A refresh can make all seven source jobs due at once, while each D1 lease
+  // acquisition intentionally caps parallelism at three. Drain successive
+  // batches in the same invocation so the fourth through seventh jobs do not
+  // sit idle until the next five-minute cron.
+  for (let batch = 0; batch < MAX_SCHEDULER_BATCHES; batch += 1) {
+    const now = Math.floor(Date.now() / 1000);
+    const jobs = await acquireDueJobs(env, now);
+    if (!jobs.length) return;
+    const results = await Promise.allSettled(jobs.map(job => runOne(env, job)));
+    results.forEach((result, index) => {
+      if (result.status === "rejected") console.error(`Scheduled job ${jobs[index]?.name ?? index} failed to finalize`, result.reason);
+    });
+  }
+  console.error("Scheduler stopped after the safety batch limit with due work possibly remaining");
 }
 
 export async function requestRefresh(env: Env, names?: string[]): Promise<void> {
