@@ -332,24 +332,31 @@ struct ControlsButtonRects {
   RECT update{};
   RECT restart{};
   RECT toast{};
+  RECT status{};
 };
 
-// Update/restart buttons pinned to the bottom of the clock section; toast
-// text uses the band just above them. Everything is a fraction of the
-// section rect.
+// Clock, controls, and status text are centered as one vertical group.
 ControlsButtonRects ControlsButtonsFromSection(const RECT& section) {
   const int width = std::max(1L, section.right - section.left);
+  const int height = std::max(1L, section.bottom - section.top);
   const int buttonWidth = SpanX(section, 380);
   const int buttonHeight = std::clamp(SpanY(section, 140), 30, 56);
   const int gap = SpanX(section, 40);
   const int totalWidth = buttonWidth * 2 + gap;
   const int left = section.left + (width - totalWidth) / 2;
-  const int bottom = section.bottom - SpanY(section, 50);
+  const int statusHeight = SpanY(section, 150);
+  const int blockHeight = SpanY(section, 160) + SpanY(section, 400) + SpanY(section, 60) +
+      buttonHeight + SpanY(section, 35) + statusHeight;
+  const int blockTop = section.top + std::max(0, (height - blockHeight) / 2);
+  const int bottom = blockTop + SpanY(section, 160) + SpanY(section, 400) +
+      SpanY(section, 60) + buttonHeight;
   const int top = bottom - buttonHeight;
   ControlsButtonRects rects;
   rects.update = RECT{left, top, left + buttonWidth, bottom};
   rects.restart = RECT{left + buttonWidth + gap, top, left + totalWidth, bottom};
-  rects.toast = RECT{section.left, top - SpanY(section, 170), section.right, top - SpanY(section, 20)};
+  rects.status = RECT{section.left, bottom + SpanY(section, 35),
+                      section.right, bottom + SpanY(section, 35) + statusHeight};
+  rects.toast = rects.status;
   return rects;
 }
 
@@ -660,26 +667,6 @@ void Renderer::PaintNativeRadar(HWND hwnd) {
   const NativeDashboardLayout layout = ComputeNativeDashboardLayout(bounds_);
   NativePanelPaintScope scope(*this, hwnd, layout.radar, /*tintAlpha=*/0, /*cornerRadius=*/0);
   if (!scope.Valid()) return;
-
-  std::wstring radarTime;
-  bool hasFrame = false;
-  {
-    std::lock_guard lock(radarFrameMutex_);
-    radarTime = radarTimeText_;
-    hasFrame = radarFrameBitmap_ != nullptr;
-  }
-
-  // Caption floats just below the top panel, centered on its middle section.
-  const NativePanelSections sections = SplitPanelSections(layout.top);
-  const int captionHeight = SpanY(layout.radar, 25);
-  const RECT captionRect{sections.center.left, layout.top.bottom + captionHeight / 3,
-                         sections.center.right, layout.top.bottom + captionHeight};
-  HGDIOBJ previousFont = SelectObject(scope.dc, TierFont(FontTier::Small));
-  const std::wstring caption = hasFrame
-      ? L"レーダー更新: " + (radarTime.empty() ? L"--:--" : radarTime) + L"   LIVE"
-      : L"レーダーを準備中";
-  DrawShadowedText(scope.dc, caption, captionRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER, kWidgetMuted);
-  SelectObject(scope.dc, previousFont);
 }
 
 void Renderer::DrawAirSection(HDC dc, const RECT& content) {
@@ -969,24 +956,20 @@ void Renderer::DrawStationheadSection(HDC dc, const RECT& content) {
 void Renderer::DrawClockControlsSection(HDC dc, const RECT& content) {
   SYSTEMTIME now{};
   GetLocalTime(&now);
+  const ControlsButtonRects buttons = ControlsButtonsFromSection(content);
+  const int dateHeight = SpanY(content, 160);
+  const int timeHeight = SpanY(content, 400);
+  const int blockTop = buttons.update.top - SpanY(content, 60) - timeHeight - dateHeight;
 
-  RECT dateRect{content.left, content.top, content.right, content.top + SpanY(content, 160)};
+  RECT dateRect{content.left, blockTop, content.right, blockTop + dateHeight};
   HGDIOBJ previousFont = SelectObject(dc, TierFont(FontTier::Small));
   SetTextColor(dc, kWidgetMuted);
   DrawTextInRect(dc, DateText(now), dateRect, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_BOTTOM);
 
-  RECT timeRect{content.left, dateRect.bottom, content.right, content.top + SpanY(content, 560)};
+  RECT timeRect{content.left, dateRect.bottom, content.right, dateRect.bottom + timeHeight};
   SelectObject(dc, TierFont(FontTier::Large));
   SetTextColor(dc, kWidgetText);
   DrawTextInRect(dc, TimeText(now), timeRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-
-  DrawHorizontalDivider(dc, content, content.top + SpanY(content, 620));
-  const ControlsButtonRects buttons = ControlsButtonsFromSection(content);
-  if (!nativeToast_.empty()) {
-    SelectObject(dc, TierFont(FontTier::Small));
-    SetTextColor(dc, kWidgetWarning);
-    DrawTextInRect(dc, nativeToast_, buttons.toast, DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
-  }
 
   SelectObject(dc, TierFont(FontTier::Small));
   SetTextColor(dc, kWidgetText);
@@ -997,6 +980,25 @@ void Renderer::DrawClockControlsSection(HDC dc, const RECT& content) {
   for (const auto& [label, rect] : labels) {
     DrawWidgetCard(dc, rect, kWidgetSurfaceAlt, /*radius=*/14, /*alpha=*/170);
     DrawTextInRect(dc, label, rect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  }
+
+  if (!nativeToast_.empty()) {
+    SetTextColor(dc, kWidgetWarning);
+    DrawTextInRect(dc, nativeToast_, buttons.status, DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
+  } else {
+    std::wstring radarTime;
+    bool hasFrame = false;
+    {
+      std::lock_guard lock(radarFrameMutex_);
+      radarTime = radarTimeText_;
+      hasFrame = radarFrameBitmap_ != nullptr;
+    }
+    SetTextColor(dc, kWidgetMuted);
+    const std::wstring status = hasFrame
+        ? L"レーダー更新: " + (radarTime.empty() ? L"--:--" : radarTime)
+        : L"レーダーを準備中";
+    DrawTextInRect(dc, status, buttons.status,
+                   DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
   }
   SelectObject(dc, previousFont);
 }
@@ -1010,40 +1012,43 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& content) {
   }
 
   const int contentHeight = std::max(1L, content.bottom - content.top);
+  const int weatherHeight = contentHeight * 88 / 100;
+  RECT weatherArea{content.left, content.top + (contentHeight - weatherHeight) / 2,
+                   content.right, content.top + (contentHeight + weatherHeight) / 2};
   const int popWidth = SpanX(content, 240);
-  RECT popRect{content.left, content.top, content.left + popWidth, content.bottom};
+  RECT popRect{weatherArea.left, weatherArea.top, weatherArea.left + popWidth, weatherArea.bottom};
 
   HGDIOBJ previousFont = SelectObject(dc, TierFont(FontTier::Small));
   SetTextColor(dc, kWidgetMuted);
-  RECT labelRect{popRect.left, popRect.top + SpanY(content, 80), popRect.right,
-                 popRect.top + SpanY(content, 260)};
+  RECT labelRect{popRect.left, popRect.top + SpanY(weatherArea, 80), popRect.right,
+                 popRect.top + SpanY(weatherArea, 260)};
   DrawTextInRect(dc, L"降水確率", labelRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
-  SelectObject(dc, TierFont(FontTier::Large));
+  SelectObject(dc, TierFont(FontTier::Medium));
   SetTextColor(dc, maxPop >= 70 ? kWidgetBlue : maxPop >= 40 ? kWidgetBlueMuted : kWidgetMuted);
-  RECT valueRect{popRect.left, labelRect.bottom, popRect.right, popRect.bottom - SpanY(content, 120)};
+  RECT valueRect{popRect.left, labelRect.bottom, popRect.right, popRect.bottom - SpanY(weatherArea, 120)};
   DrawTextInRect(dc, std::to_wstring(static_cast<int>(std::round(maxPop))) + L"%", valueRect,
                  DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
   const int cardsLeft = popRect.right + SpanX(content, 40);
-  DrawVerticalDivider(dc, content, (popRect.right + cardsLeft) / 2);
+  DrawVerticalDivider(dc, weatherArea, (popRect.right + cardsLeft) / 2);
   const int cardGap = SpanX(content, 20);
-  const int availableWidth = std::max(1L, content.right - cardsLeft);
+  const int availableWidth = std::max(1L, weatherArea.right - cardsLeft);
   constexpr int kSlotCount = 5;
   const int cardWidth = std::max(1, (availableWidth - cardGap * (kSlotCount - 1)) / kSlotCount);
   for (int i = 0; i < kSlotCount; ++i) {
-    RECT cardRect{cardsLeft + i * (cardWidth + cardGap), content.top,
-                  cardsLeft + i * (cardWidth + cardGap) + cardWidth, content.bottom};
+    RECT cardRect{cardsLeft + i * (cardWidth + cardGap), weatherArea.top,
+                  cardsLeft + i * (cardWidth + cardGap) + cardWidth, weatherArea.bottom};
     SetTextColor(dc, kWidgetMuted);
     SelectObject(dc, TierFont(FontTier::Small));
-    RECT hourRect{cardRect.left, cardRect.top + SpanY(content, 40), cardRect.right,
-                  cardRect.top + SpanY(content, 200)};
+    RECT hourRect{cardRect.left, cardRect.top + SpanY(weatherArea, 40), cardRect.right,
+                  cardRect.top + SpanY(weatherArea, 200)};
     const std::wstring hour = i < static_cast<int>(count) ? std::to_wstring(hours[i].hour) + L"時" : L"--";
     DrawTextInRect(dc, hour, hourRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     if (i < static_cast<int>(count) && !hours[i].icon.empty()) {
-      const int iconWidth = std::min(cardWidth - cardWidth / 10, contentHeight * 42 / 100 * 90 / 48);
+      const int iconWidth = std::min(cardWidth, contentHeight * 63 / 100 * 90 / 48);
       const int iconHeight = std::max(12, iconWidth * 48 / 90);
-      const int iconTop = hourRect.bottom + SpanY(content, 40);
+      const int iconTop = hourRect.bottom + SpanY(weatherArea, 20);
       RECT iconRect{cardRect.left + (cardWidth - iconWidth) / 2, iconTop,
                     cardRect.left + (cardWidth + iconWidth) / 2, iconTop + iconHeight};
       DrawPremultipliedBitmap(dc,
@@ -1054,15 +1059,15 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& content) {
     if (i < static_cast<int>(count) && std::isfinite(hours[i].temperature)) {
       SetTextColor(dc, kWidgetText);
       SelectObject(dc, TierFont(FontTier::Medium));
-      RECT tempRect{cardRect.left, cardRect.bottom - SpanY(content, 380),
-                    cardRect.right, cardRect.bottom - SpanY(content, 180)};
+      RECT tempRect{cardRect.left, cardRect.bottom - SpanY(weatherArea, 380),
+                    cardRect.right, cardRect.bottom - SpanY(weatherArea, 180)};
       DrawTextInRect(dc, NumberOrDash(hours[i].temperature, 0) + L"℃",
                      tempRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     }
-    SetTextColor(dc, kWidgetBlue);
-    SelectObject(dc, TierFont(FontTier::Small));
-    RECT rainRect{cardRect.left, cardRect.bottom - SpanY(content, 170),
-                  cardRect.right, cardRect.bottom - SpanY(content, 20)};
+    SetTextColor(dc, kWidgetText);
+    SelectObject(dc, TierFont(FontTier::Medium));
+    RECT rainRect{cardRect.left, cardRect.bottom - SpanY(weatherArea, 170),
+                  cardRect.right, cardRect.bottom - SpanY(weatherArea, 20)};
     const std::wstring rain = i < static_cast<int>(count) ? NumberOrDash(hours[i].rainMm, 0) + L"mm" : L"--";
     DrawTextInRect(dc, rain, rainRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   }
