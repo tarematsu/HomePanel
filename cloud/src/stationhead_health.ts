@@ -193,7 +193,10 @@ export function alertTransitionKey(
   previous: StationheadHealthSnapshot | null,
   recovery: boolean,
 ): string {
-  if ((previous?.alertPending || previous?.recoveryPending) && previous.alertEventKey) {
+  const matchingRetryPending = recovery
+    ? previous?.recoveryPending === true
+    : previous?.alertPending === true;
+  if (matchingRetryPending && previous?.alertEventKey) {
     return previous.alertEventKey;
   }
   const anchor = recovery
