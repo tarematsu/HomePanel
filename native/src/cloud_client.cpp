@@ -88,10 +88,7 @@ CloudClient::CloudClient(HWND window, AppConfig config, fs::path dataDir, std::w
                          std::wstring actionToken, Logger& log)
     : window_(window), config_(std::move(config)), dataDir_(std::move(dataDir)),
       deviceToken_(std::move(deviceToken)), actionToken_(std::move(actionToken)), log_(log) {
-  if (!actionToken_.empty() && actionToken_ == deviceToken_) {
-    actionToken_.clear();
-    log_.Warn(L"Ignoring action token because it matches the device token; configure API_TOKEN separately");
-  }
+  if (actionToken_.empty()) actionToken_ = deviceToken_;
   fs::create_directories(dataDir_);
   LoadCacheMetadata();
 }
@@ -229,7 +226,7 @@ void CloudClient::Loop() {
 
 bool CloudClient::RequestRemoteRefresh() {
   if (actionToken_.empty()) {
-    log_.Warn(L"Remote source refresh requires a separate API_TOKEN; performing local sync only");
+    log_.Warn(L"Remote source refresh requires DEVICE_TOKEN or API_TOKEN; performing local sync only");
     RefreshNow();
     return false;
   }
