@@ -15,7 +15,6 @@ enum StationheadChangeFlags : uint32_t {
   StationheadChangeReturnMain = 1u << 0,
   StationheadChangeReleaseAuth = 1u << 1,
   StationheadChangeShowPlayer = 1u << 2,
-  StationheadChangeScheduledReload = 1u << 3,
 };
 
 struct StationheadStatus {
@@ -114,6 +113,8 @@ class StationheadPlayer {
   EventRegistrationToken authMessageToken_{};
   EventRegistrationToken authProcessFailedToken_{};
   EventRegistrationToken authCloseToken_{};
+  std::shared_ptr<std::atomic<bool>> createCallbackAlive_{
+      std::make_shared<std::atomic<bool>>(false)};
   std::atomic<bool> creating_{false};
   std::atomic<bool> recreating_{false};
   std::atomic<bool> shuttingDown_{false};
