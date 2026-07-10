@@ -24,9 +24,6 @@ const SUCCESS_RUN_LOG_INTERVAL_SECONDS = 6 * 60 * 60;
 const DAY_MS = 86_400_000;
 const DAY_SECONDS = 86_400;
 const POWER_RETENTION_MS = 90 * DAY_MS;
-const ENVIRONMENT_BUCKET_RETENTION_MS = 7 * DAY_MS;
-const ENVIRONMENT_RECEIPT_RETENTION_MS = 31 * DAY_MS;
-const ENVIRONMENT_PENDING_RETENTION_MS = 90 * DAY_MS;
 const REFRESHABLE_JOBS = [
   "weather",
   "news",
@@ -105,13 +102,6 @@ export async function cleanupExpiredData(env: Env, now = Date.now()): Promise<vo
   await env.DB.batch([
     env.DB.prepare("DELETE FROM power_samples WHERE observed_at < ?1").bind(now - POWER_RETENTION_MS),
     env.DB.prepare(
-      `DELETE FROM environment_samples
-        WHERE (bucket_applied=1 AND observed_at < ?1)
-           OR observed_at < ?2`,
-    ).bind(now - ENVIRONMENT_RECEIPT_RETENTION_MS, now - ENVIRONMENT_PENDING_RETENTION_MS),
-    env.DB.prepare("DELETE FROM environment_buckets WHERE bucket_at < ?1")
-      .bind(now - ENVIRONMENT_BUCKET_RETENTION_MS),
-    env.DB.prepare(
       `DELETE FROM device_commands
         WHERE (completed_at IS NOT NULL AND completed_at < ?1)
            OR (completed_at IS NULL AND expires_at IS NOT NULL AND expires_at < ?2)`,
@@ -169,8 +159,6 @@ async function runOne(env: Env, job: JobRow): Promise<void> {
           observedAt: now,
         }, undefined, snapshot.row);
       } else if (job.name !== "cleanup" && job.name !== "update_check" && !sourceFailureRecorded) {
-
-
         await updateState(env, { source: job.name, payload: null, observedAt: Date.now() }, message);
       }
     } catch (stateError) {
@@ -187,9 +175,6 @@ async function runOne(env: Env, job: JobRow): Promise<void> {
 
 export async function runScheduler(env: Env): Promise<void> {
   await ensureSystemJobs(env);
-
-
-
   for (let batch = 0; batch < MAX_SCHEDULER_BATCHES; batch += 1) {
     const now = Math.floor(Date.now() / 1000);
     const jobs = await acquireDueJobs(env, now);

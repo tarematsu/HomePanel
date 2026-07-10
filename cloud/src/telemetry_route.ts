@@ -33,7 +33,6 @@ const MAX_TELEMETRY_SAMPLES = 1440;
 const TELEMETRY_SAMPLES_PER_BATCH = 99;
 const TELEMETRY_BUCKETS_PER_BATCH = 49;
 const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
-const MAX_TELEMETRY_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 function finiteOptional(value: unknown): number | null | undefined {
   if (value === undefined || value === null) return null;
@@ -95,9 +94,7 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
     unique.set(sample.sequence, sample);
   }
   const uniqueSamples = [...unique.values()].sort((left, right) => left.sequence - right.sequence);
-  const expiredSamples = uniqueSamples.filter(sample => sample.observedAt < now - MAX_TELEMETRY_AGE_MS);
-  const processableSamples = uniqueSamples.filter(sample => sample.observedAt >= now - MAX_TELEMETRY_AGE_MS);
-  const acknowledged = new Set<number>(expiredSamples.map(sample => sample.sequence));
+  const acknowledged = new Set<number>();
   const appVersion = String(input.appVersion ?? "").slice(0, 100) || null;
   const rawOutbox = Number(input.outboxCount);
   const outboxCount = Number.isFinite(rawOutbox) ? Math.max(0, Math.trunc(rawOutbox)) : 0;
@@ -105,8 +102,8 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
   const returnedRows = new Map<number, EnvironmentHistoryRow>();
   let accepted = 0;
 
-  for (let offset = 0; offset < processableSamples.length; offset += TELEMETRY_SAMPLES_PER_BATCH) {
-    const chunk = processableSamples.slice(offset, offset + TELEMETRY_SAMPLES_PER_BATCH);
+  for (let offset = 0; offset < uniqueSamples.length; offset += TELEMETRY_SAMPLES_PER_BATCH) {
+    const chunk = uniqueSamples.slice(offset, offset + TELEMETRY_SAMPLES_PER_BATCH);
     const receiptResults = await env.DB.batch(chunk.map(sample => telemetrySampleStatement(env, deviceId, sample)));
     for (const result of receiptResults) {
       const rows = (result.results ?? []) as Array<{ sequence: number }>;
@@ -114,7 +111,7 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
     }
   }
 
-  const acknowledgedSamples = processableSamples.filter(sample => acknowledged.has(sample.sequence));
+  const acknowledgedSamples = uniqueSamples.filter(sample => acknowledged.has(sample.sequence));
   const affectedBuckets = [...new Set(acknowledgedSamples.map(sample => telemetryBucketAt(sample.observedAt)))].sort((left, right) => left - right);
   for (let offset = 0; offset < affectedBuckets.length; offset += TELEMETRY_BUCKETS_PER_BATCH) {
     const bucketChunk = affectedBuckets.slice(offset, offset + TELEMETRY_BUCKETS_PER_BATCH);
@@ -161,7 +158,6 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
     acknowledgedSequences,
     nextSequence: Math.min(Number.MAX_SAFE_INTEGER, highestSequence + 1),
   };
-  if (expiredSamples.length) response.expired = expiredSamples.length;
   if (requestDuplicates) response.duplicates = requestDuplicates;
   return json(response);
 }

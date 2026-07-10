@@ -7,7 +7,6 @@ type TelemetryReceipt = {
   accepted: number;
   acknowledgedSequences: number[];
   nextSequence: number;
-  expired?: number;
 };
 
 beforeEach(async () => {
@@ -114,18 +113,49 @@ describe("telemetry resilience", () => {
     expect(collision.nextSequence).toBe(401);
   });
 
-  it("acknowledges expired samples without retaining them", async () => {
-    const oldAt = Date.now() - 31 * 24 * 60 * 60 * 1000;
+  it("stores historical environment samples without an expiry cutoff", async () => {
+    const oldAt = Math.floor((Date.now() - 10 * 365 * 24 * 60 * 60 * 1000) / 300_000) * 300_000;
     const receipt = await telemetryReceipt({
       deviceId: "ci-device",
-      samples: [{ sequence: 500, observedAt: oldAt, co2: 650 }],
+      samples: [{
+        sequence: 500,
+        observedAt: oldAt,
+        co2: 650,
+        temperatureCorrected: 22.5,
+        humidityCorrected: 48.0,
+      }],
     });
-    expect(receipt.acknowledgedSequences).toEqual([500]);
-    expect(receipt.expired).toBe(1);
+    expect(receipt).toMatchObject({
+      accepted: 1,
+      acknowledgedSequences: [500],
+      nextSequence: 501,
+    });
 
     const stored = await env.DB.prepare(
-      "SELECT COUNT(*) AS count FROM environment_samples WHERE device_id=?1 AND sequence=?2",
-    ).bind("ci-device", 500).first<{ count: number }>();
-    expect(stored?.count).toBe(0);
+      `SELECT co2,temperature_corrected,humidity_corrected,bucket_applied
+         FROM environment_samples WHERE device_id=?1 AND sequence=?2`,
+    ).bind("ci-device", 500).first<{
+      co2: number;
+      temperature_corrected: number;
+      humidity_corrected: number;
+      bucket_applied: number;
+    }>();
+    expect(stored).toMatchObject({
+      co2: 650,
+      temperature_corrected: 22.5,
+      humidity_corrected: 48,
+      bucket_applied: 1,
+    });
+
+    const bucket = await env.DB.prepare(
+      `SELECT sample_count,co2_sum,temperature_sum,humidity_sum
+         FROM environment_buckets WHERE device_id=?1 AND bucket_at=?2`,
+    ).bind("ci-device", oldAt).first<Record<string, number>>();
+    expect(bucket).toMatchObject({
+      sample_count: 1,
+      co2_sum: 650,
+      temperature_sum: 22.5,
+      humidity_sum: 48,
+    });
   });
 });
