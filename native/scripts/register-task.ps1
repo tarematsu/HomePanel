@@ -1,4 +1,4 @@
-
+#Requires -Version 5.1
 [CmdletBinding()]
 param(
   [string]$InstallDirectory = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
