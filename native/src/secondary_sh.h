@@ -51,6 +51,7 @@ class SecondaryStationheadPlayer {
  private:
   void ApplyAudioState() noexcept;
   void ApplyVolume() const noexcept;
+  void ApplyPlaybackState(bool playing, const std::wstring& source);
   void EnsureDistinctBrowserIdentity() noexcept;
 
   void Create();
@@ -86,6 +87,7 @@ class SecondaryStationheadPlayer {
   EventRegistrationToken messageToken_{};
   EventRegistrationToken processFailedToken_{};
   EventRegistrationToken resourceRequestedToken_{};
+  EventRegistrationToken audioPlayingChangedToken_{};
   std::atomic<bool> resourceBlockingArmed_{false};
   EventRegistrationToken authNavigationToken_{};
   EventRegistrationToken authMessageToken_{};
@@ -105,6 +107,7 @@ class SecondaryStationheadPlayer {
   // process.
   std::atomic<int> appliedMuted_{-1};
   mutable std::atomic<int> appliedVolumePercent_{-1};
+  bool nativeAudioTracking_ = false;
   bool interactive_ = false;
   bool startupPreviewActive_ = false;
   bool spotifyAuthorization_ = false;
