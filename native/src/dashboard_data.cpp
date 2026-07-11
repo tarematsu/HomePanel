@@ -12,6 +12,12 @@ double NumberOrNaN(const JsonObject& object, const wchar_t* name) {
   return json::Number(object, name, std::numeric_limits<double>::quiet_NaN());
 }
 
+int ProfileDayCount(const JsonObject& object, const wchar_t* name) {
+  const double value = json::Number(object, name, 0);
+  if (!std::isfinite(value)) return 0;
+  return std::clamp(static_cast<int>(std::lround(value)), 0, 7);
+}
+
 PanelDataStatus ReadStatus(const JsonObject& object) {
   PanelDataStatus status;
   const std::wstring value = json::Text(object, L"__status", L"waiting");
@@ -137,8 +143,8 @@ bool ParseDashboardSnapshot(const std::string& text, DashboardSnapshot& output, 
             time,
             NumberOrNaN(item, L"currentAverage"),
             NumberOrNaN(item, L"previousAverage"),
-            static_cast<int>(std::lround(json::Number(item, L"currentDays", 0))),
-            static_cast<int>(std::lround(json::Number(item, L"previousDays", 0))),
+            ProfileDayCount(item, L"currentDays"),
+            ProfileDayCount(item, L"previousDays"),
         });
       } catch (...) {
       }
