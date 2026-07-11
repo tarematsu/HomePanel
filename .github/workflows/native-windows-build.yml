@@ -1,114 +1,300 @@
-name: Patch Octopus profile renderer
+name: Native Windows Build
 
 on:
   pull_request:
     paths:
       - "native/**"
+      - "THIRD_PARTY_NOTICES.md"
       - ".github/workflows/native-windows-build.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "native/**"
+      - "THIRD_PARTY_NOTICES.md"
+      - ".github/workflows/native-windows-build.yml"
+  workflow_dispatch:
 
-permissions:
-  contents: write
+concurrency:
+  group: native-windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  patch:
-    if: github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-      - name: Fix profile completeness and axis placement
-        shell: python
-        run: |
-          from pathlib import Path
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
 
-          path = Path("native/src/renderer_panels.cpp")
-          text = path.read_text(encoding="utf-8")
-          replacements = [
-              (
-                  '''    for (const auto& item : nativeDashboard_.octopusProfile) {
-      if (std::isfinite(item.currentAverage)) maximum = std::max(maximum, item.currentAverage);
-      if (std::isfinite(item.previousAverage)) maximum = std::max(maximum, item.previousAverage);
-    }''',
-                  '''    for (const auto& item : nativeDashboard_.octopusProfile) {
-      if (item.currentDays == 7 && std::isfinite(item.currentAverage)) {
-        maximum = std::max(maximum, item.currentAverage);
-      }
-      if (item.previousDays == 7 && std::isfinite(item.previousAverage)) {
-        maximum = std::max(maximum, item.previousAverage);
-      }
-    }''',
-              ),
-              (
-                  '''    std::wstring currentLegend = nativeDashboard_.currentEnergyLabel;
-    if (!nativeDashboard_.currentEnergyDateRange.empty()) {
-      currentLegend += L" " + nativeDashboard_.currentEnergyDateRange;
-    }
-    std::wstring previousLegend = nativeDashboard_.previousEnergyLabel;
-    if (!nativeDashboard_.previousEnergyDateRange.empty()) {
-      previousLegend += L" " + nativeDashboard_.previousEnergyDateRange;
-    }''',
-                  '''    const bool currentComplete = std::all_of(
-        nativeDashboard_.octopusProfile.begin(), nativeDashboard_.octopusProfile.end(),
-        [](const OctopusProfileData& point) { return point.currentDays == 7; });
-    const bool previousComplete = std::all_of(
-        nativeDashboard_.octopusProfile.begin(), nativeDashboard_.octopusProfile.end(),
-        [](const OctopusProfileData& point) { return point.previousDays == 7; });
-    std::wstring currentLegend = nativeDashboard_.currentEnergyLabel;
-    if (!nativeDashboard_.currentEnergyDateRange.empty()) {
-      currentLegend += L" " + nativeDashboard_.currentEnergyDateRange;
-    }
-    if (!currentComplete) currentLegend += L"（データ不足）";
-    std::wstring previousLegend = nativeDashboard_.previousEnergyLabel;
-    if (!nativeDashboard_.previousEnergyDateRange.empty()) {
-      previousLegend += L" " + nativeDashboard_.previousEnergyDateRange;
-    }
-    if (!previousComplete) previousLegend += L"（データ不足）";''',
-              ),
-              (
-                  '''    const int count = static_cast<int>(nativeDashboard_.octopusProfile.size());
-    const auto xFor = [&](int index) {
-      return count <= 1 ? static_cast<int>(plot.left)
-          : static_cast<int>(plot.left + (plot.right - plot.left) * index /
-              static_cast<double>(count - 1));
-    };''',
-                  '''    const int count = static_cast<int>(nativeDashboard_.octopusProfile.size());
-    constexpr int profileSlots = 48;
-    const auto xFor = [&](int slot) {
-      return static_cast<int>(plot.left + (plot.right - plot.left) * slot /
-          static_cast<double>(profileSlots));
-    };''',
-              ),
-              (
-                  '''        const auto& point = nativeDashboard_.octopusProfile[index];
-        const double value = current ? point.currentAverage : point.previousAverage;
-        if (!std::isfinite(value)) {''',
-                  '''        const auto& point = nativeDashboard_.octopusProfile[index];
-        const bool complete = current ? point.currentDays == 7 : point.previousDays == 7;
-        const double value = complete
-            ? (current ? point.currentAverage : point.previousAverage)
-            : std::numeric_limits<double>::quiet_NaN();
-        if (!std::isfinite(value)) {''',
-              ),
-              (
-                  '''    const std::array<std::pair<int, const wchar_t*>, 5> ticks{{
-        {0, L"0:00"}, {12, L"6:00"}, {24, L"12:00"}, {36, L"18:00"}, {47, L"24:00"},
-    }};''',
-                  '''    const std::array<std::pair<int, const wchar_t*>, 5> ticks{{
-        {0, L"0:00"}, {12, L"6:00"}, {24, L"12:00"}, {36, L"18:00"}, {48, L"24:00"},
-    }};''',
-              ),
-          ]
-          for old, new in replacements:
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"expected one renderer block, found {count}")
-              text = text.replace(old, new)
-          path.write_text(text, encoding="utf-8")
-      - name: Commit renderer fix
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          show-progress: false
+
+      - name: Define release version
+        id: version
+        shell: pwsh
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add native/src/renderer_panels.cpp
-          git commit -m "Fix Octopus profile integrity rendering"
-          git push origin HEAD:${{ github.head_ref }}
+          $tz = [TimeZoneInfo]::FindSystemTimeZoneById("Tokyo Standard Time")
+          $version = [TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tz).ToString("yyMMddHHmm")
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Install WebView2 SDK
+        shell: pwsh
+        run: |
+          $packageRoot = "native/packages"
+          $packageDir = Join-Path $packageRoot "Microsoft.Web.WebView2.1.0.4022.49"
+          if (Test-Path -LiteralPath (Join-Path $packageDir "build/native/include/WebView2.h")) {
+            Write-Host "WebView2 SDK already available."
+            exit 0
+          }
+
+          New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+          nuget install Microsoft.Web.WebView2 -Version 1.0.4022.49 -OutputDirectory $packageRoot -NonInteractive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Configure native project
+        shell: pwsh
+        env:
+          HOMEPANEL_BUILD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          New-Item -ItemType Directory -Force native/ci-logs | Out-Null
+          cmake -S native -B native/build-ci `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DHOMEPANEL_CI_STRICT=ON `
+            -DHOMEPANEL_CI_STATIC_ANALYSIS=OFF `
+            2>&1 | Tee-Object native/ci-logs/configure.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify configure did not modify sources
+        shell: pwsh
+        run: |
+          $changes = git status --porcelain -- native/src native/scripts
+          $changes | Set-Content native/ci-logs/source-changes.log
+          if ($changes) {
+            $changes | Write-Error
+            throw "Native configure modified checked-in source files."
+          }
+
+      - name: Verify static Stationhead source build
+        shell: pwsh
+        run: |
+          $generatedDir = "native/build-ci/generated/stationhead"
+          if (Test-Path -LiteralPath $generatedDir) {
+            throw "Stationhead generated source directory should not be created."
+          }
+          $cmake = Get-Content -LiteralPath "native/CMakeLists.txt" -Raw
+          foreach ($token in @("generate_stationhead_sources", "stationhead.generated.cpp", "secondary_stationhead.generated.cpp")) {
+            if ($cmake.Contains($token)) {
+              throw "Unexpected Stationhead generation token '$token' remains in CMake."
+            }
+          }
+          foreach ($path in @(
+            "native/scripts/generate_stationhead_sources.ps1",
+            "native/scripts/ui/index.html",
+            "native/scripts/ui/styles.css",
+            "native/scripts/ui/app.js"
+          )) {
+            if (Test-Path -LiteralPath $path) {
+              throw "Removed Stationhead/browser dashboard source '$path' still exists."
+            }
+          }
+
+      - name: Build native project with warnings as errors
+        shell: pwsh
+        env:
+          HOMEPANEL_BUILD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cmake --build native/build-ci --config Release --parallel `
+            2>&1 | Tee-Object native/ci-logs/build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Configure MSVC static analysis
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          HOMEPANEL_BUILD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cmake -S native -B native/build-analyze `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DHOMEPANEL_CI_STRICT=ON `
+            -DHOMEPANEL_CI_STATIC_ANALYSIS=ON `
+            2>&1 | Tee-Object native/ci-logs/analyze-configure.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run MSVC static analysis
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          HOMEPANEL_BUILD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cmake --build native/build-analyze --config Release --target HomePanel --parallel 2 `
+            2>&1 | Tee-Object native/ci-logs/analyze-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify built binary versions
+        shell: pwsh
+        env:
+          HOMEPANEL_BUILD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $expected = $env:HOMEPANEL_BUILD_VERSION
+          foreach ($path in @("native/build-ci/Release/HomePanel.exe", "native/build-ci/Release/HomePanelUpdater.exe")) {
+            $actual = (Get-Item $path).VersionInfo.FileVersion
+            if ($actual -ne $expected) {
+              throw "Built file version mismatch for ${path}: expected $expected, got $actual"
+            }
+          }
+
+      - name: Package native release
+        if: success()
+        shell: pwsh
+        env:
+          HOMEPANEL_BUILD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $packageRoot = "native/package/HomePanel"
+          $zipPath = "native/HomePanel-native-windows.zip"
+          Remove-Item -Recurse -Force "native/package" -ErrorAction SilentlyContinue
+          Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
+          cmake --install native/build-ci --config Release --prefix $packageRoot `
+            2>&1 | Tee-Object native/ci-logs/package.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path "$packageRoot/*" -DestinationPath $zipPath -Force
+          Get-FileHash -Algorithm SHA256 $zipPath | ForEach-Object {
+            "$($_.Hash)  HomePanel-native-windows.zip" | Set-Content "native/HomePanel-native-windows.zip.sha256"
+          }
+
+      - name: Prepare release assets
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          HOMEPANEL_BUILD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $manual = Join-Path $PWD "release-manual"
+          $tools = Join-Path $PWD "release-tools"
+          New-Item -ItemType Directory -Force -Path $manual, $tools | Out-Null
+          Copy-Item native/build-ci/Release/HomePanel.exe $manual
+          Copy-Item native/build-ci/Release/HomePanelUpdater.exe $manual
+          Copy-Item native/build-ci/Release/WebView2Loader.dll $manual
+          Copy-Item native/config.example.json $manual
+          Copy-Item THIRD_PARTY_NOTICES.md $manual
+          Copy-Item native/build-ci/Release/HomePanel.exe HomePanel.exe
+          Copy-Item native/build-ci/Release/HomePanelUpdater.exe HomePanelUpdater.exe
+          Copy-Item native/build-ci/Release/WebView2Loader.dll WebView2Loader.dll
+          Copy-Item native/scripts $tools/scripts -Recurse
+          "HomePanel optional administration tools" | Set-Content -Encoding utf8 (Join-Path $tools "README.txt")
+          Compress-Archive -Path "$manual/*" -DestinationPath HomePanel-win-x64.zip -Force
+          Compress-Archive -Path "$tools/*" -DestinationPath HomePanel-tools-win-x64.zip -Force
+
+          $homePanelHash = (Get-FileHash HomePanel.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $updaterHash = (Get-FileHash HomePanelUpdater.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $loaderHash = (Get-FileHash WebView2Loader.dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          $zipHash = (Get-FileHash HomePanel-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $toolsHash = (Get-FileHash HomePanel-tools-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          [ordered]@{
+            version = $env:HOMEPANEL_BUILD_VERSION
+            signed = $false
+            files = @(
+              [ordered]@{ name = "HomePanel.exe"; sha256 = $homePanelHash; size = (Get-Item HomePanel.exe).Length; requireAuthenticode = $false },
+              [ordered]@{ name = "HomePanelUpdater.exe"; sha256 = $updaterHash; size = (Get-Item HomePanelUpdater.exe).Length; requireAuthenticode = $false },
+              [ordered]@{ name = "WebView2Loader.dll"; sha256 = $loaderHash; size = (Get-Item WebView2Loader.dll).Length; requireAuthenticode = $true }
+            )
+          } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 update-manifest.json
+
+          $homePanelHash | Set-Content -Encoding ascii HomePanel.exe.sha256
+          $updaterHash | Set-Content -Encoding ascii HomePanelUpdater.exe.sha256
+          $loaderHash | Set-Content -Encoding ascii WebView2Loader.dll.sha256
+          $zipHash | Set-Content -Encoding ascii HomePanel-win-x64.sha256
+          $toolsHash | Set-Content -Encoding ascii HomePanel-tools-win-x64.sha256
+
+      - name: Install Cloudflare CLI dependencies
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          npm ci --prefix cloud --no-audit --no-fund
+
+      - name: Resolve Cloudflare settings
+        if: github.ref == 'refs/heads/main'
+        id: resolve
+        shell: pwsh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+          HOMEPANEL_UPDATE_BUCKET: ${{ vars.HOMEPANEL_UPDATE_BUCKET }}
+        run: |
+          node .github/scripts/resolve-cloudflare-config.mjs
+
+      - name: Upload update assets to R2
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
+          HOMEPANEL_UPDATE_BUCKET: ${{ steps.resolve.outputs.update_bucket }}
+          HOMEPANEL_BUILD_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if (-not $env:CLOUDFLARE_API_TOKEN) { throw "CLOUDFLARE_API_TOKEN or CLOUDFLARE_BUILDS_API_TOKEN is required." }
+          if (-not $env:CLOUDFLARE_ACCOUNT_ID) { throw "CLOUDFLARE_ACCOUNT_ID is required." }
+          if (-not $env:HOMEPANEL_UPDATE_BUCKET) { throw "HOMEPANEL_UPDATE_BUCKET is required." }
+
+          $bucket = $env:HOMEPANEL_UPDATE_BUCKET
+          $version = $env:HOMEPANEL_BUILD_VERSION
+          $wrangler = Join-Path $PWD "cloud/node_modules/wrangler/bin/wrangler.js"
+
+          $uploads = @(
+            @{ key = "updates/releases/$version/HomePanel.exe"; file = "HomePanel.exe"; type = "application/octet-stream" },
+            @{ key = "updates/releases/$version/HomePanelUpdater.exe"; file = "HomePanelUpdater.exe"; type = "application/octet-stream" },
+            @{ key = "updates/releases/$version/WebView2Loader.dll"; file = "WebView2Loader.dll"; type = "application/octet-stream" },
+            @{ key = "updates/releases/$version/update-manifest.json"; file = "update-manifest.json"; type = "application/json; charset=utf-8" },
+            @{ key = "updates/latest/update-manifest.json"; file = "update-manifest.json"; type = "application/json; charset=utf-8" }
+          )
+
+          foreach ($upload in $uploads) {
+            node $wrangler r2 object put "$bucket/$($upload.key)" --remote --file $upload.file --content-type $upload.type
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Trigger immediate update rollout
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          HOMEPANEL_WORKER_URL: ${{ vars.HOMEPANEL_WORKER_URL }}
+          HOMEPANEL_REFRESH_TOKEN: ${{ secrets.HOMEPANEL_REFRESH_TOKEN }}
+        run: |
+          if (-not $env:HOMEPANEL_WORKER_URL) {
+            Write-Host "HOMEPANEL_WORKER_URL not configured; devices will pick the release up via the 5-minute update_check poll."
+            exit 0
+          }
+          $url = $env:HOMEPANEL_WORKER_URL.TrimEnd('/')
+          try {
+            if ($env:HOMEPANEL_REFRESH_TOKEN) {
+              Invoke-RestMethod -Method Post -Uri "$url/v1/refresh" `
+                -Headers @{ Authorization = "Bearer $($env:HOMEPANEL_REFRESH_TOKEN)" } `
+                -ContentType "application/json" -Body '{"sources":["update_check"]}' | Out-Null
+            } else {
+
+
+              Invoke-RestMethod -Method Post -Uri "$url/v1/update/ping" | Out-Null
+            }
+            Write-Host "Update rollout triggered; devices will be commanded on their next sync."
+          } catch {
+            Write-Warning "Immediate rollout trigger failed ($_); the 5-minute update_check poll will still roll the release out."
+          }
+
+      - name: Upload native release package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: homepanel-native-windows
+          path: |
+            native/HomePanel-native-windows.zip
+            native/HomePanel-native-windows.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload native diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: homepanel-native-ci-logs
+          path: native/ci-logs
+          if-no-files-found: warn
+          retention-days: 7
