@@ -34,6 +34,7 @@ interface StoredReadingRow {
 
 const JST_MS = 9 * 60 * 60 * 1000;
 const DAY_MS = 86_400_000;
+const SAFE_RANGE_MS = 2 * DAY_MS;
 const HISTORY_FLOOR_MS = Date.UTC(2000, 0, 1) - JST_MS;
 const RECENT_REPAIR_DAYS = 7;
 const BACKFILL_DAYS_PER_RUN = 30;
@@ -45,10 +46,10 @@ export function octopusStableCutoffJst(nowMs: number): number {
   return Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate() - 2) - JST_MS;
 }
 
-function splitIntoJstDays(fromMs: number, toMs: number): OctopusRange[] {
+function splitIntoSafeRanges(fromMs: number, toMs: number): OctopusRange[] {
   const ranges: OctopusRange[] = [];
   for (let cursor = fromMs; cursor < toMs;) {
-    const next = Math.min(toMs, cursor + DAY_MS);
+    const next = Math.min(toMs, cursor + SAFE_RANGE_MS);
     ranges.push({ from: new Date(cursor), to: new Date(next) });
     cursor = next;
   }
@@ -129,7 +130,7 @@ async function ensurePriorityRange(
     await fetchAndPersistRanges(
       env,
       accountNumber,
-      splitIntoJstDays(fromMs, toMs),
+      splitIntoSafeRanges(fromMs, toMs),
       fetchRange,
       stableCutoff,
       nowMs,
@@ -178,15 +179,19 @@ async function runBackfill(
   let cursor = Math.min(state.cursor_before, recentStart);
   let emptyDays = state.consecutive_empty_days;
   let completed = false;
-  for (let day = 0; day < BACKFILL_DAYS_PER_RUN && !completed; day += 1) {
-    const fromMs = Math.max(HISTORY_FLOOR_MS, cursor - DAY_MS);
+  for (let coveredDays = 0; coveredDays < BACKFILL_DAYS_PER_RUN && !completed;) {
+    const remainingDays = BACKFILL_DAYS_PER_RUN - coveredDays;
+    const requestedSpan = Math.min(SAFE_RANGE_MS, remainingDays * DAY_MS);
+    const fromMs = Math.max(HISTORY_FLOOR_MS, cursor - requestedSpan);
     if (fromMs >= cursor) {
       completed = true;
       break;
     }
     const readings = await fetchRange({ from: new Date(fromMs), to: new Date(cursor) });
     const stored = await persistStableReadings(env, accountNumber, readings, stableCutoff, nowMs);
-    emptyDays = stored > 0 ? 0 : emptyDays + 1;
+    const spanDays = Math.max(1, Math.ceil((cursor - fromMs) / DAY_MS));
+    emptyDays = stored > 0 ? 0 : emptyDays + spanDays;
+    coveredDays += spanDays;
     cursor = fromMs;
     completed = cursor <= HISTORY_FLOOR_MS || emptyDays >= EMPTY_DAYS_TO_COMPLETE;
     await env.DB.prepare(
@@ -216,7 +221,7 @@ export async function synchronizeOctopusHistory(
   await fetchAndPersistRanges(
     env,
     accountNumber,
-    splitIntoJstDays(recentStart, stableCutoff),
+    splitIntoSafeRanges(recentStart, stableCutoff),
     fetchRange,
     stableCutoff,
     nowMs,
@@ -233,7 +238,7 @@ export async function synchronizeOctopusHistory(
   const state = await runBackfill(env, accountNumber, fetchRange, stableCutoff, nowMs);
 
   const liveReadings: OctopusReading[] = [];
-  for (const range of splitIntoJstDays(stableCutoff, nowMs)) {
+  for (const range of splitIntoSafeRanges(stableCutoff, nowMs)) {
     liveReadings.push(...await fetchRange(range));
   }
   return {
