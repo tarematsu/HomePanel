@@ -19,6 +19,7 @@ constexpr COLORREF kWidgetBlueMuted = RGB(64, 156, 255);
 constexpr COLORREF kWidgetGreen = RGB(48, 209, 88);
 constexpr COLORREF kWidgetOrange = RGB(255, 159, 10);
 constexpr COLORREF kWidgetCyan = RGB(50, 173, 230);
+constexpr COLORREF kWidgetPurple = RGB(175, 82, 222);
 constexpr COLORREF kWidgetTrack = RGB(34, 44, 56);
 constexpr COLORREF kWidgetWarning = RGB(255, 214, 10);
 constexpr COLORREF kWidgetDanger = RGB(255, 69, 58);
@@ -838,7 +839,7 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& content) {
     double maximum = 1.0;
     for (const auto& item : nativeDashboard_.octopusHistory) {
       if (std::isfinite(item.value)) maximum = std::max(maximum, item.value);
-      if (std::isfinite(item.previousYearValue)) maximum = std::max(maximum, item.previousYearValue);
+      if (std::isfinite(item.previousWeekValue)) maximum = std::max(maximum, item.previousWeekValue);
     }
 
     const int legendHeight = SpanY(content, 100);
@@ -852,7 +853,7 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& content) {
       currentLegend += L" " + std::to_wstring(nativeDashboard_.currentEnergyIsoYear)
           + L" W" + std::to_wstring(nativeDashboard_.currentEnergyIsoWeek);
     }
-    std::wstring previousLegend = L"前年同週";
+    std::wstring previousLegend = L"先週";
     if (nativeDashboard_.previousEnergyIsoYear > 0 && nativeDashboard_.previousEnergyIsoWeek > 0) {
       previousLegend += L" " + std::to_wstring(nativeDashboard_.previousEnergyIsoYear)
           + L" W" + std::to_wstring(nativeDashboard_.previousEnergyIsoWeek);
@@ -865,7 +866,7 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& content) {
     RECT previousSwatch{legend.left + legendHalf, currentSwatch.top,
                         legend.left + legendHalf + swatchSize, currentSwatch.bottom};
     DrawWidgetCard(dc, currentSwatch, kWidgetCyan, 3, 210);
-    DrawWidgetCard(dc, previousSwatch, kWidgetBlueMuted, 3, 135);
+    DrawWidgetCard(dc, previousSwatch, kWidgetPurple, 3, 120);
     SetTextColor(dc, kWidgetMuted);
     RECT currentLegendRect{currentSwatch.right + SpanX(content, 15), legend.top,
                            legend.left + legendHalf - SpanX(content, 10), legend.bottom};
@@ -900,7 +901,7 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& content) {
       };
 
       drawBar(item.value, currentX, kWidgetCyan, 210);
-      drawBar(item.previousYearValue, previousX, kWidgetBlueMuted, 135);
+      drawBar(item.previousWeekValue, previousX, kWidgetPurple, 120);
 
       SetTextColor(dc, kWidgetMuted);
       const std::wstring weekday = item.weekday.empty() ? L"-" : item.weekday;

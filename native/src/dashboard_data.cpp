@@ -126,12 +126,16 @@ bool ParseDashboardSnapshot(const std::string& text, DashboardSnapshot& output, 
       try {
         if (history.GetAt(index).ValueType() != JsonValueType::Object) continue;
         const JsonObject item = history.GetObjectAt(index);
+        double previousWeekValue = NumberOrNaN(item, L"previousWeekValue");
+        if (!std::isfinite(previousWeekValue)) {
+          previousWeekValue = NumberOrNaN(item, L"previousYearValue");
+        }
         next.octopusHistory.push_back({
             json::Text(item, L"weekday"),
             json::Text(item, L"date"),
             NumberOrNaN(item, L"value"),
-            json::Text(item, L"previousYearDate"),
-            NumberOrNaN(item, L"previousYearValue"),
+            json::Text(item, L"previousWeekDate", json::Text(item, L"previousYearDate")),
+            previousWeekValue,
         });
       } catch (...) {
       }

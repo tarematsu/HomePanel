@@ -16,6 +16,7 @@ export type OctopusRangeFetcher = (range: OctopusRange) => Promise<OctopusReadin
 export interface OctopusHistorySyncResult {
   liveReadings: OctopusReading[];
   stableCutoff: number;
+  historyFloor: number;
   cursorBefore: number;
   completed: boolean;
 }
@@ -36,7 +37,7 @@ const JST_MS = 9 * 60 * 60 * 1000;
 const HALF_HOUR_MS = 30 * 60 * 1000;
 const DAY_MS = 86_400_000;
 const SAFE_RANGE_MS = 2 * DAY_MS;
-const HISTORY_FLOOR_MS = Date.UTC(2000, 0, 1) - JST_MS;
+export const OCTOPUS_HISTORY_FLOOR_MS = Date.UTC(2025, 10, 1) - JST_MS;
 const RECENT_REPAIR_DAYS = 7;
 const BACKFILL_DAYS_PER_RUN = 30;
 const EMPTY_DAYS_TO_COMPLETE = 62;
@@ -66,11 +67,30 @@ function normalizeReadings(readings: OctopusReading[], stableCutoff: number): Ar
     const observedAt = Date.parse(reading.startAt);
     const energyKwh = Number(reading.value);
     const supplyPoint = String(reading.supplyPoint ?? "").trim();
-    if (!supplyPoint || !Number.isFinite(observedAt) || observedAt < HISTORY_FLOOR_MS || observedAt >= stableCutoff) continue;
+    if (!supplyPoint || !Number.isFinite(observedAt) ||
+        observedAt < OCTOPUS_HISTORY_FLOOR_MS || observedAt >= stableCutoff) continue;
     if (!Number.isFinite(energyKwh) || energyKwh < 0) continue;
     unique.set(`${supplyPoint}:${observedAt}`, { supplyPoint, observedAt, energyKwh });
   }
   return [...unique.values()];
+}
+
+async function enforceHistoryFloor(env: Env, accountNumber: string, nowMs: number): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare(
+      "DELETE FROM octopus_readings WHERE account_number=?1 AND observed_at<?2",
+    ).bind(accountNumber, OCTOPUS_HISTORY_FLOOR_MS),
+    env.DB.prepare(
+      "DELETE FROM octopus_sync_ranges WHERE account_number=?1 AND to_at<=?2",
+    ).bind(accountNumber, OCTOPUS_HISTORY_FLOOR_MS),
+    env.DB.prepare(
+      `UPDATE octopus_backfill_state SET
+         cursor_before=MAX(cursor_before,?2),
+         completed=CASE WHEN cursor_before<=?2 THEN 1 ELSE completed END,
+         updated_at=?3
+       WHERE account_number=?1`,
+    ).bind(accountNumber, OCTOPUS_HISTORY_FLOOR_MS, nowMs),
+  ]);
 }
 
 async function persistStableReadings(
@@ -124,7 +144,7 @@ async function ensurePriorityRange(
   ).bind(accountNumber, rangeKey).first<{ completed_at: number }>();
   if (existing) return;
 
-  const fromMs = Math.max(HISTORY_FLOOR_MS, range.from.getTime());
+  const fromMs = Math.max(OCTOPUS_HISTORY_FLOOR_MS, range.from.getTime());
   const toMs = Math.min(stableCutoff, range.to.getTime());
   if (fromMs < toMs) {
     await fetchAndPersistRanges(
@@ -172,7 +192,7 @@ async function runBackfill(
   stableCutoff: number,
   nowMs: number,
 ): Promise<BackfillStateRow> {
-  const recentStart = Math.max(HISTORY_FLOOR_MS, stableCutoff - RECENT_REPAIR_DAYS * DAY_MS);
+  const recentStart = Math.max(OCTOPUS_HISTORY_FLOOR_MS, stableCutoff - RECENT_REPAIR_DAYS * DAY_MS);
   let state = await loadBackfillState(env, accountNumber, recentStart, nowMs);
   if (state.completed) return state;
 
@@ -182,7 +202,7 @@ async function runBackfill(
   for (let coveredDays = 0; coveredDays < BACKFILL_DAYS_PER_RUN && !completed;) {
     const remainingDays = BACKFILL_DAYS_PER_RUN - coveredDays;
     const requestedSpan = Math.min(SAFE_RANGE_MS, remainingDays * DAY_MS);
-    const fromMs = Math.max(HISTORY_FLOOR_MS, cursor - requestedSpan);
+    const fromMs = Math.max(OCTOPUS_HISTORY_FLOOR_MS, cursor - requestedSpan);
     if (fromMs >= cursor) {
       completed = true;
       break;
@@ -193,7 +213,7 @@ async function runBackfill(
     emptyDays = stored > 0 ? 0 : emptyDays + spanDays;
     coveredDays += spanDays;
     cursor = fromMs;
-    completed = cursor <= HISTORY_FLOOR_MS || emptyDays >= EMPTY_DAYS_TO_COMPLETE;
+    completed = cursor <= OCTOPUS_HISTORY_FLOOR_MS || emptyDays >= EMPTY_DAYS_TO_COMPLETE;
     await env.DB.prepare(
       `UPDATE octopus_backfill_state SET
          cursor_before=?2,
@@ -216,8 +236,9 @@ export async function synchronizeOctopusHistory(
   fetchRange: OctopusRangeFetcher,
 ): Promise<OctopusHistorySyncResult> {
   const stableCutoff = octopusStableCutoffJst(nowMs);
-  const recentStart = Math.max(HISTORY_FLOOR_MS, stableCutoff - RECENT_REPAIR_DAYS * DAY_MS);
+  const recentStart = Math.max(OCTOPUS_HISTORY_FLOOR_MS, stableCutoff - RECENT_REPAIR_DAYS * DAY_MS);
 
+  await enforceHistoryFloor(env, accountNumber, nowMs);
   await fetchAndPersistRanges(
     env,
     accountNumber,
@@ -244,6 +265,7 @@ export async function synchronizeOctopusHistory(
   return {
     liveReadings,
     stableCutoff,
+    historyFloor: OCTOPUS_HISTORY_FLOOR_MS,
     cursorBefore: state.cursor_before,
     completed: state.completed === 1,
   };

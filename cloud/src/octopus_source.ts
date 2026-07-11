@@ -215,10 +215,10 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
   const nextStart = jstBoundary(jst.getUTCFullYear(), billingMonth + 1, 2);
   const comparison = alignedWeekComparison(now.getTime());
   const comparisonRange: OctopusRange = {
-    from: comparison.previousYearWeekStart,
-    to: comparison.previousYearWeekEnd,
+    from: comparison.previousWeekStart,
+    to: comparison.previousWeekEnd,
   };
-  const comparisonKey = `iso-week:${comparison.previousYear.year}-W${comparison.previousYear.week}`;
+  const comparisonKey = `iso-week:${comparison.previousWeek.year}-W${comparison.previousWeek.week}`;
 
   let token = await authenticateOctopus(env);
   let synchronized;
@@ -266,21 +266,21 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
 
   const history = Array.from({ length: 7 }, (_, index) => {
     const currentDate = new Date(comparison.currentWeekStart.getTime() + index * DAY_MS);
-    const previousYearDate = new Date(comparison.previousYearWeekStart.getTime() + index * DAY_MS);
+    const previousWeekDate = new Date(comparison.previousWeekStart.getTime() + index * DAY_MS);
     const currentKey = jstDayKeyMs(currentDate.getTime());
-    const previousYearKey = jstDayKeyMs(previousYearDate.getTime());
+    const previousWeekKey = jstDayKeyMs(previousWeekDate.getTime());
     const currentValue = currentDate.getTime() < now.getTime() && daily[currentKey] !== undefined
       ? Number(daily[currentKey].toFixed(3))
       : null;
-    const previousYearValue = daily[previousYearKey] === undefined
+    const previousWeekValue = daily[previousWeekKey] === undefined
       ? null
-      : Number(daily[previousYearKey].toFixed(3));
+      : Number(daily[previousWeekKey].toFixed(3));
     return {
       weekday: WEEKDAYS[index],
       date: currentKey,
       value: currentValue,
-      previousYearDate: previousYearKey,
-      previousYearValue,
+      previousWeekDate: previousWeekKey,
+      previousWeekValue,
     };
   });
 
@@ -295,11 +295,12 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
       comparison: {
         currentIsoYear: comparison.current.year,
         currentIsoWeek: comparison.current.week,
-        previousIsoYear: comparison.previousYear.year,
-        previousIsoWeek: comparison.previousYear.week,
+        previousIsoYear: comparison.previousWeek.year,
+        previousIsoWeek: comparison.previousWeek.week,
       },
       archive: {
         stableThrough: synchronized.stableCutoff,
+        historyFloor: synchronized.historyFloor,
         cursorBefore: synchronized.cursorBefore,
         completed: synchronized.completed,
         excludedRecentDays: 2,

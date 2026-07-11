@@ -1,6 +1,7 @@
 import { applyD1Migrations, env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  OCTOPUS_HISTORY_FLOOR_MS,
   octopusStableCutoffJst,
   synchronizeOctopusHistory,
   type OctopusRange,
@@ -29,8 +30,8 @@ describe("Octopus D1 history", () => {
     const stableCutoff = octopusStableCutoffJst(now);
     expect(new Date(stableCutoff).toISOString()).toBe("2026-07-08T18:00:00.000Z");
     const comparison = {
-      from: new Date("2025-07-06T15:00:00.000Z"),
-      to: new Date("2025-07-13T15:00:00.000Z"),
+      from: new Date("2026-06-28T15:00:00.000Z"),
+      to: new Date("2026-07-05T15:00:00.000Z"),
     };
     const requested: OctopusRange[] = [];
     const fetchRange = async (range: OctopusRange): Promise<OctopusReading[]> => {
@@ -42,11 +43,12 @@ describe("Octopus D1 history", () => {
       env,
       "A-123",
       now,
-      "iso-week:2025-W28",
+      "iso-week:2026-W27",
       comparison,
       fetchRange,
     );
     expect(first.completed).toBe(false);
+    expect(first.historyFloor).toBe(OCTOPUS_HISTORY_FLOOR_MS);
     expect(first.liveReadings.length).toBeGreaterThan(0);
     expect(first.liveReadings.every(reading => Date.parse(reading.startAt) >= stableCutoff)).toBe(true);
 
@@ -56,6 +58,7 @@ describe("Octopus D1 history", () => {
     expect(Number(stored?.count)).toBeGreaterThan(20);
     expect(Number(stored?.latest)).toBeLessThan(stableCutoff);
     expect(Number(stored?.oldest)).toBeLessThan(stableCutoff - 30 * 86_400_000);
+    expect(Number(stored?.oldest)).toBeGreaterThanOrEqual(OCTOPUS_HISTORY_FLOOR_MS);
 
     const firstCursor = first.cursorBefore;
     requested.length = 0;
@@ -63,7 +66,7 @@ describe("Octopus D1 history", () => {
       env,
       "A-123",
       now,
-      "iso-week:2025-W28",
+      "iso-week:2026-W27",
       comparison,
       fetchRange,
     );
@@ -72,7 +75,7 @@ describe("Octopus D1 history", () => {
 
     const marked = await env.DB.prepare(
       "SELECT COUNT(*) AS count FROM octopus_sync_ranges WHERE account_number=?1 AND range_key=?2",
-    ).bind("A-123", "iso-week:2025-W28").first<{ count: number }>();
+    ).bind("A-123", "iso-week:2026-W27").first<{ count: number }>();
     expect(marked?.count).toBe(1);
   });
 
@@ -81,11 +84,43 @@ describe("Octopus D1 history", () => {
     expect(new Date(octopusStableCutoffJst(now)).toISOString()).toBe("2026-07-08T18:00:00.000Z");
   });
 
+  it("never requests or retains readings older than November 2025", async () => {
+    const now = Date.parse("2026-07-10T18:00:00Z");
+    const comparison = {
+      from: new Date("2026-06-28T15:00:00.000Z"),
+      to: new Date("2026-07-05T15:00:00.000Z"),
+    };
+    const requested: OctopusRange[] = [];
+    const fetchRange = async (range: OctopusRange): Promise<OctopusReading[]> => {
+      requested.push(range);
+      return [readingInside(range)];
+    };
+
+    let result = await synchronizeOctopusHistory(env, "A-floor", now, "week", comparison, fetchRange);
+    for (let run = 1; run < 12 && !result.completed; run += 1) {
+      result = await synchronizeOctopusHistory(env, "A-floor", now, "week", comparison, fetchRange);
+    }
+
+    expect(result.completed).toBe(true);
+    expect(result.cursorBefore).toBe(OCTOPUS_HISTORY_FLOOR_MS);
+    expect(requested.every(range => range.from.getTime() >= OCTOPUS_HISTORY_FLOOR_MS)).toBe(true);
+
+    await env.DB.prepare(
+      `INSERT INTO octopus_readings(account_number,supply_point,observed_at,energy_kwh,updated_at)
+       VALUES('A-floor','old-spin',?1,1.0,?2)`,
+    ).bind(OCTOPUS_HISTORY_FLOOR_MS - 86_400_000, now).run();
+    await synchronizeOctopusHistory(env, "A-floor", now, "week", comparison, fetchRange);
+    const oldRows = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM octopus_readings WHERE account_number='A-floor' AND observed_at<?1",
+    ).bind(OCTOPUS_HISTORY_FLOOR_MS).first<{ count: number }>();
+    expect(oldRows?.count).toBe(0);
+  });
+
   it("stops only after a long empty tail instead of a single missing day", async () => {
     const now = Date.parse("2026-07-10T18:00:00Z");
     const comparison = {
-      from: new Date("2025-07-06T15:00:00.000Z"),
-      to: new Date("2025-07-13T15:00:00.000Z"),
+      from: new Date("2026-06-28T15:00:00.000Z"),
+      to: new Date("2026-07-05T15:00:00.000Z"),
     };
     const stableCutoff = octopusStableCutoffJst(now);
     const recentStart = stableCutoff - 7 * 86_400_000;

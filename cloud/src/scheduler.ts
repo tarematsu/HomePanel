@@ -21,6 +21,7 @@ const LEASE_SECONDS = 120;
 const MAX_PARALLEL = 3;
 const MAX_SCHEDULER_BATCHES = 10;
 const SUCCESS_RUN_LOG_INTERVAL_SECONDS = 6 * 60 * 60;
+const OCTOPUS_INTERVAL_SECONDS = 60 * 60;
 const DAY_MS = 86_400_000;
 const DAY_SECONDS = 86_400;
 const POWER_RETENTION_MS = 90 * DAY_MS;
@@ -37,11 +38,26 @@ const REFRESHABLE_JOBS = [
 const REFRESHABLE_JOB_SET = new Set<string>(REFRESHABLE_JOBS);
 
 export async function ensureSystemJobs(env: Env): Promise<void> {
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO jobs(
-       name,interval_seconds,next_run_at,lease_until,last_success_at,last_error,consecutive_failures
-     ) VALUES('stationhead_health',300,0,NULL,NULL,NULL,0)`,
-  ).run();
+  const octopusDeadline = Math.floor(Date.now() / 1000) + OCTOPUS_INTERVAL_SECONDS;
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO jobs(
+         name,interval_seconds,next_run_at,lease_until,last_success_at,last_error,consecutive_failures
+       ) VALUES('stationhead_health',300,0,NULL,NULL,NULL,0)`,
+    ),
+    env.DB.prepare(
+      `INSERT INTO jobs(
+         name,interval_seconds,next_run_at,lease_until,last_success_at,last_error,consecutive_failures
+       ) VALUES('octopus',?1,0,NULL,NULL,NULL,0)
+       ON CONFLICT(name) DO UPDATE SET
+         interval_seconds=excluded.interval_seconds,
+         next_run_at=CASE
+           WHEN jobs.next_run_at=0 THEN 0
+           WHEN jobs.next_run_at>?2 THEN ?2
+           ELSE jobs.next_run_at
+         END`,
+    ).bind(OCTOPUS_INTERVAL_SECONDS, octopusDeadline),
+  ]);
 }
 
 export async function acquireDueJobs(env: Env, nowSeconds: number): Promise<JobRow[]> {

@@ -29,8 +29,8 @@ struct OctopusHistoryData {
   std::wstring weekday;
   std::wstring date;
   double value = std::numeric_limits<double>::quiet_NaN();
-  std::wstring previousYearDate;
-  double previousYearValue = std::numeric_limits<double>::quiet_NaN();
+  std::wstring previousWeekDate;
+  double previousWeekValue = std::numeric_limits<double>::quiet_NaN();
 };
 
 struct SwitchBotDeviceData {
