@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("cloud sources", () => {
-  it("stores stable Octopus readings while keeping the latest 48 hours live only", async () => {
+  it("stores stable Octopus readings and prioritizes the previous week", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-10T18:00:00Z"));
     const requests: Request[] = [];
@@ -80,20 +80,27 @@ describe("cloud sources", () => {
       .toBeGreaterThanOrEqual(24);
     expect(readingRanges).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        fromDatetime: "2025-07-06T15:00:00.000Z",
-        toDatetime: "2025-07-08T15:00:00.000Z",
+        fromDatetime: "2026-06-28T15:00:00.000Z",
+        toDatetime: "2026-06-30T15:00:00.000Z",
       }),
     ]));
 
     const payload = result.payload as {
-      archive: { stableThrough: number; excludedRecentDays: number };
+      comparison: { currentIsoWeek: number; previousIsoWeek: number };
+      archive: { stableThrough: number; historyFloor: number; excludedRecentDays: number };
+      history: Array<{ previousWeekDate: string; previousWeekValue: number | null }>;
     };
+    expect(payload.comparison).toMatchObject({ currentIsoWeek: 28, previousIsoWeek: 27 });
+    expect(payload.history[0]).toHaveProperty("previousWeekDate", "2026-06-29");
+    expect(payload.history[0]).toHaveProperty("previousWeekValue");
     expect(payload.archive.excludedRecentDays).toBe(2);
     expect(new Date(payload.archive.stableThrough).toISOString()).toBe("2026-07-08T18:00:00.000Z");
+    expect(new Date(payload.archive.historyFloor).toISOString()).toBe("2025-10-31T15:00:00.000Z");
     const stored = await env.DB.prepare(
-      "SELECT COUNT(*) AS count,MAX(observed_at) AS latest FROM octopus_readings WHERE account_number=?1",
-    ).bind("A-123").first<{ count: number; latest: number }>();
+      "SELECT COUNT(*) AS count,MIN(observed_at) AS oldest,MAX(observed_at) AS latest FROM octopus_readings WHERE account_number=?1",
+    ).bind("A-123").first<{ count: number; oldest: number; latest: number }>();
     expect(Number(stored?.count)).toBeGreaterThan(0);
+    expect(Number(stored?.oldest)).toBeGreaterThanOrEqual(payload.archive.historyFloor);
     expect(Number(stored?.latest)).toBeLessThan(payload.archive.stableThrough);
   });
 
