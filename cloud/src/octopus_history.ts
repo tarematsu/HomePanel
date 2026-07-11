@@ -33,6 +33,7 @@ interface StoredReadingRow {
 }
 
 const JST_MS = 9 * 60 * 60 * 1000;
+const HALF_HOUR_MS = 30 * 60 * 1000;
 const DAY_MS = 86_400_000;
 const SAFE_RANGE_MS = 2 * DAY_MS;
 const HISTORY_FLOOR_MS = Date.UTC(2000, 0, 1) - JST_MS;
@@ -42,8 +43,7 @@ const EMPTY_DAYS_TO_COMPLETE = 62;
 const D1_BATCH_SIZE = 90;
 
 export function octopusStableCutoffJst(nowMs: number): number {
-  const jst = new Date(nowMs + JST_MS);
-  return Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate() - 2) - JST_MS;
+  return Math.floor((nowMs - 2 * DAY_MS) / HALF_HOUR_MS) * HALF_HOUR_MS;
 }
 
 function splitIntoSafeRanges(fromMs: number, toMs: number): OctopusRange[] {
