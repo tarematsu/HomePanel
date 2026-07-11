@@ -11,6 +11,7 @@ constexpr size_t kNativeBitmapCacheLimit = 24;
 constexpr COLORREF kWidgetBackground = kNativeDashboardBackground;
 constexpr COLORREF kWidgetSurface = RGB(20, 26, 36);
 constexpr COLORREF kWidgetSurfaceAlt = RGB(31, 39, 52);
+constexpr COLORREF kWidgetOutline = RGB(43, 54, 69);
 constexpr COLORREF kWidgetText = RGB(238, 242, 248);
 constexpr COLORREF kWidgetMuted = RGB(159, 171, 189);
 constexpr COLORREF kWidgetSubtle = RGB(110, 122, 141);
@@ -264,6 +265,47 @@ RECT CardBodyRect(const RECT& content) {
   return body;
 }
 
+void DrawCardOutline(HDC dc, const RECT& rect, int radius) {
+  if (rect.right <= rect.left || rect.bottom <= rect.top) return;
+  HPEN pen = CreatePen(PS_SOLID, 1, kWidgetOutline);
+  HGDIOBJ previousPen = SelectObject(dc, pen);
+  HGDIOBJ previousBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+  RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+  SelectObject(dc, previousBrush);
+  SelectObject(dc, previousPen);
+  DeleteObject(pen);
+}
+
+void DrawSectionCard(HDC dc, const RECT& rect) {
+  const int radius = CardRadius(rect);
+  DrawWidgetCard(dc, rect, kWidgetSurface, radius);
+  DrawCardOutline(dc, rect, radius);
+}
+
+void DrawHeaderStatus(HDC dc, const RECT& header, const PanelDataStatus& status) {
+  const wchar_t* text = nullptr;
+  COLORREF color = kWidgetSubtle;
+  switch (status.state) {
+    case PanelDataState::Waiting:
+      text = L"取得待ち";
+      color = kWidgetSubtle;
+      break;
+    case PanelDataState::Stale:
+      text = L"更新停滞";
+      color = kWidgetWarning;
+      break;
+    case PanelDataState::Error:
+      text = L"取得エラー";
+      color = kWidgetDanger;
+      break;
+    case PanelDataState::Ok:
+    default:
+      return;
+  }
+  SetTextColor(dc, color);
+  DrawTextInRect(dc, text, header, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+}
+
 struct SidebarSections {
   RECT clock{};
   RECT air{};
@@ -406,7 +448,7 @@ HFONT Renderer::TierFont(FontTier tier) const {
       return CachedUiFont(std::clamp(clientHeight * 21 / 1000, 16, 36), FW_SEMIBOLD);
     case FontTier::Large:
     default:
-      return CachedUiFont(std::clamp(clientHeight * 48 / 1000, 32, 96), FW_SEMIBOLD);
+      return CachedUiFont(std::clamp(clientHeight * 56 / 1000, 36, 112), FW_SEMIBOLD);
   }
 }
 
@@ -708,10 +750,13 @@ void Renderer::PaintNativeRadar(HWND hwnd) {
   SetTextColor(scope.dc, kWidgetText);
   DrawTextInRect(scope.dc, chipText, chip, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   SelectObject(scope.dc, previousFont);
+
+  SelectClipRgn(scope.dc, nullptr);
+  DrawCardOutline(scope.dc, bounds, radius);
 }
 
 void Renderer::DrawClockSection(HDC dc, const RECT& card) {
-  DrawWidgetCard(dc, card, kWidgetSurface, CardRadius(card));
+  DrawSectionCard(dc, card);
   const RECT content = CardContentRect(card);
   SYSTEMTIME now{};
   GetLocalTime(&now);
@@ -729,7 +774,7 @@ void Renderer::DrawClockSection(HDC dc, const RECT& card) {
 }
 
 void Renderer::DrawAirSection(HDC dc, const RECT& card) {
-  DrawWidgetCard(dc, card, kWidgetSurface, CardRadius(card));
+  DrawSectionCard(dc, card);
   const RECT content = CardContentRect(card);
   HGDIOBJ previousFont = SelectObject(dc, TierFont(FontTier::Small));
   SetTextColor(dc, kWidgetSubtle);
@@ -849,7 +894,7 @@ void Renderer::DrawAirSection(HDC dc, const RECT& card) {
 }
 
 void Renderer::DrawWeatherSection(HDC dc, const RECT& card) {
-  DrawWidgetCard(dc, card, kWidgetSurface, CardRadius(card));
+  DrawSectionCard(dc, card);
   const RECT content = CardContentRect(card);
   const auto& hours = nativeDashboard_.weatherHours;
   const size_t count = std::min<size_t>(5, hours.size());
@@ -864,10 +909,14 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& card) {
   RECT header{content.left, content.top, content.right, content.top + CardHeaderHeight(content)};
   SetTextColor(dc, kWidgetSubtle);
   DrawTextInRect(dc, L"天気予報", header, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-  SetTextColor(dc, maxPop >= 70 ? kWidgetBlue : maxPop >= 40 ? kWidgetBlueMuted : kWidgetMuted);
-  DrawTextInRect(dc,
-                 L"降水確率 " + std::to_wstring(static_cast<int>(std::round(maxPop))) + L"%",
-                 header, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+  if (nativeDashboard_.weatherStatus.state == PanelDataState::Ok) {
+    SetTextColor(dc, maxPop >= 70 ? kWidgetBlue : maxPop >= 40 ? kWidgetBlueMuted : kWidgetMuted);
+    DrawTextInRect(dc,
+                   L"降水確率 " + std::to_wstring(static_cast<int>(std::round(maxPop))) + L"%",
+                   header, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+  } else {
+    DrawHeaderStatus(dc, header, nativeDashboard_.weatherStatus);
+  }
 
   const RECT body = CardBodyRect(content);
   const int bodyHeight = std::max(1L, body.bottom - body.top);
@@ -920,7 +969,7 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& card) {
 }
 
 void Renderer::DrawControlsSection(HDC dc, const RECT& card) {
-  DrawWidgetCard(dc, card, kWidgetSurface, CardRadius(card));
+  DrawSectionCard(dc, card);
   const RECT content = CardContentRect(card);
   const ControlsRects rects = ControlsFromContent(content);
 
@@ -967,7 +1016,7 @@ void Renderer::DrawControlsSection(HDC dc, const RECT& card) {
 }
 
 void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
-  DrawWidgetCard(dc, card, kWidgetSurface, CardRadius(card));
+  DrawSectionCard(dc, card);
   const RECT content = CardContentRect(card);
   HGDIOBJ previousFont = SelectObject(dc, TierFont(FontTier::Small));
   SetTextColor(dc, kWidgetSubtle);
@@ -987,13 +1036,21 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
     const int rowHeight = static_cast<int>(rowRect.bottom - rowRect.top);
     const int pad = std::max(6, rowHeight * 10 / 100);
 
-    DrawWidgetCard(dc, rects.artwork, kWidgetSurfaceAlt, std::max(6, rowHeight * 14 / 100));
+    const int artworkRadius = std::max(6, rowHeight * 14 / 100);
+    DrawWidgetCard(dc, rects.artwork, kWidgetSurfaceAlt, artworkRadius);
     if (playback.hasTrack) {
+      const int saved = SaveDC(dc);
+      HRGN artworkClip = CreateRoundRectRgn(rects.artwork.left, rects.artwork.top,
+                                            rects.artwork.right + 1, rects.artwork.bottom + 1,
+                                            artworkRadius, artworkRadius);
+      ExtSelectClipRgn(dc, artworkClip, RGN_AND);
+      DeleteObject(artworkClip);
       DrawPremultipliedBitmap(dc,
                               NativeArtworkBitmap(playback.track.artwork,
                                                   rects.artwork.right - rects.artwork.left,
                                                   rects.artwork.bottom - rects.artwork.top),
                               rects.artwork);
+      RestoreDC(dc, saved);
     }
 
     const std::wstring title = playback.hasTrack ? playback.track.title : fallbackTitle;
@@ -1027,7 +1084,7 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
       fillRect.right = barRect.left +
           static_cast<int>((barRect.right - barRect.left) * ratio);
       if (fillRect.right > fillRect.left) {
-        DrawWidgetPill(dc, fillRect, kWidgetGreen);
+        DrawWidgetPill(dc, fillRect, playback.playing ? kWidgetGreen : kWidgetMuted);
       }
 
       SetTextColor(dc, kWidgetSubtle);
@@ -1061,12 +1118,13 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
 }
 
 void Renderer::DrawEnergySection(HDC dc, const RECT& card) {
-  DrawWidgetCard(dc, card, kWidgetSurface, CardRadius(card));
+  DrawSectionCard(dc, card);
   const RECT content = CardContentRect(card);
   HGDIOBJ previousFont = SelectObject(dc, TierFont(FontTier::Small));
   SetTextColor(dc, kWidgetSubtle);
   RECT header{content.left, content.top, content.right, content.top + CardHeaderHeight(content)};
   DrawTextInRect(dc, L"電力使用量", header, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+  DrawHeaderStatus(dc, header, nativeDashboard_.octopusStatus);
   const RECT body = CardBodyRect(content);
 
   const auto usageText = [](double value) {
@@ -1237,6 +1295,11 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& card) {
         DrawTextInRect(dc, label, tick, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
       }
     }
+  } else if (chart.bottom > chart.top + 30) {
+    SelectObject(dc, TierFont(FontTier::Small));
+    SetTextColor(dc, kWidgetSubtle);
+    DrawTextInRect(dc, L"使用量プロファイルを取得中", chart,
+                   DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   }
 
   SelectObject(dc, TierFont(FontTier::Small));
@@ -1257,7 +1320,7 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& card) {
 }
 
 void Renderer::DrawNewsSection(HDC dc, const RECT& card) {
-  DrawWidgetCard(dc, card, kWidgetSurface, CardRadius(card));
+  DrawSectionCard(dc, card);
   const RECT content = CardContentRect(card);
   const NewsItemData* item = nullptr;
   if (!nativeDashboard_.newsItems.empty()) {
