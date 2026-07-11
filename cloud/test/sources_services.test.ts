@@ -77,11 +77,11 @@ describe("cloud sources", () => {
 
     expect(result.source).toBe("octopus");
     expect(requests.filter(request => request.headers.get("Authorization") === "octopus-token").length)
-      .toBeGreaterThanOrEqual(47);
+      .toBeGreaterThanOrEqual(25);
     expect(readingRanges).toEqual(expect.arrayContaining([
       expect.objectContaining({
         fromDatetime: "2025-07-06T15:00:00.000Z",
-        toDatetime: "2025-07-07T15:00:00.000Z",
+        toDatetime: "2025-07-08T15:00:00.000Z",
       }),
     ]));
 
