@@ -6,11 +6,11 @@ import {
   type OctopusReading,
 } from "./octopus_history";
 import { JST_MS, jstDayKey as jstDayKeyMs, type Env, type SourceResult } from "./sources";
-import { alignedWeekComparison } from "./week_comparison";
 
 const OCTOPUS_TOKEN_TTL_MS = 55 * 60_000;
+const HALF_HOUR_MS = 30 * 60_000;
 const DAY_MS = 86_400_000;
-const WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"] as const;
+const PROFILE_DAYS = 7;
 
 type OctopusToken = {
   value: string;
@@ -34,6 +34,21 @@ type OctopusGraphqlResponse<T> = {
   data?: T;
   errors?: OctopusGraphqlIssue[];
 };
+
+export interface OctopusProfilePoint {
+  time: string;
+  currentAverage: number | null;
+  previousAverage: number | null;
+  currentDays: number;
+  previousDays: number;
+}
+
+export interface OctopusProfileRanges {
+  currentStart: Date;
+  currentEnd: Date;
+  previousStart: Date;
+  previousEnd: Date;
+}
 
 class OctopusApiError extends Error {
   constructor(
@@ -152,6 +167,20 @@ function jstBoundary(year: number, month: number, day: number): Date {
   return new Date(Date.UTC(year, month, day) - JST_MS);
 }
 
+function jstDayStart(timestampMs: number): Date {
+  const jst = new Date(timestampMs + JST_MS);
+  return jstBoundary(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate());
+}
+
+export function completeDayProfileRanges(nowMs: number): OctopusProfileRanges {
+  const todayStart = jstDayStart(nowMs);
+  const currentEnd = new Date(todayStart.getTime() - DAY_MS);
+  const currentStart = new Date(currentEnd.getTime() - PROFILE_DAYS * DAY_MS);
+  const previousEnd = currentStart;
+  const previousStart = new Date(previousEnd.getTime() - PROFILE_DAYS * DAY_MS);
+  return { currentStart, currentEnd, previousStart, previousEnd };
+}
+
 type OctopusReadingPayload = {
   account?: {
     properties?: Array<{
@@ -202,6 +231,54 @@ function mergeReadings(readings: OctopusReading[]): OctopusReading[] {
   return [...unique.values()];
 }
 
+export function buildOctopusDailyProfile(
+  readings: OctopusReading[],
+  ranges: OctopusProfileRanges,
+): OctopusProfilePoint[] {
+  const daySlots = new Map<string, number>();
+  for (const reading of readings) {
+    const observedAt = Date.parse(reading.startAt);
+    const value = Number(reading.value);
+    if (!Number.isFinite(observedAt) || !Number.isFinite(value) || value < 0) continue;
+    if (observedAt < ranges.previousStart.getTime() || observedAt >= ranges.currentEnd.getTime()) continue;
+    const local = new Date(observedAt + JST_MS);
+    const slot = local.getUTCHours() * 2 + Math.floor(local.getUTCMinutes() / 30);
+    if (slot < 0 || slot >= 48) continue;
+    const key = `${jstDayKeyMs(observedAt)}:${slot}`;
+    daySlots.set(key, (daySlots.get(key) ?? 0) + value);
+  }
+
+  const averageFor = (start: Date, slot: number): { value: number | null; days: number } => {
+    let sum = 0;
+    let days = 0;
+    for (let offset = 0; offset < PROFILE_DAYS; offset += 1) {
+      const day = start.getTime() + offset * DAY_MS;
+      const value = daySlots.get(`${jstDayKeyMs(day)}:${slot}`);
+      if (value === undefined) continue;
+      sum += value;
+      days += 1;
+    }
+    return {
+      value: days > 0 ? Number((sum / days).toFixed(4)) : null,
+      days,
+    };
+  };
+
+  return Array.from({ length: 48 }, (_, slot) => {
+    const current = averageFor(ranges.currentStart, slot);
+    const previous = averageFor(ranges.previousStart, slot);
+    const hour = Math.floor(slot / 2);
+    const minute = slot % 2 === 0 ? "00" : "30";
+    return {
+      time: `${String(hour).padStart(2, "0")}:${minute}`,
+      currentAverage: current.value,
+      previousAverage: previous.value,
+      currentDays: current.days,
+      previousDays: previous.days,
+    };
+  });
+}
+
 export async function fetchOctopus(env: Env): Promise<SourceResult> {
   const legacyEnv = env as Env & { OCTOPUS_ACCOUNT?: string };
   const accountNumber = (env.OCTOPUS_ACCOUNT_NUMBER || legacyEnv.OCTOPUS_ACCOUNT || "").trim();
@@ -213,12 +290,12 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
   const currentStart = jstBoundary(jst.getUTCFullYear(), billingMonth, 2);
   const previousStart = jstBoundary(jst.getUTCFullYear(), billingMonth - 1, 2);
   const nextStart = jstBoundary(jst.getUTCFullYear(), billingMonth + 1, 2);
-  const comparison = alignedWeekComparison(now.getTime());
-  const comparisonRange: OctopusRange = {
-    from: comparison.previousWeekStart,
-    to: comparison.previousWeekEnd,
+  const profileRanges = completeDayProfileRanges(now.getTime());
+  const priorityRange: OctopusRange = {
+    from: profileRanges.previousStart,
+    to: profileRanges.previousEnd,
   };
-  const comparisonKey = `iso-week:${comparison.previousWeek.year}-W${comparison.previousWeek.week}`;
+  const comparisonKey = `daily-profile:${jstDayKeyMs(priorityRange.from.getTime())}:${jstDayKeyMs(priorityRange.to.getTime() - DAY_MS)}`;
 
   let token = await authenticateOctopus(env);
   let synchronized;
@@ -228,7 +305,7 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
       accountNumber,
       now.getTime(),
       comparisonKey,
-      comparisonRange,
+      priorityRange,
       range => fetchOctopusRangeReadings(accountNumber, range, token),
     );
   } catch (error) {
@@ -240,50 +317,27 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
       accountNumber,
       now.getTime(),
       comparisonKey,
-      comparisonRange,
+      priorityRange,
       range => fetchOctopusRangeReadings(accountNumber, range, token),
     );
   }
 
   const stored = await readStoredOctopusRanges(env, accountNumber, [
     { from: previousStart, to: now },
-    { from: comparison.currentWeekStart, to: comparison.currentWeekEnd },
-    comparisonRange,
+    { from: profileRanges.previousStart, to: profileRanges.currentEnd },
   ]);
   const readings = mergeReadings([...stored, ...synchronized.liveReadings]);
-  const daily: Record<string, number> = {};
   const monthly = { previous: 0, current: 0 };
   let previousSlots = 0;
   for (const reading of readings) {
     const date = new Date(reading.startAt);
     const value = Number(reading.value ?? 0);
     if (!Number.isFinite(date.getTime()) || !Number.isFinite(value)) continue;
-    const key = jstDayKeyMs(date.getTime());
-    daily[key] = (daily[key] ?? 0) + value;
     if (date >= previousStart && date < currentStart) { monthly.previous += value; previousSlots += 1; }
     if (date >= currentStart && date < now) monthly.current += value;
   }
 
-  const history = Array.from({ length: 7 }, (_, index) => {
-    const currentDate = new Date(comparison.currentWeekStart.getTime() + index * DAY_MS);
-    const previousWeekDate = new Date(comparison.previousWeekStart.getTime() + index * DAY_MS);
-    const currentKey = jstDayKeyMs(currentDate.getTime());
-    const previousWeekKey = jstDayKeyMs(previousWeekDate.getTime());
-    const currentValue = currentDate.getTime() < now.getTime() && daily[currentKey] !== undefined
-      ? Number(daily[currentKey].toFixed(3))
-      : null;
-    const previousWeekValue = daily[previousWeekKey] === undefined
-      ? null
-      : Number(daily[previousWeekKey].toFixed(3));
-    return {
-      weekday: WEEKDAYS[index],
-      date: currentKey,
-      value: currentValue,
-      previousWeekDate: previousWeekKey,
-      previousWeekValue,
-    };
-  });
-
+  const profile = buildOctopusDailyProfile(readings, profileRanges);
   const elapsed = Math.max(1, now.getTime() - currentStart.getTime());
   const duration = Math.max(1, nextStart.getTime() - currentStart.getTime());
   const projected = monthly.current * duration / elapsed;
@@ -291,12 +345,15 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
   return {
     source: "octopus",
     payload: {
-      history,
+      profile,
       comparison: {
-        currentIsoYear: comparison.current.year,
-        currentIsoWeek: comparison.current.week,
-        previousIsoYear: comparison.previousWeek.year,
-        previousIsoWeek: comparison.previousWeek.week,
+        currentLabel: "今週平均",
+        previousLabel: "先週平均",
+        currentStartDate: jstDayKeyMs(profileRanges.currentStart.getTime()),
+        currentEndDate: jstDayKeyMs(profileRanges.currentEnd.getTime() - DAY_MS),
+        previousStartDate: jstDayKeyMs(profileRanges.previousStart.getTime()),
+        previousEndDate: jstDayKeyMs(profileRanges.previousEnd.getTime() - DAY_MS),
+        excludedRecentDays: 2,
       },
       archive: {
         stableThrough: synchronized.stableCutoff,
