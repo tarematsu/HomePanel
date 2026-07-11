@@ -24,10 +24,10 @@ function readingInside(range: OctopusRange): OctopusReading {
 }
 
 describe("Octopus D1 history", () => {
-  it("moves the backfill cursor backward and never stores the latest two JST days", async () => {
+  it("moves the backfill cursor backward and never stores the latest 48 hours", async () => {
     const now = Date.parse("2026-07-10T18:00:00Z");
     const stableCutoff = octopusStableCutoffJst(now);
-    expect(new Date(stableCutoff).toISOString()).toBe("2026-07-08T15:00:00.000Z");
+    expect(new Date(stableCutoff).toISOString()).toBe("2026-07-08T18:00:00.000Z");
     const comparison = {
       from: new Date("2025-07-06T15:00:00.000Z"),
       to: new Date("2025-07-13T15:00:00.000Z"),
@@ -74,6 +74,11 @@ describe("Octopus D1 history", () => {
       "SELECT COUNT(*) AS count FROM octopus_sync_ranges WHERE account_number=?1 AND range_key=?2",
     ).bind("A-123", "iso-week:2025-W28").first<{ count: number }>();
     expect(marked?.count).toBe(1);
+  });
+
+  it("rounds the rolling cutoff down to a half-hour reading boundary", () => {
+    const now = Date.parse("2026-07-10T18:17:42Z");
+    expect(new Date(octopusStableCutoffJst(now)).toISOString()).toBe("2026-07-08T18:00:00.000Z");
   });
 
   it("stops only after a long empty tail instead of a single missing day", async () => {
