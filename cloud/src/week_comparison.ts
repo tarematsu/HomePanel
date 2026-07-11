@@ -9,11 +9,11 @@ export interface IsoWeekInfo {
 
 export interface AlignedWeekComparison {
   current: IsoWeekInfo;
-  previousYear: IsoWeekInfo;
+  previousWeek: IsoWeekInfo;
   currentWeekStart: Date;
   currentWeekEnd: Date;
-  previousYearWeekStart: Date;
-  previousYearWeekEnd: Date;
+  previousWeekStart: Date;
+  previousWeekEnd: Date;
 }
 
 function isoWeekInfoForCivilDate(civilDate: Date): IsoWeekInfo {
@@ -48,17 +48,15 @@ export function isoWeekStartJst(year: number, week: number): Date {
 
 export function alignedWeekComparison(timestampMs: number): AlignedWeekComparison {
   const current = isoWeekInfoJst(timestampMs);
-  const previousYearNumber = current.year - 1;
-  const previousWeek = Math.min(current.week, isoWeeksInYear(previousYearNumber));
-  const previousYear = { year: previousYearNumber, week: previousWeek, weekday: current.weekday };
+  const previousWeek = isoWeekInfoJst(timestampMs - 7 * DAY_MS);
   const currentWeekStart = isoWeekStartJst(current.year, current.week);
-  const previousYearWeekStart = isoWeekStartJst(previousYear.year, previousYear.week);
+  const previousWeekStart = new Date(currentWeekStart.getTime() - 7 * DAY_MS);
   return {
     current,
-    previousYear,
+    previousWeek,
     currentWeekStart,
     currentWeekEnd: new Date(currentWeekStart.getTime() + 7 * DAY_MS),
-    previousYearWeekStart,
-    previousYearWeekEnd: new Date(previousYearWeekStart.getTime() + 7 * DAY_MS),
+    previousWeekStart,
+    previousWeekEnd: currentWeekStart,
   };
 }
