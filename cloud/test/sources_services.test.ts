@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("cloud sources", () => {
-  it("stores stable Octopus readings while keeping the latest two days live only", async () => {
+  it("stores stable Octopus readings while keeping the latest 48 hours live only", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-10T18:00:00Z"));
     const requests: Request[] = [];
@@ -77,7 +77,7 @@ describe("cloud sources", () => {
 
     expect(result.source).toBe("octopus");
     expect(requests.filter(request => request.headers.get("Authorization") === "octopus-token").length)
-      .toBeGreaterThanOrEqual(25);
+      .toBeGreaterThanOrEqual(24);
     expect(readingRanges).toEqual(expect.arrayContaining([
       expect.objectContaining({
         fromDatetime: "2025-07-06T15:00:00.000Z",
@@ -89,6 +89,7 @@ describe("cloud sources", () => {
       archive: { stableThrough: number; excludedRecentDays: number };
     };
     expect(payload.archive.excludedRecentDays).toBe(2);
+    expect(new Date(payload.archive.stableThrough).toISOString()).toBe("2026-07-08T18:00:00.000Z");
     const stored = await env.DB.prepare(
       "SELECT COUNT(*) AS count,MAX(observed_at) AS latest FROM octopus_readings WHERE account_number=?1",
     ).bind("A-123").first<{ count: number; latest: number }>();
