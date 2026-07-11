@@ -1,4 +1,4 @@
-name: Patch Octopus profile chart
+name: Finalize Octopus profile chart
 
 on:
   push:
@@ -6,33 +6,28 @@ on:
       - agent/fix-octopus-complete-day-profile
     paths:
       - .github/workflows/native-windows-build.yml
-      - .github/scripts/patch_octopus_profile_chart.py
-  pull_request:
-    paths:
-      - native/**
-      - .github/workflows/native-windows-build.yml
-      - .github/scripts/patch_octopus_profile_chart.py
 
 permissions:
   contents: write
 
 jobs:
-  patch:
+  finalize:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref || github.ref_name }}
-      - name: Replace energy bars with average profile lines
-        run: python .github/scripts/patch_octopus_profile_chart.py
-      - name: Commit renderer update
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - name: Finalize renderer and restore CI
         run: |
-          if git diff --quiet -- native/src/renderer_panels.cpp; then
-            exit 0
-          fi
+          python .github/scripts/patch_octopus_profile_chart.py
+          git fetch origin main
+          git checkout origin/main -- .github/workflows/native-windows-build.yml
+          git rm -f .github/workflows/patch-octopus-profile-chart.yml
+          git rm -f .github/scripts/patch_octopus_profile_chart.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add native/src/renderer_panels.cpp
-          git commit -m "Draw Octopus half-hour average profiles"
-          git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          git add native/src/renderer_panels.cpp .github/workflows/native-windows-build.yml
+          git commit -m "Finalize Octopus average profile chart"
+          git push origin HEAD:${{ github.ref_name }}
