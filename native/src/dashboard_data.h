@@ -25,12 +25,12 @@ struct NewsItemData {
   std::wstring description;
 };
 
-struct OctopusHistoryData {
-  std::wstring weekday;
-  std::wstring date;
-  double value = std::numeric_limits<double>::quiet_NaN();
-  std::wstring previousWeekDate;
-  double previousWeekValue = std::numeric_limits<double>::quiet_NaN();
+struct OctopusProfileData {
+  std::wstring time;
+  double currentAverage = std::numeric_limits<double>::quiet_NaN();
+  double previousAverage = std::numeric_limits<double>::quiet_NaN();
+  int currentDays = 0;
+  int previousDays = 0;
 };
 
 struct SwitchBotDeviceData {
@@ -53,11 +53,11 @@ struct DashboardSnapshot {
   PanelDataStatus octopusStatus;
   double lastMonthUsage = std::numeric_limits<double>::quiet_NaN();
   double projectedUsage = std::numeric_limits<double>::quiet_NaN();
-  int currentEnergyIsoYear = 0;
-  int currentEnergyIsoWeek = 0;
-  int previousEnergyIsoYear = 0;
-  int previousEnergyIsoWeek = 0;
-  std::vector<OctopusHistoryData> octopusHistory;
+  std::wstring currentEnergyLabel = L"今週平均";
+  std::wstring previousEnergyLabel = L"先週平均";
+  std::wstring currentEnergyDateRange;
+  std::wstring previousEnergyDateRange;
+  std::vector<OctopusProfileData> octopusProfile;
 
   PanelDataStatus switchBotStatus;
   std::wstring switchBotPresence;
