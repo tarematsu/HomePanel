@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("cloud sources", () => {
-  it("stores stable Octopus readings and prioritizes the previous week", async () => {
+  it("stores stable Octopus readings and prioritizes the older complete seven-day window", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-10T18:00:00Z"));
     const requests: Request[] = [];
@@ -77,22 +77,38 @@ describe("cloud sources", () => {
 
     expect(result.source).toBe("octopus");
     expect(requests.filter(request => request.headers.get("Authorization") === "octopus-token").length)
-      .toBeGreaterThanOrEqual(24);
+      .toBeGreaterThanOrEqual(20);
     expect(readingRanges).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        fromDatetime: "2026-06-28T15:00:00.000Z",
-        toDatetime: "2026-06-30T15:00:00.000Z",
+        fromDatetime: "2026-06-25T15:00:00.000Z",
+        toDatetime: "2026-06-27T15:00:00.000Z",
       }),
     ]));
 
     const payload = result.payload as {
-      comparison: { currentIsoWeek: number; previousIsoWeek: number };
+      comparison: {
+        currentLabel: string;
+        previousLabel: string;
+        currentStartDate: string;
+        currentEndDate: string;
+        previousStartDate: string;
+        previousEndDate: string;
+      };
       archive: { stableThrough: number; historyFloor: number; excludedRecentDays: number };
-      history: Array<{ previousWeekDate: string; previousWeekValue: number | null }>;
+      profile: Array<{ time: string; currentAverage: number | null; previousAverage: number | null }>;
     };
-    expect(payload.comparison).toMatchObject({ currentIsoWeek: 28, previousIsoWeek: 27 });
-    expect(payload.history[0]).toHaveProperty("previousWeekDate", "2026-06-29");
-    expect(payload.history[0]).toHaveProperty("previousWeekValue");
+    expect(payload.comparison).toEqual({
+      currentLabel: "今週平均",
+      previousLabel: "先週平均",
+      currentStartDate: "2026-07-03",
+      currentEndDate: "2026-07-09",
+      previousStartDate: "2026-06-26",
+      previousEndDate: "2026-07-02",
+      excludedRecentDays: 2,
+    });
+    expect(payload.profile).toHaveLength(48);
+    expect(payload.profile[0]?.time).toBe("00:00");
+    expect(payload.profile[47]?.time).toBe("23:30");
     expect(payload.archive.excludedRecentDays).toBe(2);
     expect(new Date(payload.archive.stableThrough).toISOString()).toBe("2026-07-08T18:00:00.000Z");
     expect(new Date(payload.archive.historyFloor).toISOString()).toBe("2025-10-31T15:00:00.000Z");
