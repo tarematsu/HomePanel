@@ -42,6 +42,7 @@ class SecondaryStationheadPlayer {
     if (spotifyAuthorization_ && authHostWindow_ && IsWindow(authHostWindow_)) return authHostWindow_;
     return hostWindow_;
   }
+  void KeepPlaybackBehindDashboard();
 
   void SetMuted(bool muted) noexcept;
   bool Muted() const noexcept;
