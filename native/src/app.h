@@ -432,6 +432,9 @@ class App {
   void LoadAirHistory();
   void SaveAirHistory() const;
   void UpdateAirHistory(const SensorSnapshot& sensors);
+  void LoadStationheadPlayHistory();
+  void SaveStationheadPlayHistory() const;
+  void UpdateStationheadPlayHistory(const StationheadStatus& status);
   void HandleAction(UiAction action);
   void LayoutWorkspace();
   void ApplyStationheadWindowPlacement(const StationheadStatus& primaryStatus,
@@ -456,6 +459,7 @@ class App {
   AppStationheadHandle stationhead_;
   AppSecondaryStationheadHandle secondaryStationhead_;
   RenderState renderState_;
+  std::vector<StationheadPlayHistorySample> stationheadPlayHistory_;
   std::atomic<bool> telemetryBusy_{false};
   std::atomic<bool> updateBusy_{false};
   std::thread telemetryThread_;

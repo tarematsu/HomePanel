@@ -188,6 +188,7 @@ void App::StartServices() {
   sensors_->Start();
 
   LoadAirHistory();
+  LoadStationheadPlayHistory();
   renderState_.sensors = sensors_->Snapshot();
   UpdateAirHistory(renderState_.sensors);
   renderState_.stationhead = stationhead_->Status();
@@ -303,6 +304,7 @@ void App::Tick() {
   const StationheadStatus stationheadStatus = stationhead_->Status();
   StationheadStatus nextStationheadState = BuildRenderStationheadState(stationhead_, secondaryStationhead_);
   UpdateRenderStationheadState(nextStationheadState);
+  UpdateStationheadPlayHistory(stationheadStatus);
   StartDeferredServices(now, stationheadStatus);
   ApplyStationheadWindowPlacement(stationheadStatus, secondaryStatus);
 
@@ -549,6 +551,7 @@ void App::LogUnhandled(DWORD code, void* address) {
 
 
 #include "app_air_history.cpp"
+#include "app_stationhead_history.cpp"
 #include "app_update.cpp"
 #include "app_messages.cpp"
 #include "app_commands.cpp"

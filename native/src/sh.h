@@ -24,6 +24,16 @@ struct StationheadDailyPlayPoint {
   bool operator==(const StationheadDailyPlayPoint&) const = default;
 };
 
+// A single 5-minute sample of today's cumulative play value, kept over time
+// so a flattening of consecutive values can be read back later as a gap in
+// listening activity (see App::UpdateStationheadPlayHistory).
+struct StationheadPlayHistorySample {
+  int64_t timestamp = 0;
+  int value = 0;
+
+  bool operator==(const StationheadPlayHistorySample&) const = default;
+};
+
 struct StationheadStatus {
   bool created = false;
   bool navigating = false;
