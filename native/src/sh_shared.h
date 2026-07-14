@@ -269,6 +269,21 @@ inline std::wstring StationheadLowerAscii(const wchar_t* text) {
 
 
 
+inline std::wstring_view StationheadProductionApiPath(const std::wstring& uriLower) {
+  static constexpr std::wstring_view kApiHost = L"production1.stationhead.com";
+  const size_t schemeEnd = uriLower.find(L"://");
+  if (schemeEnd == std::wstring::npos) return {};
+  const size_t hostAt = schemeEnd + 3;
+  const size_t pathAt = uriLower.find_first_of(L"/?#", hostAt);
+  if (pathAt == std::wstring::npos || uriLower[pathAt] != L'/' ||
+      uriLower.compare(hostAt, pathAt - hostAt, kApiHost) != 0) {
+    return {};
+  }
+  const size_t pathEnd = uriLower.find_first_of(L"?#", pathAt);
+  return std::wstring_view(uriLower).substr(
+      pathAt, pathEnd == std::wstring::npos ? std::wstring::npos : pathEnd - pathAt);
+}
+
 inline bool StationheadRequestIsBlockable(const std::wstring& uriLower) {
   static constexpr const wchar_t* kNeedles[] = {
 
@@ -324,29 +339,25 @@ inline bool StationheadRequestIsBlockable(const std::wstring& uriLower) {
   for (const wchar_t* needle : kNeedles) {
     if (uriLower.find(needle) != std::wstring::npos) return true;
   }
+  // Capture-confirmed presentation endpoints: Plus decorates premium UI and
+  // /station/{id}/listener returns the visible listener roster. The similarly
+  // named /channels/alias/{alias}/listener join endpoint is intentionally kept.
+  const std::wstring_view apiPath = StationheadProductionApiPath(uriLower);
+  if (apiPath == L"/plus/status") return true;
+  static constexpr std::wstring_view kStationPrefix = L"/station/";
+  static constexpr std::wstring_view kListenerSuffix = L"/listener";
+  if (apiPath.starts_with(kStationPrefix)) {
+    const std::wstring_view stationPath = apiPath.substr(kStationPrefix.size());
+    const size_t separator = stationPath.find(L'/');
+    if (separator > 0 && stationPath.substr(separator) == kListenerSuffix) return true;
+  }
   return false;
 }
 
-// These authenticated API calls are only UI/account chrome. Keep them
-// available during login and startup, then suppress their periodic refreshes
-// once audio has proven that the station is fully joined.
+// Terms-of-service state can be required by login, so keep it during startup
+// and suppress later refreshes only after the station is fully joined.
 inline bool StationheadRequestIsBlockableAfterPlayback(const std::wstring& uriLower) {
-  static constexpr std::wstring_view kApiHost = L"production1.stationhead.com";
-  const size_t schemeEnd = uriLower.find(L"://");
-  if (schemeEnd == std::wstring::npos) return false;
-  const size_t hostAt = schemeEnd + 3;
-  size_t pathAt = uriLower.find_first_of(L"/?#", hostAt);
-  if (pathAt == std::wstring::npos) pathAt = uriLower.size();
-  if (uriLower.compare(hostAt, pathAt - hostAt, kApiHost) != 0 ||
-      pathAt == uriLower.size() || uriLower[pathAt] != L'/') {
-    return false;
-  }
-  const auto exactPath = [&](std::wstring_view path) {
-    if (uriLower.compare(pathAt, path.size(), path) != 0) return false;
-    const size_t end = pathAt + path.size();
-    return end == uriLower.size() || uriLower[end] == L'?' || uriLower[end] == L'#';
-  };
-  return exactPath(L"/plus/status") || exactPath(L"/tos");
+  return StationheadProductionApiPath(uriLower) == L"/tos";
 }
 
 inline bool StationheadCorePlaybackRequest(const std::wstring& uriLower) {
@@ -463,7 +474,9 @@ inline void ApplyStationheadResourceBlocking(ICoreWebView2Environment* environme
                   // Stationhead artwork and avatars before playback is armed.
                   block = true;
                 } else if (blockFonts && context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT) {
-                  block = armedNow;
+                  // Web fonts affect presentation only and are safe to reject
+                  // before Stationhead has joined or started playback.
+                  block = true;
                 } else if (context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_STYLESHEET) {
                   block = armedNow;
                 } else if (context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MEDIA) {
