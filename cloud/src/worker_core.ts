@@ -142,7 +142,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   if (url.pathname.startsWith(updateFilePrefix)) {
     if (request.method !== "GET") return methodNotAllowed(["GET"]);
     if (!authorizedAnyDevice(request, env)) return unauthorized();
-    return updateFileResponse(request, env, decodeURIComponent(url.pathname.slice(updateFilePrefix.length)));
+    return updateFileResponse(request, env, url.pathname.slice(updateFilePrefix.length));
   }
 
   if ([
@@ -174,11 +174,18 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   if (url.pathname === "/v1/refresh") {
     if (request.method !== "POST") return methodNotAllowed(["POST"]);
     if (!authorizedAction(request, env)) return unauthorized();
-    let names: string[] | undefined;
+    let body: { sources?: unknown };
     try {
-      const body = await request.json() as { sources?: unknown };
-      if (Array.isArray(body.sources)) names = body.sources.filter((value): value is string => typeof value === "string");
-    } catch {   }
+      body = await request.json() as { sources?: unknown };
+    } catch {
+      return json({ error: "invalid json" }, { status: 400 });
+    }
+    if (body.sources !== undefined && !Array.isArray(body.sources)) {
+      return json({ error: "sources must be an array" }, { status: 400 });
+    }
+    const names = Array.isArray(body.sources)
+      ? body.sources.filter((value): value is string => typeof value === "string")
+      : undefined;
     await requestRefresh(env, names);
     ctx.waitUntil(runScheduler(env));
     return json({ queued: true }, { status: 202 });
