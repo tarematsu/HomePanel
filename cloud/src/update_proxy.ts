@@ -100,9 +100,6 @@ function canonicalManifest(manifest: UpdateManifest): string {
   });
 }
 
-
-
-
 export async function readUpdateManifestIdentity(env: Env): Promise<{ version: string; manifestHash: string }> {
   const manifest = parseManifest(await readObjectText(env, updateKey(env, "latest/update-manifest.json")));
   return { version: manifest.version, manifestHash: await sha256(canonicalManifest(manifest)) };
@@ -135,7 +132,14 @@ export async function updateManifestResponse(request: Request, env: Env): Promis
   }
 }
 
-export async function updateFileResponse(request: Request, env: Env, name: string): Promise<Response> {
+export async function updateFileResponse(request: Request, env: Env, encodedName: string): Promise<Response> {
+  let name: string;
+  try {
+    name = decodeURIComponent(encodedName);
+  } catch {
+    return json({ error: "invalid update file path" }, 400);
+  }
+
   try {
     if (!ALLOWED_FILES.has(name) || name === "update-manifest.json") return json({ error: "not found" }, 404);
     const secret = signingSecret(env);
