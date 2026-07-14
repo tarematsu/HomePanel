@@ -233,18 +233,18 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   if (dashboardChanged || newsChanged) InvalidatePanelSection(nativeMainWindow_, PanelSection::News);
   if (controlsChanged) InvalidatePanelSection(nativeSideWindow_, PanelSection::Controls);
   if (stationheadChanged || stationheadHistoryChanged) {
-    InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
+    InvalidatePanelSection(nativeSideWindow_, PanelSection::Clock);
   }
 }
 
 void Renderer::TickNativePanels(int64_t nowMs) {
   if (!nativeDashboardVisible_) return;
-  if (nativeSideWindow_ && IsWindow(nativeSideWindow_) && IsWindowVisible(nativeSideWindow_)) {
-    InvalidatePanelSection(nativeSideWindow_, PanelSection::Clock);
-  }
-  if (nativeMainWindow_ && IsWindow(nativeMainWindow_) && IsWindowVisible(nativeMainWindow_) &&
-      NativePlaybackActive(nowMs)) {
+  if (nativeMainWindow_ && IsWindow(nativeMainWindow_) && IsWindowVisible(nativeMainWindow_)) {
     InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
+  }
+  if (nativeSideWindow_ && IsWindow(nativeSideWindow_) && IsWindowVisible(nativeSideWindow_) &&
+      NativePlaybackActive(nowMs)) {
+    InvalidatePanelSection(nativeSideWindow_, PanelSection::Clock);
   }
 }
 
@@ -259,18 +259,18 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
       const POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
       if (id == kNativeSideId) {
         const SidebarSections sections = SplitSidebarSections(client);
+        const RECT musicBody = CardBodyRect(CardContentRect(sections.clock));
+        const MusicRowRects musicRects = MusicRowFromBody(musicBody);
+        if (PtInRect(&musicRects.button, point)) {
+          QueueAction(UiAction::StationheadAudioToggle);
+          return 0;
+        }
         const ControlsRects controls = ControlsFromContent(CardContentRect(sections.controls));
         if (PtInRect(&controls.update, point)) QueueAction(UiAction::AppUpdate);
         else if (PtInRect(&controls.restart, point)) QueueAction(UiAction::Restart);
         return 0;
       }
-      if (id == kNativeMainId) {
-        const MainSections sections = SplitMainSections(client);
-        const RECT body = CardBodyRect(CardContentRect(sections.music));
-        const MusicRowRects rects = MusicRowFromBody(body);
-        if (PtInRect(&rects.button, point)) QueueAction(UiAction::StationheadAudioToggle);
-        return 0;
-      }
+      if (id == kNativeMainId) return 0;
       break;
     }
     case WM_PAINT:
@@ -295,13 +295,13 @@ void Renderer::PaintNativeSide(HWND hwnd) {
   const SidebarSections sections = SplitSidebarSections(scope.bounds);
   RECT overlap{};
   if (IntersectRect(&overlap, &scope.dirty, &sections.clock)) {
-    DrawClockSection(scope.dc, sections.clock);
+    DrawMusicSection(scope.dc, sections.clock);
   }
   if (IntersectRect(&overlap, &scope.dirty, &sections.air)) {
     DrawAirSection(scope.dc, sections.air);
   }
   if (IntersectRect(&overlap, &scope.dirty, &sections.weather)) {
-    DrawWeatherSection(scope.dc, sections.weather);
+    DrawEnergySection(scope.dc, sections.weather);
   }
   if (IntersectRect(&overlap, &scope.dirty, &sections.controls)) {
     DrawControlsSection(scope.dc, sections.controls);
@@ -314,10 +314,10 @@ void Renderer::PaintNativeMain(HWND hwnd) {
   const MainSections sections = SplitMainSections(scope.bounds);
   RECT overlap{};
   if (IntersectRect(&overlap, &scope.dirty, &sections.music)) {
-    DrawMusicSection(scope.dc, sections.music);
+    DrawClockSection(scope.dc, sections.music);
   }
   if (IntersectRect(&overlap, &scope.dirty, &sections.energy)) {
-    DrawEnergySection(scope.dc, sections.energy);
+    DrawWeatherSection(scope.dc, sections.energy);
   }
   if (IntersectRect(&overlap, &scope.dirty, &sections.news)) {
     DrawNewsSection(scope.dc, sections.news);

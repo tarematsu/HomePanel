@@ -201,9 +201,8 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& card) {
 
     SetTextColor(dc, kWidgetText);
     SelectObject(dc, TierFont(FontTier::Medium));
-    const int itemGap = std::max(4, bodyHeight * 20 / 1000);
     const int temperatureTop = hasIcon
-        ? iconBottom + itemGap
+        ? iconBottom
         : column.top + bodyHeight * 56 / 100;
     const int temperatureHeight = std::clamp(bodyHeight * 12 / 100, 20, 32);
     RECT tempRect{column.left, temperatureTop, column.right,
