@@ -55,7 +55,9 @@ export async function ensureSystemJobs(env: Env): Promise<void> {
            WHEN jobs.next_run_at=0 THEN 0
            WHEN jobs.next_run_at>?2 THEN ?2
            ELSE jobs.next_run_at
-         END`,
+         END
+       WHERE jobs.interval_seconds<>excluded.interval_seconds
+          OR (jobs.next_run_at<>0 AND jobs.next_run_at>?2)`,
     ).bind(OCTOPUS_INTERVAL_SECONDS, octopusDeadline),
   ]);
 }
