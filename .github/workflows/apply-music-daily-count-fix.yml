@@ -1,5 +1,6 @@
 name: Apply music daily count fix
 
+# One-time patch workflow; removed before merge.
 on:
   pull_request:
     branches:
