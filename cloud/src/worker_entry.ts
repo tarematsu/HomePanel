@@ -72,7 +72,7 @@ export default {
       && url.searchParams.has("expires")
       && url.searchParams.has("signature");
     if (signedUpdateAsset) {
-      return updateFileResponse(request, env, decodeURIComponent(path.slice(UPDATE_FILE_PREFIX.length)));
+      return updateFileResponse(request, env, path.slice(UPDATE_FILE_PREFIX.length));
     }
 
     if (request.method === "GET" && (path === "/v1/dashboard.json" || path === "/v1/meta")) {
