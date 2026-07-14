@@ -36,11 +36,7 @@ jobs:
                   raise SystemExit(f"{label}: expected one match, found {count}")
               text = text.replace(old, new, 1)
 
-          replace_once(
-              '      L"/streams",\n',
-              '',
-              'ambiguous streams endpoint block',
-          )
+          replace_once('      L"/streams",\n', '', 'ambiguous streams endpoint block')
 
           core_pattern = re.compile(
               r'\ninline bool StationheadCorePlaybackRequest\(const std::wstring& uriLower\) \{.*?\n\}\n',
@@ -74,26 +70,22 @@ jobs:
           )
           replace_once(socket_branch, '                }', 'generic realtime socket block')
 
-          replace_once(
-              '// social surfaces of the Stationhead API (chat, tipping, emoji, trending\n'
-              '// threads). Derived from an actual startup network capture; the audio\n'
-              '// stream and the core playback REST endpoints (/timestamp,\n'
-              '// /pusher/presenceAuth, /channels/alias/*, /me/country) are left untouched.\n'
-              '// The Pusher realtime WebSocket is NOT handled here (WebSocket upgrades don\'t\n'
-              '// raise WebResourceRequested); it is blocked separately at the network layer\n',
+          comment_pattern = re.compile(
+              r'// social surfaces of the Stationhead API.*?\ninline bool StationheadRequestIsBlockable',
+              re.DOTALL,
+          )
+          comment = (
               '// social surfaces of the Stationhead API (chat, tipping, emoji and trending\n'
               '// threads). Derived from an actual startup network capture; audio, playback\n'
               '// REST endpoints and Pusher realtime delivery are deliberately left untouched.\n'
               '// Pusher carries track transitions as well as chat/presence, so blocking it\n'
-              '// forces the player onto a roughly 10-second polling fallback.\n',
-              'resource blocking documentation',
+              '// forces the player onto a roughly 10-second polling fallback.\n'
+              '// Matched as case-insensitive substrings of the full URI.\n'
+              'inline bool StationheadRequestIsBlockable'
           )
-          replace_once(
-              '// by BlockStationheadRealtimeSockets so no new chat/presence is received.\n'
-              '// Matched as case-insensitive substrings of the full URI.\n',
-              '// Matched as case-insensitive substrings of the full URI.\n',
-              'obsolete Pusher documentation',
-          )
+          text, count = comment_pattern.subn(comment, text, count=1)
+          if count != 1:
+              raise SystemExit(f"resource blocking documentation: expected one match, found {count}")
 
           replace_once(
               'inline void BlockStationheadTelemetrySockets(ICoreWebView2* webview) {\n',
