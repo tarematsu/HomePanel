@@ -458,13 +458,10 @@ inline void ApplyStationheadResourceBlocking(ICoreWebView2Environment* environme
               COREWEBVIEW2_WEB_RESOURCE_CONTEXT context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL;
               if (SUCCEEDED(args->get_ResourceContext(&context))) {
                 if (blockImages && context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE) {
-
-
-
-
-
-                  block = armedNow ||
-                          (!lower.empty() && lower.find(L"stationhead.com") == std::wstring::npos);
+                  // Images are never required for background audio playback.
+                  // Block them from the first navigation to avoid downloading
+                  // Stationhead artwork and avatars before playback is armed.
+                  block = true;
                 } else if (blockFonts && context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT) {
                   block = armedNow;
                 } else if (context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_STYLESHEET) {
