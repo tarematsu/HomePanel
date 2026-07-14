@@ -327,8 +327,36 @@ inline bool StationheadRequestIsBlockable(const std::wstring& uriLower) {
   return false;
 }
 
+// These authenticated API calls are only UI/account chrome. Keep them
+// available during login and startup, then suppress their periodic refreshes
+// once audio has proven that the station is fully joined.
+inline bool StationheadRequestIsBlockableAfterPlayback(const std::wstring& uriLower) {
+  static constexpr std::wstring_view kApiHost = L"production1.stationhead.com";
+  const size_t schemeEnd = uriLower.find(L"://");
+  if (schemeEnd == std::wstring::npos) return false;
+  const size_t hostAt = schemeEnd + 3;
+  size_t pathAt = uriLower.find_first_of(L"/?#", hostAt);
+  if (pathAt == std::wstring::npos) pathAt = uriLower.size();
+  if (uriLower.compare(hostAt, pathAt - hostAt, kApiHost) != 0 ||
+      pathAt == uriLower.size() || uriLower[pathAt] != L'/') {
+    return false;
+  }
+  const auto exactPath = [&](std::wstring_view path) {
+    if (uriLower.compare(pathAt, path.size(), path) != 0) return false;
+    const size_t end = pathAt + path.size();
+    return end == uriLower.size() || uriLower[end] == L'?' || uriLower[end] == L'#';
+  };
+  return exactPath(L"/plus/status") || exactPath(L"/tos");
+}
+
 inline bool StationheadCorePlaybackRequest(const std::wstring& uriLower) {
   if (uriLower.empty()) return false;
+  // The captured Pusher-compatible socket carries station/queue updates even
+  // though it is hosted on a Stationhead domain rather than pusher.com.
+  if (uriLower.find(L"://realtime-production.stationhead.com/app/") !=
+      std::wstring::npos) {
+    return true;
+  }
   const bool stationhead = uriLower.find(L"stationhead.com") != std::wstring::npos;
   const bool spotify = uriLower.find(L"spotify") != std::wstring::npos ||
                        uriLower.find(L"scdn.co") != std::wstring::npos;
@@ -423,11 +451,12 @@ inline void ApplyStationheadResourceBlocking(ICoreWebView2Environment* environme
                 CoTaskMemFree(uriRaw);
               }
             }
-            bool block = StationheadRequestIsBlockable(lower);
+            const bool armedNow = armed.load(std::memory_order_relaxed);
+            bool block = StationheadRequestIsBlockable(lower) ||
+                         (armedNow && StationheadRequestIsBlockableAfterPlayback(lower));
             if (!block && (blockImages || blockFonts)) {
               COREWEBVIEW2_WEB_RESOURCE_CONTEXT context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL;
               if (SUCCEEDED(args->get_ResourceContext(&context))) {
-                const bool armedNow = armed.load(std::memory_order_relaxed);
                 if (blockImages && context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE) {
 
 
