@@ -126,7 +126,9 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
       MarkStationheadPlacementDirty();
       const StationheadStatus nextStationheadState =
           BuildRenderStationheadState(stationhead_, secondaryStationhead_, config_.stationhead);
-      UpdateRenderStationheadState(nextStationheadState);
+      StationheadStatus renderStationheadState = nextStationheadState;
+      renderStationheadState.primaryAudioSelected = scheduledPrimaryAudioAudible_;
+      UpdateRenderStationheadState(renderStationheadState);
       PublishRenderStateNow();
       return 0;
     }

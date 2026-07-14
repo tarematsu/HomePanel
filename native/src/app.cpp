@@ -46,7 +46,7 @@ uint32_t NextDelayFromDeadline(int64_t now, int64_t deadline, uint32_t fallbackM
 
 StationheadStatus BuildRenderStationheadState(const AppStationheadHandle& stationhead,
                                               const AppSecondaryStationheadHandle& secondary,
-                                              const StationheadConfig& config) {
+  const StationheadConfig& config) {
   StationheadStatus state = stationhead.Status();
   state.fallbackUrl = config.fallbackUrl;
   if (secondary) {
@@ -345,6 +345,7 @@ void App::Tick() {
   const StationheadStatus stationheadStatus = stationhead_->Status();
   StationheadStatus nextStationheadState = BuildRenderStationheadState(
       stationhead_, secondaryStationhead_, config_.stationhead);
+  nextStationheadState.primaryAudioSelected = scheduledPrimaryAudioAudible_;
   UpdateRenderStationheadState(nextStationheadState);
   UpdateStationheadPlayHistory(stationheadStatus);
   StartDeferredServices(now, stationheadStatus);
@@ -499,12 +500,16 @@ void App::PublishRenderStateNow() {
 
 void App::ApplyScheduledStationheadAudioProfile(bool primaryAudible) noexcept {
   scheduledPrimaryAudioAudible_ = primaryAudible;
-  if (stationhead_) stationhead_->SetAudioMuted(!primaryAudible);
-  if (secondaryStationhead_) secondaryStationhead_->SetAudioMuted(primaryAudible);
-  if (renderState_.stationhead.audioMuted != !primaryAudible ||
-      renderState_.stationhead.secondaryAudioMuted != primaryAudible) {
-    renderState_.stationhead.audioMuted = !primaryAudible;
-    renderState_.stationhead.secondaryAudioMuted = primaryAudible;
+  const bool primaryMuted = stationheadAudioMuted_ || !primaryAudible;
+  const bool secondaryMuted = stationheadAudioMuted_ || primaryAudible;
+  if (stationhead_) stationhead_->SetAudioMuted(primaryMuted);
+  if (secondaryStationhead_) secondaryStationhead_->SetAudioMuted(secondaryMuted);
+  if (renderState_.stationhead.audioMuted != primaryMuted ||
+      renderState_.stationhead.secondaryAudioMuted != secondaryMuted ||
+      renderState_.stationhead.primaryAudioSelected != primaryAudible) {
+    renderState_.stationhead.audioMuted = primaryMuted;
+    renderState_.stationhead.secondaryAudioMuted = secondaryMuted;
+    renderState_.stationhead.primaryAudioSelected = primaryAudible;
     MarkRenderStateDirty();
   }
 }
@@ -561,6 +566,9 @@ void App::HandleAction(UiAction action) {
       break;
     case UiAction::StationheadAudioToggle:
       ToggleStationheadAudio();
+      break;
+    case UiAction::StationheadAudioMute:
+      MuteStationheadAudio();
       break;
     case UiAction::ClearCache:
       ClearDisplayCache();

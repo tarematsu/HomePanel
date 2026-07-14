@@ -4,6 +4,7 @@ struct MusicRowRects {
   RECT row{};
   RECT artwork{};
   RECT button{};
+  RECT muteButton{};
 };
 
 MusicRowRects MusicRowFromBody(const RECT& body) {
@@ -14,11 +15,17 @@ MusicRowRects MusicRowFromBody(const RECT& body) {
   const int artSize = std::max(1, rowHeight - pad * 2);
   rects.artwork = RECT{rects.row.left, rects.row.top + pad, rects.row.left + artSize,
                        rects.row.top + pad + artSize};
-  const int buttonHeight = std::clamp(rowHeight * 34 / 100, 24, 44);
+  const int buttonGap = std::max(3, rowHeight * 4 / 100);
+  const int buttonHeight = std::min(
+      std::clamp(rowHeight * 28 / 100, 20, 44),
+      std::max(1, (rowHeight - buttonGap) / 2));
   const int buttonWidth = std::clamp(SpanX(body, 170), 64, 140);
-  const int buttonTop = rects.row.top + (rowHeight - buttonHeight) / 2;
+  const int buttonTop = rects.row.top +
+      (rowHeight - buttonHeight * 2 - buttonGap) / 2;
   rects.button = RECT{rects.row.right - buttonWidth, buttonTop, rects.row.right,
                       buttonTop + buttonHeight};
+  rects.muteButton = RECT{rects.row.right - buttonWidth, buttonTop + buttonHeight + buttonGap,
+                          rects.row.right, buttonTop + buttonHeight * 2 + buttonGap};
   return rects;
 }
 
@@ -263,6 +270,10 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
         const MusicRowRects musicRects = MusicRowFromBody(musicBody);
         if (PtInRect(&musicRects.button, point)) {
           QueueAction(UiAction::StationheadAudioToggle);
+          return 0;
+        }
+        if (PtInRect(&musicRects.muteButton, point)) {
+          QueueAction(UiAction::StationheadAudioMute);
           return 0;
         }
         const ControlsRects controls = ControlsFromContent(CardContentRect(sections.controls));

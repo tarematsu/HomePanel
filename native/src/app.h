@@ -390,8 +390,17 @@ class App {
     const bool primaryAudible = secondaryStationhead_
         ? !scheduledPrimaryAudioAudible_
         : true;
+    stationheadAudioMuted_ = false;
     ApplyScheduledStationheadAudioProfile(primaryAudible);
     renderState_.toast = primaryAudible ? L"A 音声ON" : L"B 音声ON";
+    toastUntil_ = UnixMillis() + 3000;
+    MarkRenderStateDirty();
+    InvalidateAll();
+  }
+  void MuteStationheadAudio() {
+    stationheadAudioMuted_ = true;
+    ApplyScheduledStationheadAudioProfile(scheduledPrimaryAudioAudible_);
+    renderState_.toast = L"MUTE";
     toastUntil_ = UnixMillis() + 3000;
     MarkRenderStateDirty();
     InvalidateAll();
@@ -483,6 +492,7 @@ class App {
   bool placedSecondaryPending_ = false;
   RECT placedBounds_{};
   bool scheduledPrimaryAudioAudible_ = true;
+  bool stationheadAudioMuted_ = false;
   WorkspaceTab selectedTab_ = WorkspaceTab::Main;
   RECT workspaceBounds_{0, 0, 1, 1};
   inline static App* current_ = nullptr;

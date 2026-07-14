@@ -47,6 +47,7 @@ struct StationheadStatus {
   bool audioPlaying = false;
   bool audioMuted = false;
   bool secondaryAudioMuted = false;
+  bool primaryAudioSelected = true;
   std::wstring url;
   // Render-only routing metadata for choosing the shared playback feed.
   std::wstring fallbackUrl;

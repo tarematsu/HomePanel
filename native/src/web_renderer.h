@@ -17,7 +17,8 @@ enum class UiAction {
   ClearCache,
   ShowLog,
   CloseMaintenance,
-  StationheadAudioToggle
+  StationheadAudioToggle,
+  StationheadAudioMute
 };
 
 struct AirHistorySample {

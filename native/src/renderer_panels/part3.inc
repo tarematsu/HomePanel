@@ -305,7 +305,7 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
   const NativePlaybackRender& sharedPlayback =
       bothStationheadsOnFallback ? playbackB : playbackA;
 
-  const bool primaryAudioAudible = !nativeStationhead_.audioMuted;
+  const bool primaryAudioSelected = nativeStationhead_.primaryAudioSelected;
   const auto drawRow = [&](const NativePlaybackRender& playback,
                            const std::wstring& fallbackTitle, const std::wstring& detail) {
     const MusicRowRects rects = MusicRowFromBody(body);
@@ -376,7 +376,13 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
     DrawWidgetCard(dc, rects.button, kWidgetSuccessSurface, CardRadius(rects.button));
     SetTextColor(dc, kWidgetGreen);
     SelectObject(dc, TierFont(FontTier::Small));
-    DrawTextInRect(dc, primaryAudioAudible ? L"A 音声ON" : L"B 音声ON", rects.button,
+    DrawTextInRect(dc, primaryAudioSelected ? L"A 音声ON" : L"B 音声ON", rects.button,
+                   DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+
+    DrawWidgetCard(dc, rects.muteButton, kWidgetDangerSurface,
+                   CardRadius(rects.muteButton));
+    SetTextColor(dc, kWidgetDanger);
+    DrawTextInRect(dc, L"MUTE", rects.muteButton,
                    DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   };
 
