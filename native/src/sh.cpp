@@ -9,6 +9,7 @@ namespace {
 constexpr int64_t kPrimaryNoAudioFallbackMs = 360'000;
 constexpr int64_t kPrimaryFallbackMonitorGraceMs = 60'000;
 constexpr int64_t kDailyPlayStatsIntervalMs = 5 * 60'000;
+constexpr int64_t kDailyPlayStatsRetryMs = 30'000;
 
 bool CallbackAlive(const std::shared_ptr<std::atomic<bool>>& alive) {
   return alive && alive->load(std::memory_order_acquire);
@@ -428,10 +429,15 @@ void StationheadPlayer::ConfigureWebView() {
                 for (uint32_t index = 0; index < chart.Size() && points.size() < 40; ++index) {
                   if (chart.GetAt(index).ValueType() != JsonValueType::Object) continue;
                   const auto point = chart.GetObjectAt(index);
+                  if (!point.HasKey(L"ts") || !point.HasKey(L"val")) continue;
                   points.push_back({
                       static_cast<int64_t>(json::Number(point, L"ts", 0)),
                       static_cast<int>(json::Number(point, L"val", 0)),
                   });
+                }
+                if (points.empty()) {
+                  log_.Warn(L"Stationhead authenticated stats response contained no valid chart points");
+                  return S_OK;
                 }
                 {
                   std::lock_guard lock(mutex_);
@@ -446,7 +452,9 @@ void StationheadPlayer::ConfigureWebView() {
                 const int status = static_cast<int>(json::Number(message, L"status", 0));
                 log_.Warn(L"Stationhead authenticated stats rejected with HTTP " +
                           std::to_wstring(status) + L"; waiting for the page session to refresh");
-                lastDailyPlayStatsAt_ = 0;
+                const int64_t now = UnixMillis();
+                lastDailyPlayStatsAt_ = now - kDailyPlayStatsIntervalMs + kDailyPlayStatsRetryMs;
+                nextTickAt_ = now + kDailyPlayStatsRetryMs;
                 return S_OK;
               }
               if (type == L"stationhead-auth-ready") {
@@ -457,6 +465,11 @@ void StationheadPlayer::ConfigureWebView() {
               if (type == L"stationhead-play-stats-error") {
                 const std::wstring error = message.GetNamedString(L"error", L"unknown").c_str();
                 log_.Warn(L"Stationhead authenticated stats unavailable: " + error);
+                if (error == L"no-auth-header") {
+                  const int64_t now = UnixMillis();
+                  lastDailyPlayStatsAt_ = now - kDailyPlayStatsIntervalMs + kDailyPlayStatsRetryMs;
+                  nextTickAt_ = now + kDailyPlayStatsRetryMs;
+                }
                 return S_OK;
               }
               if (!spotifyAuthorization_ ||
@@ -475,6 +488,7 @@ void StationheadPlayer::ConfigureWebView() {
               SetVisible(false);
               PostChange(StationheadChangeReturnMain | StationheadChangeReleaseAuth);
             } catch (...) {
+              log_.Warn(L"Stationhead authenticated API stats message had an invalid response shape");
             }
             return S_OK;
           }).Get(), &webMessageToken_);

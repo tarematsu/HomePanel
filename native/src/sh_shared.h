@@ -169,11 +169,13 @@ inline std::wstring StationheadAuthCaptureScript() {
   if (window.__homepanelStationheadAuthCapture) return;
   window.__homepanelStationheadAuthCapture = true;
   window.__homepanelStationheadAuthHeaders = null;
+  window.__homepanelStationheadRejectedAuthorization = null;
   const relevant = url => /(^|\.)stationhead\.com/i.test(String(url || ''));
   const capture = (url, getHeader) => {
     if (!relevant(url)) return;
     const authorization = getHeader('authorization');
     if (!authorization) return;
+    if (authorization === window.__homepanelStationheadRejectedAuthorization) return;
     const next = {
       authorization,
       'sth-device-uid': getHeader('sth-device-uid') || '',
@@ -181,6 +183,7 @@ inline std::wstring StationheadAuthCaptureScript() {
       'app-version': getHeader('app-version') || '1.0.0',
     };
     const changed = window.__homepanelStationheadAuthHeaders?.authorization !== authorization;
+    window.__homepanelStationheadRejectedAuthorization = null;
     window.__homepanelStationheadAuthHeaders = next;
     if (changed) {
       try { window.chrome?.webview?.postMessage({ type: 'stationhead-auth-ready' }); } catch (_) {}
@@ -190,7 +193,11 @@ inline std::wstring StationheadAuthCaptureScript() {
   if (nativeFetch) {
     window.fetch = function(input, init) {
       try {
-        const headers = new Headers((init && init.headers) || (input && input.headers) || {});
+        const headers = new Headers((input && input.headers) || {});
+        if (init && init.headers) {
+          const initHeaders = new Headers(init.headers);
+          initHeaders.forEach((value, name) => headers.set(name, value));
+        }
         const url = typeof input === 'string' ? input : (input && input.url) || '';
         capture(url, name => headers.get(name));
       } catch (_) {}
@@ -242,6 +249,7 @@ inline std::wstring StationheadApiPlayStatsScript(int channelId) {
     headers: Object.assign({ accept: 'application/json' }, headers),
   }).then(async response => {
     if (response.status === 401 || response.status === 403) {
+      window.__homepanelStationheadRejectedAuthorization = headers.authorization;
       window.__homepanelStationheadAuthHeaders = null;
       post({ type: 'stationhead-play-stats-auth-failed', status: response.status });
       return null;
