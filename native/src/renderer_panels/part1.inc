@@ -85,6 +85,25 @@ std::wstring TrackTimeText(int64_t milliseconds) {
   return text;
 }
 
+int RecentStationheadPlayIncrease(const std::vector<StationheadPlayHistorySample>& history) {
+  constexpr int64_t kRecentWindowMs = 60LL * 60 * 1000;
+  if (history.size() < 2) return -1;
+
+  const auto& latest = history.back();
+  const int64_t target = latest.timestamp - kRecentWindowMs;
+  const auto baseline = std::upper_bound(
+      history.begin(), history.end(), target,
+      [](int64_t timestamp, const StationheadPlayHistorySample& sample) {
+        return timestamp < sample.timestamp;
+      });
+  if (baseline == history.begin()) return -1;
+
+  const int delta = latest.value - std::prev(baseline)->value;
+  // The daily counter can reset at midnight; in that case the current value
+  // is the number accumulated since the reset rather than a negative delta.
+  return delta >= 0 ? delta : latest.value;
+}
+
 void DrawPremultipliedBitmap(HDC dc, HBITMAP bitmap, const RECT& target) {
   if (!bitmap) return;
   const int width = target.right - target.left;

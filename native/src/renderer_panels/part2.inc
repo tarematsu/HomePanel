@@ -213,12 +213,14 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   const bool sensorsChanged = nativeSensors_ != state.sensors;
   const bool historyChanged = nativeAirHistory_ != state.airHistory;
   const bool stationheadChanged = nativeStationhead_ != state.stationhead;
+  const bool stationheadHistoryChanged = nativeStationheadPlayHistory_ != state.stationheadPlayHistory;
   const bool controlsChanged = nativeAppVersion_ != state.appVersion || nativeToast_ != state.toast;
   const bool newsChanged = nativeNewsIndex_ != state.newsIndex;
   const bool dashboardChanged = nativeRenderedDashboardRevision_ != dashboardSourceRevision_;
 
   nativeSensors_ = state.sensors;
   nativeAirHistory_ = state.airHistory;
+  nativeStationheadPlayHistory_ = state.stationheadPlayHistory;
   nativeStationhead_ = state.stationhead;
   nativeAppVersion_ = state.appVersion;
   nativeToast_ = state.toast;
@@ -232,7 +234,7 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   }
   if (dashboardChanged || newsChanged) InvalidatePanelSection(nativeMainWindow_, PanelSection::News);
   if (controlsChanged) InvalidatePanelSection(nativeSideWindow_, PanelSection::Controls);
-  if (stationheadChanged) {
+  if (stationheadChanged || stationheadHistoryChanged) {
     InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
   }
 }

@@ -267,18 +267,23 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
   SetTextColor(dc, kWidgetSubtle);
   RECT header{content.left, content.top, content.right, content.top + CardHeaderHeight(content)};
   DrawTextInRect(dc, L"ミュージック", header, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-  std::wstring dailyPlaySummary = L"本日 --　昨日 --";
+  std::wstring dailyPlaySummary = L"直近1時間 --　本日 --　昨日 --";
   if (nativeStationhead_.dailyPlayStatsUpdatedAt > 0 &&
       !nativeStationhead_.dailyPlayCounts.empty()) {
     const auto& counts = nativeStationhead_.dailyPlayCounts;
-    dailyPlaySummary = L"本日 " + std::to_wstring(counts.back().value) + L"　昨日 ";
+    const int recentIncrease = RecentStationheadPlayIncrease(nativeStationheadPlayHistory_);
+    const std::wstring recentText = recentIncrease >= 0
+        ? std::to_wstring(recentIncrease)
+        : L"--";
+    dailyPlaySummary = L"直近1時間 " + recentText + L"　本日 " +
+                       std::to_wstring(counts.back().value) + L"　昨日 ";
     dailyPlaySummary += counts.size() >= 2
         ? std::to_wstring(counts[counts.size() - 2].value)
         : L"--";
   }
   SetTextColor(dc, kWidgetSubtle);
   RECT dailyPlayHeader = header;
-  dailyPlayHeader.left += SpanX(header, 320);
+  dailyPlayHeader.left += SpanX(header, 120);
   DrawTextInRect(dc, dailyPlaySummary, dailyPlayHeader,
                  DT_RIGHT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
   RECT body = CardBodyRect(content);

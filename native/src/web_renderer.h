@@ -254,6 +254,7 @@ class Renderer {
   HWND nativeRadarWindow_{};
   SensorSnapshot nativeSensors_{};
   std::vector<AirHistorySample> nativeAirHistory_;
+  std::vector<StationheadPlayHistorySample> nativeStationheadPlayHistory_;
   StationheadStatus nativeStationhead_{};
   DashboardSnapshot nativeDashboard_{};
   std::wstring nativeAppVersion_;
