@@ -35,6 +35,7 @@ struct RenderState {
   StationheadStatus stationhead;
   std::wstring appVersion;
   std::vector<AirHistorySample> airHistory;
+  std::vector<StationheadPlayHistorySample> stationheadPlayHistory;
   int workspaceTab = 0;
   std::wstring toast;
   int newsIndex = 0;
@@ -216,6 +217,7 @@ class Renderer {
   void DrawWeatherSection(HDC dc, const RECT& card);
   void DrawControlsSection(HDC dc, const RECT& card);
   void DrawMusicSection(HDC dc, const RECT& card);
+  void DrawStationheadPlayHistoryBar(HDC dc, const RECT& bar);
   void DrawEnergySection(HDC dc, const RECT& card);
   void DrawNewsSection(HDC dc, const RECT& card);
   HBITMAP NativePanelBackBuffer(HWND hwnd, HDC dc, int width, int height);
@@ -253,6 +255,7 @@ class Renderer {
   HWND nativeRadarWindow_{};
   SensorSnapshot nativeSensors_{};
   std::vector<AirHistorySample> nativeAirHistory_;
+  std::vector<StationheadPlayHistorySample> nativeStationheadPlayHistory_;
   StationheadStatus nativeStationhead_{};
   DashboardSnapshot nativeDashboard_{};
   std::wstring nativeAppVersion_;

@@ -27,7 +27,7 @@ void App::LoadStationheadPlayHistory() {
               [](const StationheadPlayHistorySample& left, const StationheadPlayHistorySample& right) {
                 return left.timestamp < right.timestamp;
               });
-    stationheadPlayHistory_ = std::move(history);
+    renderState_.stationheadPlayHistory = std::move(history);
   } catch (const std::exception& error) {
     if (logger_) logger_->Warn(L"Stationhead play history load failed: " + Utf8ToWide(error.what()));
   } catch (...) {
@@ -40,7 +40,7 @@ void App::SaveStationheadPlayHistory() const {
     std::ostringstream output;
     output << "[";
     bool first = true;
-    for (const auto& sample : stationheadPlayHistory_) {
+    for (const auto& sample : renderState_.stationheadPlayHistory) {
       if (!first) output << ",";
       first = false;
       output << "{\"t\":" << sample.timestamp << ",\"v\":" << sample.value << "}";
@@ -63,7 +63,7 @@ void App::UpdateStationheadPlayHistory(const StationheadStatus& status) {
   if (status.dailyPlayStatsUpdatedAt <= 0 || status.dailyPlayCounts.empty()) return;
 
   const int64_t bucket = status.dailyPlayStatsUpdatedAt / sampleBucketMs * sampleBucketMs;
-  auto& history = stationheadPlayHistory_;
+  auto& history = renderState_.stationheadPlayHistory;
   if (!history.empty() && history.back().timestamp == bucket) return;
   history.push_back({bucket, status.dailyPlayCounts.back().value});
 
@@ -75,6 +75,7 @@ void App::UpdateStationheadPlayHistory(const StationheadStatus& status) {
                 history.end());
   if (history.size() > maxSamples) history.erase(history.begin(), history.end() - maxSamples);
   SaveStationheadPlayHistory();
+  MarkRenderStateDirty();
 }
 
 }

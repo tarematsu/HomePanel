@@ -22,6 +22,7 @@ constexpr COLORREF kWidgetGreen = RGB(48, 209, 88);
 constexpr COLORREF kWidgetOrange = RGB(255, 159, 10);
 constexpr COLORREF kWidgetCyan = RGB(50, 173, 230);
 constexpr COLORREF kWidgetPurple = RGB(175, 82, 222);
+constexpr COLORREF kWidgetBlack = RGB(0, 0, 0);
 constexpr COLORREF kWidgetTrack = RGB(42, 52, 66);
 constexpr COLORREF kWidgetWarning = RGB(255, 214, 10);
 constexpr COLORREF kWidgetDanger = RGB(255, 69, 58);
@@ -592,12 +593,14 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   const bool sensorsChanged = nativeSensors_ != state.sensors;
   const bool historyChanged = nativeAirHistory_ != state.airHistory;
   const bool stationheadChanged = nativeStationhead_ != state.stationhead;
+  const bool stationheadHistoryChanged = nativeStationheadPlayHistory_ != state.stationheadPlayHistory;
   const bool controlsChanged = nativeAppVersion_ != state.appVersion || nativeToast_ != state.toast;
   const bool newsChanged = nativeNewsIndex_ != state.newsIndex;
   const bool dashboardChanged = nativeRenderedDashboardRevision_ != dashboardSourceRevision_;
 
   nativeSensors_ = state.sensors;
   nativeAirHistory_ = state.airHistory;
+  nativeStationheadPlayHistory_ = state.stationheadPlayHistory;
   nativeStationhead_ = state.stationhead;
   nativeAppVersion_ = state.appVersion;
   nativeToast_ = state.toast;
@@ -611,7 +614,9 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   }
   if (dashboardChanged || newsChanged) InvalidatePanelSection(nativeMainWindow_, PanelSection::News);
   if (controlsChanged) InvalidatePanelSection(nativeSideWindow_, PanelSection::Controls);
-  if (stationheadChanged) InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
+  if (stationheadChanged || stationheadHistoryChanged) {
+    InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
+  }
 }
 
 void Renderer::TickNativePanels(int64_t nowMs) {
@@ -1027,7 +1032,14 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
     DrawTextInRect(dc, L"本日 " + std::to_wstring(nativeStationhead_.dailyPlayCounts.back().value),
                    header, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
   }
-  const RECT body = CardBodyRect(content);
+  RECT body = CardBodyRect(content);
+  RECT historyBar{};
+  if (nativeStationheadPlayHistory_.size() >= 2) {
+    const int barHeight = std::clamp(SpanY(body, 70), 6, 14);
+    const int barGap = std::max(4, SpanY(body, 35));
+    historyBar = RECT{body.left, body.bottom - barHeight, body.right, body.bottom};
+    body.bottom -= barHeight + barGap;
+  }
 
   const int64_t nowMs = UnixMillis();
   const NativePlaybackRender playbackA = ResolveNativePlayback(0, nowMs);
@@ -1119,7 +1131,45 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
           L"Buddy46",
           playbackB.available && !playbackB.hasTrack ? L"次の曲を待機中"
               : nativeStationhead_.secondaryAudioMuted ? L"音声OFF" : L"音声ON");
+  if (historyBar.right > historyBar.left) DrawStationheadPlayHistoryBar(dc, historyBar);
   SelectObject(dc, previousFont);
+}
+
+// A simple purple/black timeline: each slice is one recorded interval of the
+// account's own daily play counter (see StationheadPlayHistorySample), purple
+// where the counter moved (listening) and black where it held flat (not
+// listening). Shows at most the most recent kMaxSlices intervals.
+void Renderer::DrawStationheadPlayHistoryBar(HDC dc, const RECT& bar) {
+  if (bar.right <= bar.left || bar.bottom <= bar.top) return;
+  const int radius = std::max(2L, bar.bottom - bar.top);
+  DrawWidgetCard(dc, bar, kWidgetTrack, radius);
+  const auto& history = nativeStationheadPlayHistory_;
+  if (history.size() < 2) return;
+
+  constexpr size_t kMaxSlices = 48;  // last ~4 hours at the 5-minute sample interval
+  const size_t totalIntervals = history.size() - 1;
+  const size_t count = std::min(totalIntervals, kMaxSlices);
+  const size_t firstPrevIndex = history.size() - 1 - count;
+  const int width = static_cast<int>(bar.right - bar.left);
+  if (width <= 0) return;
+
+  const int saved = SaveDC(dc);
+  HRGN clip = CreateRoundRectRgn(bar.left, bar.top, bar.right + 1, bar.bottom + 1, radius, radius);
+  ExtSelectClipRgn(dc, clip, RGN_AND);
+  DeleteObject(clip);
+  for (size_t i = 0; i < count; ++i) {
+    const auto& previous = history[firstPrevIndex + i];
+    const auto& current = history[firstPrevIndex + i + 1];
+    const bool played = current.value != previous.value;
+    const int left = bar.left + static_cast<int>(static_cast<int64_t>(width) * static_cast<int64_t>(i) / static_cast<int64_t>(count));
+    const int right = bar.left + static_cast<int>(static_cast<int64_t>(width) * static_cast<int64_t>(i + 1) / static_cast<int64_t>(count));
+    if (right <= left) continue;
+    RECT slice{left, bar.top, right, bar.bottom};
+    HBRUSH fill = CreateSolidBrush(played ? kWidgetPurple : kWidgetBlack);
+    FillRect(dc, &slice, fill);
+    DeleteObject(fill);
+  }
+  RestoreDC(dc, saved);
 }
 
 void Renderer::DrawEnergySection(HDC dc, const RECT& card) {

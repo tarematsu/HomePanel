@@ -459,7 +459,6 @@ class App {
   AppStationheadHandle stationhead_;
   AppSecondaryStationheadHandle secondaryStationhead_;
   RenderState renderState_;
-  std::vector<StationheadPlayHistorySample> stationheadPlayHistory_;
   std::atomic<bool> telemetryBusy_{false};
   std::atomic<bool> updateBusy_{false};
   std::thread telemetryThread_;
