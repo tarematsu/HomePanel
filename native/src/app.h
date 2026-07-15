@@ -45,7 +45,7 @@ class StationheadHandleBase {
   void SetAudioMuted(bool muted) noexcept {
     if (audioMuted_ == muted) return;
     audioMuted_ = muted;
-    ApplyAudioState();
+    if (player_) player_->SetMuted(muted);
   }
   void ToggleAudioMuted() noexcept { SetAudioMuted(!audioMuted_); }
   bool AudioMuted() const noexcept { return audioMuted_; }
@@ -53,7 +53,7 @@ class StationheadHandleBase {
     const double clamped = std::clamp(volume, 0.0, 1.0);
     if (audioVolume_ == clamped) return;
     audioVolume_ = clamped;
-    ApplyAudioState();
+    if (player_) player_->SetVolume(clamped);
   }
   double AudioVolume() const noexcept { return audioVolume_; }
 
@@ -109,9 +109,9 @@ class StationheadHandleBase {
   void BringMainWindowToFront(HWND host) const noexcept {
     if (!host || !IsWindow(host)) return;
     HWND root = GetAncestor(host, GA_ROOT);
-    if (!root || !IsWindow(root)) return;
+    if (!root || !IsWindow(root) || GetForegroundWindow() == root) return;
     SetWindowPos(root, HWND_TOP, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOSENDCHANGING);
     UpdateWindow(root);
   }
 
@@ -122,17 +122,14 @@ class StationheadHandleBase {
     const auto status = player_->Status();
     const bool interactive = static_cast<const Derived*>(this)->IsInteractive(status);
     const bool preview = startupPreviewActive_;
-    const RECT activeBounds = preview ? startupPreviewBounds_ : workspaceBounds_;
     const bool surfaceVisible = interactive || preview || status.visible;
-    const int width = surfaceVisible
-        ? std::max(1L, activeBounds.right - activeBounds.left)
-        : 1;
-    const int height = surfaceVisible
-        ? std::max(1L, activeBounds.bottom - activeBounds.top)
-        : 1;
-    const HWND placement = surfaceVisible ? HWND_TOP : HWND_BOTTOM;
-    SetWindowPos(host, placement, activeBounds.left, activeBounds.top,
-                 width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (!surfaceVisible) return;
+    const RECT activeBounds = preview ? startupPreviewBounds_ : workspaceBounds_;
+    const int width = std::max(1L, activeBounds.right - activeBounds.left);
+    const int height = std::max(1L, activeBounds.bottom - activeBounds.top);
+    SetWindowPos(host, HWND_TOP, activeBounds.left, activeBounds.top,
+                 width, height,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOSENDCHANGING);
     if (!preview && interactive) BringMainWindowToFront(host);
   }
 
@@ -144,7 +141,6 @@ class StationheadHandleBase {
 
   void ApplyBounds() {
     if (!player_) return;
-    ApplyAudioState();
     if (startupPreviewActive_) {
       player_->SetStartupPreviewBounds(startupPreviewBounds_);
     } else {
@@ -205,47 +201,40 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
     if (!player_) return;
     ApplyInteractiveBounds();
     player_->Reconnect();
-    ApplyAudioState();
     ApplyBounds();
   }
   void SetPlaybackFallback(bool active, const std::wstring& reason) {
     if (!player_) return;
     player_->SetPlaybackFallback(active, reason);
-    ApplyAudioState();
     ApplyBounds();
   }
   void ShowForLogin() {
     if (!player_) return;
     ApplyInteractiveBounds();
     player_->ShowForLogin();
-    ApplyAudioState();
     ApplyBounds();
   }
   void ShowAfterAudioStop() {
     if (!player_) return;
     ApplyInteractiveBounds();
     player_->ShowAfterAudioStop();
-    ApplyAudioState();
     ApplyBounds();
   }
   void OpenSpotifyAuthorization(const std::wstring& url) {
     if (!player_) return;
     ApplyInteractiveBounds();
     player_->OpenSpotifyAuthorization(url);
-    ApplyAudioState();
     ApplyBounds();
   }
   void ReleaseCompletedAuth() {
     if (!player_) return;
     player_->ReleaseCompletedAuth();
-    ApplyAudioState();
     ApplyBounds();
   }
   void ToggleView() {
     if (!player_) return;
     ApplyInteractiveBounds();
     player_->ToggleView();
-    ApplyAudioState();
     ApplyBounds();
   }
   uint32_t ConsumeChangeFlags() {
@@ -279,15 +268,12 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
                                     status.processFailed;
       if (SuppressTrackTransitionGap(status.audioPlaying, forceInteractive)) {
         player_->KeepPlaybackBehindDashboard();
-        ApplyAudioState();
-        RaiseActiveHost();
         return;
       }
     } else {
       ApplyInteractiveBounds();
     }
     player_->SelectTab(tab);
-    ApplyAudioState();
     ApplyBounds();
   }
 
@@ -344,13 +330,11 @@ class AppSecondaryStationheadHandle
     if (!player_) return;
     ApplyInteractiveBounds();
     player_->Reconnect();
-    ApplyAudioState();
     ApplyBounds();
   }
   void SetPlaybackFallback(bool active, const std::wstring& reason) {
     if (!player_) return;
     player_->SetPlaybackFallback(active, reason);
-    ApplyAudioState();
     ApplyBounds();
   }
   SecondaryStationheadStatus Status() const {
