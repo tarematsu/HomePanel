@@ -179,7 +179,8 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& card) {
     // left a large, uneven gap above and below the value.
     const int rainHeight = std::clamp(bodyHeight * 12 / 100, 18, 28);
     RECT rainRect{column.left, tempRect.bottom, column.right,
-                  std::min(static_cast<int>(column.bottom), tempRect.bottom + rainHeight)};
+                  std::min(static_cast<int>(column.bottom),
+                          static_cast<int>(tempRect.bottom) + rainHeight)};
     const std::wstring rain = hasData ? NumberOrDash(rainMm, 0) + L"mm" : L"--";
     DrawTextInRect(dc, rain, rainRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   }

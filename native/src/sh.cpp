@@ -110,7 +110,11 @@ void StationheadPlayer::ApplyAudioPlaybackState(bool playing, const std::wstring
   }
   nextTickAt_ = 0;
   if (changed) log_.Warn(L"Stationhead " + std::wstring(RoleTag()) + L" audio stopped (" + source + L")");
-  if (!spotifyAuthorization_) SelectTab(StationheadTabKind::None);
+  // Don't reveal the player here: a stop can be a brief track-transition gap,
+  // and the App layer's RefreshVisibility()/SelectTab(None) calls (which know
+  // about the transition grace period) already re-evaluate visibility on the
+  // next tick. Showing it unconditionally on every stop made the window pop
+  // to the front for an instant on every track change.
   PostChange();
 }
 
