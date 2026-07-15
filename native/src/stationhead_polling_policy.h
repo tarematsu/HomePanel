@@ -44,7 +44,7 @@ inline constexpr bool StationheadNonPlaybackScriptUrl(std::wstring_view uriLower
 }
 
 static_assert(StationheadNonPlaybackScriptUrl(
-    L"https://www.stationhead.com/assets/ChatPanel-a1b2.js"));
+    L"https://www.stationhead.com/assets/chat-panel-a1b2.js"));
 static_assert(StationheadNonPlaybackScriptUrl(
     L"https://www.stationhead.com/_next/static/chunks/listeners-modal.123.js?build=1"));
 static_assert(!StationheadNonPlaybackScriptUrl(
