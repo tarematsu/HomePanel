@@ -28,9 +28,8 @@ HWND CreateStationheadChildHost(HWND parent, const wchar_t* className, const wch
 }
 
 bool WindowClientSizeMatches(HWND window, int width, int height) noexcept {
-  if (!window || !IsWindow(window)) return false;
   RECT client{};
-  return GetClientRect(window, &client) &&
+  return window && GetClientRect(window, &client) &&
          client.right - client.left == width &&
          client.bottom - client.top == height;
 }
