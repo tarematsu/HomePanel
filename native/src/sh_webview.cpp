@@ -41,7 +41,7 @@ void StationheadPlayer::ConfigureWebView() {
     if (SUCCEEDED(settings.As(&settings3))) settings3->put_AreBrowserAcceleratorKeysEnabled(FALSE);
   }
   ApplyStationheadResourceBlocking(environment_.Get(), webview_.Get(), config_,
-                                   resourceBlockingArmed_, resourceRequestedToken_);
+                                   resourceBlockingArmed_, resourceRequestedToken_, log_);
 
   ComPtr<ICoreWebView2_8> audioView;
   if (SUCCEEDED(webview_.As(&audioView)) && audioView) {

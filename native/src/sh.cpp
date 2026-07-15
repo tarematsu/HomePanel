@@ -67,6 +67,18 @@ void StationheadPlayer::ResetNavigationRouteState() {
 void StationheadPlayer::ApplyAudioPlaybackState(bool playing, const std::wstring& source) {
   const bool changed =
       audioPlaying_.exchange(playing, std::memory_order_relaxed) != playing;
+  // Give the page's own auto-click scanners the same ground truth WebView2's
+  // native audio detection already established, instead of leaving them to
+  // infer "is it playing" from page-reported signals (like mediaSession
+  // metadata) that a site can set before audio is actually audible - which
+  // would make the scanners think Start Listening was already handled and
+  // stop trying to press it.
+  if (webview_) {
+    webview_->ExecuteScript(
+        playing ? L"window.__homepanelAudioPlaying = true;"
+                : L"window.__homepanelAudioPlaying = false;",
+        nullptr);
+  }
   if (playing) {
     resourceBlockingArmed_ = true;
     loginRequired_ = false;

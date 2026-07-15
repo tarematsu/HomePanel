@@ -97,6 +97,26 @@ class StationheadHandleBase {
            !SuppressTrackTransitionGap(status.audioPlaying, false);
   }
 
+  // Re-evaluates whether the player currently needs to be shown (login
+  // required, Spotify auth, or simply not playing yet) and applies that,
+  // the same way SelectTab(None) does. SetBounds()/SetStartupBounds() alone
+  // do not reveal the player - they only relayout at whatever visibility was
+  // last decided - so this must be called on every tick a caller wants the
+  // player's own automatic need for attention (e.g. a still-unclicked Start
+  // Listening screen) to be reflected, not just its bounds.
+  void RefreshVisibility() {
+    if (!player_) return;
+    const StationheadStatus status = player_->Status();
+    const bool forceInteractive = status.loginRequired || status.spotifyAuthorization ||
+                                  status.processFailed;
+    if (SuppressTrackTransitionGap(status.audioPlaying, forceInteractive)) {
+      if (status.visible) player_->KeepPlaybackBehindDashboard();
+      return;
+    }
+    player_->SelectTab(StationheadTabKind::None);
+    ApplyBounds();
+  }
+
  protected:
   static constexpr int64_t kTrackTransitionGraceMs = 12'000;
 
@@ -269,16 +289,10 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
     selectedTab_ = tab;
     if (!player_) return;
     if (tab == StationheadTabKind::None) {
-      const StationheadStatus status = player_->Status();
-      const bool forceInteractive = status.loginRequired || status.spotifyAuthorization ||
-                                    status.processFailed;
-      if (SuppressTrackTransitionGap(status.audioPlaying, forceInteractive)) {
-        if (status.visible) player_->KeepPlaybackBehindDashboard();
-        return;
-      }
-    } else {
-      ApplyInteractiveBounds();
+      RefreshVisibility();
+      return;
     }
+    ApplyInteractiveBounds();
     player_->SelectTab(tab);
     ApplyBounds();
   }

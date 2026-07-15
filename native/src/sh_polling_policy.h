@@ -1,4 +1,5 @@
 #pragma once
+#include "logger.h"
 
 // Keep the shared helpers available, but replace the policy-sensitive helpers
 // with native-application implementations.
@@ -90,11 +91,12 @@ inline void ApplyStationheadResourceBlocking(
     ICoreWebView2* webview,
     const StationheadConfig& config,
     std::atomic<bool>& armed,
-    EventRegistrationToken& token) {
+    EventRegistrationToken& token,
+    Logger& log) {
   ApplyStationheadResourceBlockingBase(
       environment, webview, config, armed, token);
   ApplyStationheadNonPlaybackScriptBlocking(environment, webview);
-  ApplyStationheadAdditionalScriptBlocking(environment, webview);
+  ApplyStationheadAdditionalScriptBlocking(environment, webview, log);
 }
 
 // Pusher carries both track transitions and live social traffic. The socket
@@ -257,6 +259,7 @@ inline std::wstring StationheadAutoplayRecoveryScript(const wchar_t* globalName,
       Number(style.opacity || 1) > 0 && style.pointerEvents !== 'none';
   };
   const playing = () => {
+    if (typeof window.__homepanelAudioPlaying === 'boolean') return window.__homepanelAudioPlaying;
     if (navigator.mediaSession?.playbackState === 'playing') return true;
     return Array.from(document.querySelectorAll('audio,video')).some(element =>
       !element.paused && !element.ended && element.readyState >= 2);

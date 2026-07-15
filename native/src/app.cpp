@@ -493,6 +493,7 @@ void App::ApplyStationheadWindowPlacement(const StationheadStatus& primaryStatus
   stationhead_->SelectTab(StationheadTabKind::None);
   if (secondaryStationhead_) {
     secondaryStationhead_->SetBounds(secondaryPending ? right : bounds);
+    secondaryStationhead_->RefreshVisibility();
   }
 }
 

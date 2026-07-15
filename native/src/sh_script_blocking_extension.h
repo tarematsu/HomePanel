@@ -75,6 +75,7 @@ inline std::wstring StationheadNativeStartClickBridgeScript() {
     element?.getAttribute?.('data-testid')
   ].filter(Boolean).join(' '));
   const playing = () => {
+    if (typeof window.__homepanelAudioPlaying === 'boolean') return window.__homepanelAudioPlaying;
     if (navigator.mediaSession?.playbackState === 'playing') return true;
     return Array.from(document.querySelectorAll('audio,video')).some(element =>
       !element.paused && !element.ended && element.readyState >= 2);
@@ -161,7 +162,8 @@ inline bool ParseStationheadNativeClickMessage(std::wstring_view message,
 
 inline void DispatchStationheadNativeClick(ICoreWebView2* webview,
                                            double x,
-                                           double y) {
+                                           double y,
+                                           Logger& log) {
   if (!webview) return;
   std::wostringstream pressed;
   pressed << std::fixed << std::setprecision(2)
@@ -172,7 +174,13 @@ inline void DispatchStationheadNativeClick(ICoreWebView2* webview,
   view->CallDevToolsProtocolMethod(
       L"Input.dispatchMouseEvent", pressed.str().c_str(),
       Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
-          [view, x, y](HRESULT, LPCWSTR) -> HRESULT {
+          [view, x, y, &log](HRESULT pressedResult, LPCWSTR) -> HRESULT {
+            if (FAILED(pressedResult)) {
+              std::wostringstream detail;
+              detail << L"Stationhead native click mousePressed dispatch failed 0x"
+                     << std::hex << static_cast<unsigned long>(pressedResult);
+              log.Warn(detail.str());
+            }
             if (!view) return S_OK;
             std::wostringstream released;
             released << std::fixed << std::setprecision(2)
@@ -182,14 +190,23 @@ inline void DispatchStationheadNativeClick(ICoreWebView2* webview,
             view->CallDevToolsProtocolMethod(
                 L"Input.dispatchMouseEvent", released.str().c_str(),
                 Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
-                    [](HRESULT, LPCWSTR) -> HRESULT { return S_OK; }).Get());
+                    [&log](HRESULT releasedResult, LPCWSTR) -> HRESULT {
+                      if (FAILED(releasedResult)) {
+                        std::wostringstream detail;
+                        detail << L"Stationhead native click mouseReleased dispatch failed 0x"
+                               << std::hex << static_cast<unsigned long>(releasedResult);
+                        log.Warn(detail.str());
+                      }
+                      return S_OK;
+                    }).Get());
             return S_OK;
           }).Get());
 }
 
 inline void ApplyStationheadAdditionalScriptBlocking(
     ICoreWebView2Environment* environment,
-    ICoreWebView2* webview) {
+    ICoreWebView2* webview,
+    Logger& log) {
   if (!environment || !webview) return;
   webview->AddWebResourceRequestedFilter(
       L"https://stationhead.com/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT);
@@ -204,24 +221,43 @@ inline void ApplyStationheadAdditionalScriptBlocking(
   EventRegistrationToken ignoredMessageToken{};
   webview->add_WebMessageReceived(
       Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-          [clickView](ICoreWebView2*,
+          [clickView, &log](ICoreWebView2*,
                       ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
             if (!args || !clickView) return S_OK;
-            LPWSTR sourceRaw = nullptr;
-            if (FAILED(args->get_Source(&sourceRaw)) || !sourceRaw) return S_OK;
-            const std::wstring sourceLower = StationheadLowerAscii(sourceRaw);
-            CoTaskMemFree(sourceRaw);
-            if (!StationheadHostUrl(sourceLower)) return S_OK;
-
             LPWSTR raw = nullptr;
             if (FAILED(args->TryGetWebMessageAsString(&raw)) || !raw) return S_OK;
             const std::wstring message(raw);
             CoTaskMemFree(raw);
             double x = 0.0;
             double y = 0.0;
-            if (ParseStationheadNativeClickMessage(message, x, y)) {
-              DispatchStationheadNativeClick(clickView.Get(), x, y);
+            if (!ParseStationheadNativeClickMessage(message, x, y)) return S_OK;
+
+            // Verify the message came from a Stationhead frame before acting on
+            // caller-supplied coordinates, but never let a failed/ambiguous
+            // source lookup silently swallow a legitimate click - log it and
+            // still dispatch, since a missed Start Listening click is worse
+            // than the residual risk from a webview that already only
+            // navigates to configured Stationhead URLs.
+            LPWSTR sourceRaw = nullptr;
+            const bool haveSource = SUCCEEDED(args->get_Source(&sourceRaw)) && sourceRaw;
+            std::wstring sourceLower;
+            if (haveSource) {
+              sourceLower = StationheadLowerAscii(sourceRaw);
+              CoTaskMemFree(sourceRaw);
             }
+            if (haveSource && !StationheadHostUrl(sourceLower)) {
+              log.Warn(L"Stationhead native click message rejected: source is not a Stationhead frame (" +
+                       sourceLower + L")");
+              return S_OK;
+            }
+            if (!haveSource) {
+              log.Warn(L"Stationhead native click message source unavailable; dispatching anyway");
+            }
+            std::wostringstream detail;
+            detail << L"Stationhead dispatching native click at " << std::fixed
+                   << std::setprecision(2) << x << L"," << y;
+            log.Info(detail.str());
+            DispatchStationheadNativeClick(clickView.Get(), x, y, log);
             return S_OK;
           }).Get(),
       &ignoredMessageToken);

@@ -55,6 +55,7 @@ inline std::wstring StationheadAutoplayScript(const wchar_t* globalName,
       Number(style.opacity || 1) > 0 && style.pointerEvents !== 'none';
   };
   const playing = () => {
+    if (typeof window.__homepanelAudioPlaying === 'boolean') return window.__homepanelAudioPlaying;
     if (navigator.mediaSession?.playbackState === 'playing') return true;
     return Array.from(document.querySelectorAll('audio,video')).some(element =>
       !element.paused && !element.ended && element.readyState >= 2);
