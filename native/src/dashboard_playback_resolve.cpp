@@ -186,17 +186,25 @@ NativePlaybackFeedStatus Renderer::NativePlaybackFeedStatusFor(size_t source,
   return status;
 }
 
-bool Renderer::NativePlaybackActive(int64_t nowMs) const {
-  const size_t selectedSource = UsesSecondaryPlaybackFeed(nativeStationhead_) ? 1 : 0;
+Renderer::NativePlaybackTickState Renderer::NativePlaybackTickStateFor(int64_t nowMs) const {
+  NativePlaybackTickState state;
+  state.source = UsesSecondaryPlaybackFeed(nativeStationhead_) ? 1 : 0;
   std::lock_guard lock(nativePlaybackMutex_);
-  if (selectedSource >= nativePlaybackUpdates_.size()) return false;
-  const NativePlaybackProjection& projection =
-      nativePlaybackUpdates_[selectedSource].projection;
-  if (!projection.available || !projection.playing || projection.queue.empty()) return false;
-  if (projection.queueEndAt > 0 && nowMs >= projection.queueEndAt) return false;
+  if (state.source >= nativePlaybackUpdates_.size()) return state;
+
+  const NativePlaybackUpdate& update = nativePlaybackUpdates_[state.source];
+  const NativePlaybackProjection& projection = update.projection;
+  state.contentRevision = update.contentRevision;
+  if (!projection.available || projection.queue.empty()) return state;
+  if (projection.playing && projection.queueEndAt > 0 && nowMs >= projection.queueEndAt) {
+    return state;
+  }
+
   const ProjectedTrackPosition position = ResolveProjectedTrackPosition(projection, nowMs);
-  if (position.index >= projection.queue.size()) return false;
+  state.trackIndex = position.index;
+  if (position.index >= projection.queue.size()) return state;
   const NativePlaybackTrack& track = projection.queue[position.index];
-  return !track.title.empty() && track.durationMs > 0;
+  state.active = projection.playing && !track.title.empty() && track.durationMs > 0;
+  return state;
 }
 }  // namespace hp
