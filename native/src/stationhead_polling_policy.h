@@ -2,6 +2,7 @@
 
 // Keep the shared helpers available, but replace the policy-sensitive helpers
 // with native-application implementations.
+#define ApplyStationheadResourceBlocking ApplyStationheadResourceBlockingBase
 #define StationheadAutoplayScript StationheadAutoplayScriptBase
 #define StationheadApiPlayStatsScript StationheadApiPlayStatsScriptUnthrottled
 #define StationheadAuthProbeScript StationheadAuthProbeScriptNetwork
@@ -9,14 +10,106 @@
 #undef StationheadAuthProbeScript
 #undef StationheadApiPlayStatsScript
 #undef StationheadAutoplayScript
+#undef ApplyStationheadResourceBlocking
 
 namespace hp {
 
+// Block independently named social/UI JavaScript chunks before WebView2 sends
+// their network requests. Keep the match limited to .js/.mjs resources so API
+// routes such as /chathistory remain handled by the existing request policy and
+// playback/authentication resources are not caught by a generic word match.
+inline constexpr bool StationheadNonPlaybackScriptUrl(std::wstring_view uriLower) {
+  const size_t pathEnd = uriLower.find_first_of(L"?#");
+  const std::wstring_view path = uriLower.substr(
+      0, pathEnd == std::wstring_view::npos ? uriLower.size() : pathEnd);
+  if (!path.ends_with(L".js") && !path.ends_with(L".mjs")) return false;
+
+  constexpr std::wstring_view kNonPlaybackScriptNeedles[] = {
+      L"chat",
+      L"comment",
+      L"gift",
+      L"tipping",
+      L"trending",
+      L"thread",
+      L"reaction",
+      L"emoji",
+      L"listeners",
+      L"audience",
+      L"leaderboard",
+  };
+  for (const std::wstring_view needle : kNonPlaybackScriptNeedles) {
+    if (path.find(needle) != std::wstring_view::npos) return true;
+  }
+  return false;
+}
+
+static_assert(StationheadNonPlaybackScriptUrl(
+    L"https://www.stationhead.com/assets/ChatPanel-a1b2.js"));
+static_assert(StationheadNonPlaybackScriptUrl(
+    L"https://www.stationhead.com/_next/static/chunks/listeners-modal.123.js?build=1"));
+static_assert(!StationheadNonPlaybackScriptUrl(
+    L"https://www.stationhead.com/assets/player-runtime-a1b2.js"));
+static_assert(!StationheadNonPlaybackScriptUrl(
+    L"https://production1.stationhead.com/chathistory"));
+
+inline void ApplyStationheadNonPlaybackScriptBlocking(
+    ICoreWebView2Environment* environment,
+    ICoreWebView2* webview) {
+  if (!environment || !webview) return;
+  webview->AddWebResourceRequestedFilter(
+      L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT);
+
+  ComPtr<ICoreWebView2Environment> env = environment;
+  EventRegistrationToken ignoredToken{};
+  webview->add_WebResourceRequested(
+      Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+          [env](ICoreWebView2*,
+                ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT {
+            if (!args) return S_OK;
+            COREWEBVIEW2_WEB_RESOURCE_CONTEXT context =
+                COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL;
+            if (FAILED(args->get_ResourceContext(&context)) ||
+                context != COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT) {
+              return S_OK;
+            }
+
+            ComPtr<ICoreWebView2WebResourceRequest> request;
+            if (FAILED(args->get_Request(&request)) || !request) return S_OK;
+            LPWSTR uriRaw = nullptr;
+            if (FAILED(request->get_Uri(&uriRaw)) || !uriRaw) return S_OK;
+            const std::wstring uriLower = StationheadLowerAscii(uriRaw);
+            CoTaskMemFree(uriRaw);
+            if (!StationheadNonPlaybackScriptUrl(uriLower)) return S_OK;
+
+            ComPtr<ICoreWebView2WebResourceResponse> response;
+            if (SUCCEEDED(env->CreateWebResourceResponse(
+                    nullptr, 403, L"Blocked non-playback script",
+                    L"Content-Type: application/javascript; charset=utf-8",
+                    &response))) {
+              args->put_Response(response.Get());
+            }
+            return S_OK;
+          }).Get(),
+      &ignoredToken);
+}
+
+inline void ApplyStationheadResourceBlocking(
+    ICoreWebView2Environment* environment,
+    ICoreWebView2* webview,
+    const StationheadConfig& config,
+    std::atomic<bool>& armed,
+    EventRegistrationToken& token) {
+  ApplyStationheadResourceBlockingBase(
+      environment, webview, config, armed, token);
+  ApplyStationheadNonPlaybackScriptBlocking(environment, webview);
+}
+
 // Pusher carries both track transitions and live social traffic. The socket
-// must remain connected for immediate next-track playback, so remove the
-// non-playback presentation surfaces from the DOM instead. This script runs at
-// document creation for both Stationhead windows, before the first page paint,
-// and keeps suppressing React-rendered replacements without touching login,
+// must remain connected for immediate next-track playback. Standalone social
+// JavaScript chunks are blocked above before download; this DOM suppression is
+// retained only as a fallback when Stationhead bundles presentation code into a
+// shared playback chunk that cannot safely be rejected wholesale. It runs at
+// document creation for both Stationhead windows and never touches login,
 // Start Listening, Spotify authorization, or audio/video elements.
 inline std::wstring StationheadAudioOnlyUiScript() {
   static constexpr wchar_t kScript[] = LR"JS(
