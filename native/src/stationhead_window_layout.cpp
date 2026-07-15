@@ -1,6 +1,5 @@
 #include "sh.h"
 #include "secondary_sh.h"
-#include <set>
 
 namespace hp {
 namespace {
@@ -8,18 +7,16 @@ namespace {
 HWND CreateStationheadChildHost(HWND parent, const wchar_t* className, const wchar_t* title,
                                 const RECT& bounds) {
   if (!parent || !IsWindow(parent)) return nullptr;
-  static std::mutex classMutex;
-  static std::set<std::wstring> registeredClasses;
-  {
-    std::lock_guard lock(classMutex);
-    if (!registeredClasses.contains(className)) {
-      WNDCLASSW windowClass{};
-      windowClass.lpfnWndProc = DefWindowProcW;
-      windowClass.hInstance = GetModuleHandleW(nullptr);
-      windowClass.lpszClassName = className;
-      windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-      RegisterClassW(&windowClass);
-      registeredClasses.insert(className);
+  const HINSTANCE instance = GetModuleHandleW(nullptr);
+  WNDCLASSW registered{};
+  if (!GetClassInfoW(instance, className, &registered)) {
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = DefWindowProcW;
+    windowClass.hInstance = instance;
+    windowClass.lpszClassName = className;
+    windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    if (!RegisterClassW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+      return nullptr;
     }
   }
 
@@ -27,7 +24,15 @@ HWND CreateStationheadChildHost(HWND parent, const wchar_t* className, const wch
   const int height = std::max(1L, bounds.bottom - bounds.top);
   return CreateWindowExW(0, className, title, WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                          bounds.left, bounds.top, width, height, parent, nullptr,
-                         GetModuleHandleW(nullptr), nullptr);
+                         instance, nullptr);
+}
+
+bool WindowClientSizeMatches(HWND window, int width, int height) noexcept {
+  if (!window || !IsWindow(window)) return false;
+  RECT client{};
+  return GetClientRect(window, &client) &&
+         client.right - client.left == width &&
+         client.bottom - client.top == height;
 }
 
 void ApplyStationheadChildLayout(HWND hostWindow,
@@ -45,34 +50,48 @@ void ApplyStationheadChildLayout(HWND hostWindow,
   const int hostHeight = fullContent ? height : 1;
   const RECT contentBounds{0, 0, hostWidth, hostHeight};
   const RECT authBounds{0, 0, width, height};
+  const bool hostValid = hostWindow && IsWindow(hostWindow);
+  const bool authHostValid = authHostWindow && IsWindow(authHostWindow);
+  const bool hostWasVisible = hostValid && IsWindowVisible(hostWindow);
+  const bool authWasVisible = authHostValid && IsWindowVisible(authHostWindow);
 
   if (controller) {
-    controller->put_Bounds(contentBounds);
-    controller->put_IsVisible(showAuth ? FALSE : TRUE);
+    if (showAuth) {
+      if (hostWasVisible) controller->put_IsVisible(FALSE);
+    } else {
+      if (!hostWasVisible || !WindowClientSizeMatches(hostWindow, hostWidth, hostHeight)) {
+        controller->put_Bounds(contentBounds);
+      }
+      if (!hostWasVisible) controller->put_IsVisible(TRUE);
+    }
   }
 
-  if (hostWindow && IsWindow(hostWindow)) {
+  if (hostValid) {
     if (showAuth) {
-      if (IsWindowVisible(hostWindow)) ShowWindow(hostWindow, SW_HIDE);
+      if (hostWasVisible) ShowWindow(hostWindow, SW_HIDE);
     } else {
-      if (!IsWindowVisible(hostWindow)) ShowWindow(hostWindow, SW_SHOWNOACTIVATE);
-      SetWindowPos(hostWindow, (previewVisible || contentVisible) ? HWND_TOP : HWND_BOTTOM,
+      SetWindowPos(hostWindow, fullContent ? HWND_TOP : HWND_BOTTOM,
                    bounds.left, bounds.top, hostWidth, hostHeight,
-                   SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                   SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOSENDCHANGING);
     }
   }
 
   if (authController) {
-    authController->put_Bounds(authBounds);
-    authController->put_IsVisible(showAuth ? TRUE : FALSE);
+    if (showAuth) {
+      if (!authWasVisible || !WindowClientSizeMatches(authHostWindow, width, height)) {
+        authController->put_Bounds(authBounds);
+      }
+      if (!authWasVisible) authController->put_IsVisible(TRUE);
+    } else if (authWasVisible) {
+      authController->put_IsVisible(FALSE);
+    }
   }
 
-  if (authHostWindow && IsWindow(authHostWindow)) {
+  if (authHostValid) {
     if (showAuth) {
-      if (!IsWindowVisible(authHostWindow)) ShowWindow(authHostWindow, SW_SHOWNOACTIVATE);
       SetWindowPos(authHostWindow, HWND_TOP, bounds.left, bounds.top, width, height,
-                   SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    } else if (IsWindowVisible(authHostWindow)) {
+                   SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOSENDCHANGING);
+    } else if (authWasVisible) {
       ShowWindow(authHostWindow, SW_HIDE);
     }
   }
