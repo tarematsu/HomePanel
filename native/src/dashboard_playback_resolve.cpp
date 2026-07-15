@@ -17,6 +17,16 @@ bool TrackHasIdentity(const NativePlaybackTrack& track) {
   return !track.title.empty() || !track.artist.empty() || !track.artwork.empty();
 }
 
+bool IsPlaybackFallbackUrl(const std::wstring& url, const std::wstring& fallbackUrl) {
+  return !url.empty() && !fallbackUrl.empty() &&
+         _wcsicmp(url.c_str(), fallbackUrl.c_str()) == 0;
+}
+
+bool UsesSecondaryPlaybackFeed(const StationheadStatus& state) {
+  return IsPlaybackFallbackUrl(state.url, state.fallbackUrl) &&
+         IsPlaybackFallbackUrl(state.secondaryUrl, state.fallbackUrl);
+}
+
 struct ProjectedTrackPosition {
   size_t index = 0;
   int64_t elapsedMs = 0;
@@ -166,6 +176,8 @@ NativePlaybackRender Renderer::ResolveNativePlaybackLocked(size_t source, int64_
 }
 
 NativePlaybackRender Renderer::ResolveNativePlayback(size_t source, int64_t nowMs) const {
+  const size_t selectedSource = UsesSecondaryPlaybackFeed(nativeStationhead_) ? 1 : 0;
+  if (source != selectedSource) return {};
   std::lock_guard lock(nativePlaybackMutex_);
   return ResolveNativePlaybackLocked(source, nowMs);
 }
