@@ -31,10 +31,8 @@ inline std::wstring StationheadAutoplayScript(const wchar_t* globalName,
   let observer = null;
   let scanQueued = false;
   let scanTimer = 0;
-  let attempts = 0;
-  let retryAt = 0;
+  let lastSignalAt = 0;
   let loginReported = false;
-  let lastTargetSignature = '';
   let lastPlaying = null;
   const observedAt = Date.now();
   const labelOf = element => [
@@ -80,14 +78,17 @@ inline std::wstring StationheadAutoplayScript(const wchar_t* globalName,
       // normal observer is disconnected while audio is playing, so wake it
       // only for this transition and give the page a chance to expose a
       // Resume/Continue control without waiting for the next reload.
-      attempts = 0;
-      retryAt = 0;
-      lastTargetSignature = '';
+      lastSignalAt = 0;
       attachObserver();
       schedule(0);
     }
     return current;
   };
+  // Clicking is handled natively: this scan only reports that a Start
+  // Listening-like control is visible, so the native side can fetch its
+  // current position and dispatch a trusted CDP click at click-time
+  // instead of acting on a position captured earlier in the page that may
+  // have gone stale by the time a message round-trip reaches native code.
   const scan = () => {
     scanQueued = false;
     scanTimer = 0;
@@ -108,21 +109,13 @@ inline std::wstring StationheadAutoplayScript(const wchar_t* globalName,
       if (!login && loginPattern.test(label)) login = true;
       if (start && login) break;
     }
-    if (start && attempts < 2 && Date.now() >= retryAt) {
-      const target = start.closest?.("button,[role='button'],a,input[type='button'],input[type='submit'],[tabindex]") || start;
-      const rect = target.getBoundingClientRect();
-      const signature = `${labelOf(target)}:${Math.round(rect.left)}:${Math.round(rect.top)}`;
-      if (signature !== lastTargetSignature) {
-        lastTargetSignature = signature;
-        attempts = 0;
-        retryAt = 0;
+    if (start) {
+      const now = Date.now();
+      if (now - lastSignalAt >= 1200) {
+        lastSignalAt = now;
+        try { window.chrome?.webview?.postMessage('{{PREFIX}}-start-visible'); } catch (_) {}
       }
-      attempts += 1;
-      retryAt = Date.now() + 1500;
-      try { window.chrome?.webview?.postMessage('{{PREFIX}}-start-attempted'); } catch (_) {}
-      try { target.click?.(); } catch (_) {}
-      if (attempts < 2) nativeTimeout(scheduleUnlessPlaying, 1500);
-    } else if (!start && login && !loginReported && Date.now() - observedAt >= 15000) {
+    } else if (login && !loginReported && Date.now() - observedAt >= 15000) {
       loginReported = true;
       try { window.chrome?.webview?.postMessage('{{PREFIX}}-login-required'); } catch (_) {}
     }

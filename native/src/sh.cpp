@@ -62,6 +62,7 @@ StationheadStatus StationheadPlayer::Status() const {
 void StationheadPlayer::ResetNavigationRouteState() {
   audioPlaying_ = false;
   nextTickAt_ = 0;
+  nextAutoClickAt_ = 0;
 }
 
 void StationheadPlayer::ApplyAudioPlaybackState(bool playing, const std::wstring& source) {
@@ -109,6 +110,7 @@ void StationheadPlayer::ApplyAudioPlaybackState(bool playing, const std::wstring
     status_.detail = usingFallback_ ? L"fallback audio stopped" : L"audio stopped";
   }
   nextTickAt_ = 0;
+  nextAutoClickAt_ = 0;
   if (changed) log_.Warn(L"Stationhead " + std::wstring(RoleTag()) + L" audio stopped (" + source + L")");
   // Don't reveal the player here: a stop can be a brief track-transition gap,
   // and the App layer's RefreshVisibility()/SelectTab(None) calls (which know
@@ -194,6 +196,38 @@ void StationheadPlayer::PollAuthProbe(int64_t nowMs) {
   }
 }
 
+// Locates the Start Listening control and clicks it entirely from native
+// code: a page-side signal (or the periodic Tick() retry below) only tells
+// us a candidate is probably visible, then this re-locates it fresh right
+// before dispatching a trusted CDP click, so the coordinates can never go
+// stale between detection and dispatch the way an earlier page-computed
+// position could.
+void StationheadPlayer::AttemptNativeStartClick(int64_t nowMs) {
+  if (!webview_ || autoClickInFlight_ || audioPlaying_.load(std::memory_order_relaxed)) return;
+  nextAutoClickAt_ = nowMs + 2'500;
+  autoClickInFlight_ = true;
+  const auto alive = createCallbackAlive_;
+  static const std::wstring locateScript = StationheadLocateStartButtonScript();
+  ComPtr<ICoreWebView2> view = webview_;
+  const HRESULT result = webview_->ExecuteScript(
+      locateScript.c_str(),
+      Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+          [this, alive, view](HRESULT scriptResult, LPCWSTR resultJson) -> HRESULT {
+            if (!CallbackAlive(alive)) return S_OK;
+            autoClickInFlight_ = false;
+            if (FAILED(scriptResult) || !resultJson) return S_OK;
+            double x = 0.0;
+            double y = 0.0;
+            if (!ParseStationheadLocateButtonResult(resultJson, x, y)) return S_OK;
+            log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
+                      L" auto-clicking Start Listening at " + std::to_wstring(x) +
+                      L"," + std::to_wstring(y));
+            DispatchStationheadNativeClick(view.Get(), x, y, log_, RoleTag());
+            return S_OK;
+          }).Get());
+  if (FAILED(result)) autoClickInFlight_ = false;
+}
+
 void StationheadPlayer::Create() {
   if (shuttingDown_ || creating_.exchange(true)) return;
   if (!EnsureHostWindow()) {
@@ -203,6 +237,7 @@ void StationheadPlayer::Create() {
   }
   createCallbackAlive_->store(false, std::memory_order_release);
   createCallbackAlive_ = std::make_shared<std::atomic<bool>>(true);
+  autoClickInFlight_ = false;
   const auto alive = createCallbackAlive_;
   SharedWebViewEnvironment::Instance().Acquire(
       userDataFolder_, [this, alive](HRESULT result, ICoreWebView2Environment* environment) {
@@ -357,6 +392,10 @@ void StationheadPlayer::Tick(int64_t nowMs) {
     }
     if (authProbeInFlight_) consider(authProbeStartedAt_ + kAuthProbeTimeoutMs);
     if (lastAuthProbeAt_ > 0 && !authProbeInFlight_) consider(lastAuthProbeAt_ + kAuthProbeIntervalMs);
+  }
+  if (!audioPlaying_.load(std::memory_order_relaxed)) {
+    if (nowMs >= nextAutoClickAt_) AttemptNativeStartClick(nowMs);
+    consider(nextAutoClickAt_);
   }
   nextTickAt_ = std::max(nowMs + 1'000, next);
 }

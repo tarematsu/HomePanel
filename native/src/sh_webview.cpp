@@ -41,7 +41,7 @@ void StationheadPlayer::ConfigureWebView() {
     if (SUCCEEDED(settings.As(&settings3))) settings3->put_AreBrowserAcceleratorKeysEnabled(FALSE);
   }
   ApplyStationheadResourceBlocking(environment_.Get(), webview_.Get(), config_,
-                                   resourceBlockingArmed_, resourceRequestedToken_, log_, RoleTag());
+                                   resourceBlockingArmed_, resourceRequestedToken_);
 
   ComPtr<ICoreWebView2_8> audioView;
   if (SUCCEEDED(webview_.As(&audioView)) && audioView) {
@@ -204,7 +204,8 @@ void StationheadPlayer::ConfigureWebView() {
                 if (!nativeAudioTracking_) ApplyAudioPlaybackState(false, L"page heuristic");
                 return S_OK;
               }
-              if (message == prefix + L"-start-attempted") {
+              if (message == prefix + L"-start-visible") {
+                AttemptNativeStartClick(UnixMillis());
                 return S_OK;
               }
               if (message == prefix + L"-login-required") {

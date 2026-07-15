@@ -392,29 +392,27 @@ struct SidebarSections {
 SidebarSections SplitSidebarSections(const RECT& client) {
   const int height = std::max(1L, client.bottom - client.top);
   const int gap = std::max(6, height * 18 / 1000);
-  const int airHeight = height * 345 / 1000;
-  const int weatherHeight = height * 305 / 1000;
 
   // The sidebar and main panel share the same inner dashboard height. Mirror
   // SplitMainSections' radar/news proportions so the controls card lines up
-  // with the news card, then give the released space to the clock card.
+  // with the news card, then split the rest evenly across the clock,
+  // weather-forecast, and energy cards so all three share one height.
   const int radarHeight = height * 600 / 1000;
   const int mainGap = std::max(6, height * 18 / 1000);
   const int mainHeight = std::max(1, height - radarHeight - mainGap);
   const int targetControlsHeight = std::max(1, mainHeight * 270 / 1000);
-  const int availableClockAndControls = std::max(
-      2, height - airHeight - weatherHeight - gap * 3);
+  const int availableForCards = std::max(3, height - gap * 3);
   const int controlsHeight = std::clamp(
-      targetControlsHeight, 1, std::max(1, availableClockAndControls - 1));
-  const int clockHeight = std::max(1, availableClockAndControls - controlsHeight);
+      targetControlsHeight, 1, std::max(1, availableForCards - 2));
+  const int cardHeight = std::max(1, (availableForCards - controlsHeight) / 3);
 
   SidebarSections sections;
   int top = client.top;
-  sections.clock = RECT{client.left, top, client.right, top + clockHeight};
+  sections.clock = RECT{client.left, top, client.right, top + cardHeight};
   top = sections.clock.bottom + gap;
-  sections.air = RECT{client.left, top, client.right, top + airHeight};
+  sections.air = RECT{client.left, top, client.right, top + cardHeight};
   top = sections.air.bottom + gap;
-  sections.weather = RECT{client.left, top, client.right, top + weatherHeight};
+  sections.weather = RECT{client.left, top, client.right, top + cardHeight};
   top = sections.weather.bottom + gap;
   sections.controls = RECT{client.left, top, client.right, top + controlsHeight};
   return sections;

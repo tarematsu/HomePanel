@@ -55,15 +55,18 @@ static_assert(!StationheadAdditionalNonPlaybackScriptUrl(
 static_assert(!StationheadAdditionalNonPlaybackScriptUrl(
     L"https://cdn.example.com/assets/notifications-panel.js"));
 
-inline std::wstring StationheadNativeStartClickBridgeScript() {
+// Locates the current Start Listening-like control, if any, and returns its
+// clickable center point as {x, y}, or null if there is nothing to click
+// right now (already playing, or no eligible control visible). Called
+// on-demand from native code immediately before dispatching a click, so the
+// coordinates it returns are always fresh - there is no page-scheduled scan
+// loop whose captured position could go stale while a message travels back
+// to native code.
+inline std::wstring StationheadLocateStartButtonScript() {
   static constexpr wchar_t kScript[] = LR"JS(
 (() => {
   const host = String(location.hostname || '').toLowerCase();
-  if (host !== 'stationhead.com' && !host.endsWith('.stationhead.com')) return;
-  if (window.__homepanelStationheadNativeStartClickBridge) return;
-  window.__homepanelStationheadNativeStartClickBridge = true;
-
-  const originalClick = HTMLElement.prototype.click;
+  if (host !== 'stationhead.com' && !host.endsWith('.stationhead.com')) return null;
   const startPattern = /\b(start|join|resume|continue)\s+(listening|station|show|room)\b|\blisten\s+(now|live)\b|^(continue|続ける|続行|次へ)$/i;
   const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
   const labelOf = element => normalize([
@@ -80,79 +83,41 @@ inline std::wstring StationheadNativeStartClickBridgeScript() {
     return Array.from(document.querySelectorAll('audio,video')).some(element =>
       !element.paused && !element.ended && element.readyState >= 2);
   };
-  const targetAtCenter = (element, rect) => {
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
-    const hit = document.elementFromPoint(x, y);
-    if (!hit || (hit !== element && !element.contains(hit))) return null;
-    return { x, y };
-  };
-  const eligible = element => {
-    if (!(element instanceof HTMLElement) || !element.isConnected) return null;
-    if (!startPattern.test(labelOf(element))) return null;
-    if (element.matches('audio,video') || element.querySelector?.('audio,video')) return null;
-    const rect = element.getBoundingClientRect?.();
-    if (!rect || rect.width <= 2 || rect.height <= 2) return null;
+  if (!document.body || playing()) return null;
+  const selector = "button,[role='button'],a,input[type='button'],input[type='submit'],[aria-label],[data-testid],[tabindex]";
+  for (const element of document.querySelectorAll(selector)) {
+    if (!(element instanceof HTMLElement) || !element.isConnected) continue;
+    if (element.disabled || element.getAttribute('aria-disabled') === 'true' ||
+        element.getAttribute('aria-hidden') === 'true') continue;
+    if (!startPattern.test(labelOf(element))) continue;
+    if (element.matches('audio,video') || element.querySelector?.('audio,video')) continue;
+    const rect = element.getBoundingClientRect();
+    if (!rect || rect.width <= 2 || rect.height <= 2) continue;
     const style = getComputedStyle(element);
     if (style.display === 'none' || style.visibility === 'hidden' ||
-        Number(style.opacity || 1) <= 0 || style.pointerEvents === 'none') return null;
-    return targetAtCenter(element, rect);
-  };
-
-  let lastNativeAt = 0;
-  let lastNativeSignature = '';
-  HTMLElement.prototype.click = function(...args) {
-    const point = playing() ? null : eligible(this);
-    if (!point) return originalClick.apply(this, args);
-    const signature = `${labelOf(this)}:${Math.round(point.x)}:${Math.round(point.y)}`;
-    const now = Date.now();
-    if (signature === lastNativeSignature && now - lastNativeAt < 1200) return;
-    lastNativeSignature = signature;
-    lastNativeAt = now;
-    try {
-      window.chrome?.webview?.postMessage(
-        `stationhead-native-click:${point.x.toFixed(2)}:${point.y.toFixed(2)}`);
-    } catch (_) {
-      return originalClick.apply(this, args);
-    }
-
-    // The native dispatch above can be silently dropped (message-source
-    // rejection, a failed CDP call, etc.) with no signal back to the page.
-    // Fall back to a real DOM click if the target is still sitting there
-    // unclicked a moment later, so a dropped native click doesn't leave
-    // Start Listening permanently unresponsive.
-    const target = this;
-    window.setTimeout(() => {
-      if (target.isConnected && eligible(target) && !playing()) {
-        try { originalClick.apply(target, args); } catch (_) {}
-      }
-    }, 650);
-  };
+        Number(style.opacity || 1) <= 0 || style.pointerEvents === 'none') continue;
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) continue;
+    const hit = document.elementFromPoint(x, y);
+    if (!hit || (hit !== element && !element.contains(hit))) continue;
+    return { x, y };
+  }
+  return null;
 })()
 )JS";
   return kScript;
 }
 
-inline bool ParseStationheadNativeClickMessage(std::wstring_view message,
+inline bool ParseStationheadLocateButtonResult(const std::wstring& resultJson,
                                                double& x,
                                                double& y) {
-  constexpr std::wstring_view kPrefix = L"stationhead-native-click:";
-  if (!message.starts_with(kPrefix)) return false;
-  const std::wstring_view payload = message.substr(kPrefix.size());
-  const size_t separator = payload.find(L':');
-  if (separator == std::wstring_view::npos ||
-      payload.find(L':', separator + 1) != std::wstring_view::npos) {
-    return false;
-  }
+  if (resultJson.empty() || resultJson == L"null") return false;
   try {
-    size_t consumedX = 0;
-    size_t consumedY = 0;
-    const std::wstring xText(payload.substr(0, separator));
-    const std::wstring yText(payload.substr(separator + 1));
-    x = std::stod(xText, &consumedX);
-    y = std::stod(yText, &consumedY);
-    if (consumedX != xText.size() || consumedY != yText.size()) return false;
+    const auto root = winrt::Windows::Data::Json::JsonObject::Parse(resultJson);
+    if (!root.HasKey(L"x") || !root.HasKey(L"y")) return false;
+    x = root.GetNamedNumber(L"x");
+    y = root.GetNamedNumber(L"y");
   } catch (...) {
     return false;
   }
@@ -208,65 +173,12 @@ inline void DispatchStationheadNativeClick(ICoreWebView2* webview,
 
 inline void ApplyStationheadAdditionalScriptBlocking(
     ICoreWebView2Environment* environment,
-    ICoreWebView2* webview,
-    Logger& log,
-    const wchar_t* roleTag) {
+    ICoreWebView2* webview) {
   if (!environment || !webview) return;
   webview->AddWebResourceRequestedFilter(
       L"https://stationhead.com/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT);
   webview->AddWebResourceRequestedFilter(
       L"https://*.stationhead.com/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT);
-
-  static const std::wstring nativeClickBridge =
-      StationheadNativeStartClickBridgeScript();
-  webview->AddScriptToExecuteOnDocumentCreated(nativeClickBridge.c_str(), nullptr);
-
-  ComPtr<ICoreWebView2> clickView = webview;
-  EventRegistrationToken ignoredMessageToken{};
-  webview->add_WebMessageReceived(
-      Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-          [clickView, &log, roleTag](ICoreWebView2*,
-                      ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
-            if (!args || !clickView) return S_OK;
-            LPWSTR raw = nullptr;
-            if (FAILED(args->TryGetWebMessageAsString(&raw)) || !raw) return S_OK;
-            const std::wstring message(raw);
-            CoTaskMemFree(raw);
-            double x = 0.0;
-            double y = 0.0;
-            if (!ParseStationheadNativeClickMessage(message, x, y)) return S_OK;
-
-            // Verify the message came from a Stationhead frame before acting on
-            // caller-supplied coordinates, but never let a failed/ambiguous
-            // source lookup silently swallow a legitimate click - log it and
-            // still dispatch, since a missed Start Listening click is worse
-            // than the residual risk from a webview that already only
-            // navigates to configured Stationhead URLs.
-            LPWSTR sourceRaw = nullptr;
-            const bool haveSource = SUCCEEDED(args->get_Source(&sourceRaw)) && sourceRaw;
-            std::wstring sourceLower;
-            if (haveSource) {
-              sourceLower = StationheadLowerAscii(sourceRaw);
-              CoTaskMemFree(sourceRaw);
-            }
-            if (haveSource && !StationheadHostUrl(sourceLower)) {
-              log.Warn(L"Stationhead " + std::wstring(roleTag) +
-                       L" native click message rejected: source is not a Stationhead frame (" +
-                       sourceLower + L")");
-              return S_OK;
-            }
-            if (!haveSource) {
-              log.Warn(L"Stationhead " + std::wstring(roleTag) +
-                       L" native click message source unavailable; dispatching anyway");
-            }
-            std::wostringstream detail;
-            detail << L"Stationhead " << roleTag << L" dispatching native click at " << std::fixed
-                   << std::setprecision(2) << x << L"," << y;
-            log.Info(detail.str());
-            DispatchStationheadNativeClick(clickView.Get(), x, y, log, roleTag);
-            return S_OK;
-          }).Get(),
-      &ignoredMessageToken);
 
   ComPtr<ICoreWebView2Environment> env = environment;
   EventRegistrationToken ignoredToken{};

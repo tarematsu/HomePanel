@@ -134,6 +134,7 @@ class StationheadPlayer {
   void ResetNavigationRouteState();
   void PollDailyPlayStats(int64_t nowMs);
   void PollAuthProbe(int64_t nowMs);
+  void AttemptNativeStartClick(int64_t nowMs);
   void FinishSpotifyAuthorization(const std::wstring& detail);
   void NavigateCurrentUrl(int64_t nowMs, const std::wstring& reason);
   std::wstring CurrentStationheadUrl() const;
@@ -194,6 +195,8 @@ class StationheadPlayer {
   int64_t lastAuthProbeAt_ = 0;       // Secondary only.
   int64_t authProbeStartedAt_ = 0;    // Secondary only.
   bool authProbeInFlight_ = false;    // Secondary only.
+  int64_t nextAutoClickAt_ = 0;
+  bool autoClickInFlight_ = false;
   int64_t nextTickAt_ = 0;
   std::wstring authPendingUrl_;
   bool spotifyAuthorization_ = false;
