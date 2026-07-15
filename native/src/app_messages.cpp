@@ -25,8 +25,11 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_TIMER:
       Tick();
       if (cloud_ && toastUntil_ == 0 && renderState_.toast.empty()) {
-        renderState_.toast = cloud_->StationheadHealthText();
-        PublishRenderStateNow();
+        std::wstring health = cloud_->StationheadHealthText();
+        if (renderState_.toast != health) {
+          renderState_.toast = std::move(health);
+          PublishRenderStateNow();
+        }
       }
       return 0;
     case WM_PAINT:
@@ -72,7 +75,6 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         newsIndex_ = 0;
         lastNewsRotateAt_ = count > 1 ? now : 0;
         renderState_.newsIndex = 0;
-        PublishRenderStateNow();
       }
 
       PublishRenderStateNow();
@@ -138,8 +140,11 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
     }
     case kStationheadHealthUpdatedMessage:
       if (cloud_ && toastUntil_ == 0) {
-        renderState_.toast = cloud_->StationheadHealthText();
-        PublishRenderStateNow();
+        std::wstring health = cloud_->StationheadHealthText();
+        if (renderState_.toast != health) {
+          renderState_.toast = std::move(health);
+          PublishRenderStateNow();
+        }
       }
       return 0;
     case WM_HP_CONFIG_UPDATED:
