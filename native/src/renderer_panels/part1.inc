@@ -61,8 +61,8 @@ void PlaceNativeWindow(HWND hwnd, const RECT& rect, bool visible) {
   SetWindowPos(hwnd, HWND_TOP, rect.left, rect.top,
                std::max(1L, rect.right - rect.left),
                std::max(1L, rect.bottom - rect.top),
-               SWP_NOACTIVATE | (visible ? SWP_SHOWWINDOW : SWP_NOOWNERZORDER));
-  ShowWindow(hwnd, visible ? SW_SHOWNA : SW_HIDE);
+               SWP_NOACTIVATE | SWP_NOSENDCHANGING |
+                   (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
 }
 
 int SpanX(const RECT& rect, int permille) {
