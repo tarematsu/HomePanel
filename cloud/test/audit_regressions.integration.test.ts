@@ -132,5 +132,7 @@ describe("repository audit regressions", () => {
     expect(page).toContain("blockImages:true,blockFonts:true");
     expect(page).toContain("migrate(body.config)");
     expect(page).toContain('delete station.blockImagesAfterPlayback');
+    expect(page).toContain('delete station.hideChatAfterPlayback');
+    expect(page).not.toContain("hideChatAfterPlayback:true");
   });
 });
