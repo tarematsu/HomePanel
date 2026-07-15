@@ -61,8 +61,20 @@ inline std::wstring StationheadAutoplayScript(const wchar_t* globalName,
   const publishAudio = () => {
     const current = playing();
     if (current === lastPlaying) return current;
+    const wasPlaying = lastPlaying === true;
     lastPlaying = current;
     try { window.chrome?.webview?.postMessage(current ? '{{PREFIX}}-playing' : '{{PREFIX}}-stopped'); } catch (_) {}
+    if (!current && wasPlaying) {
+      // Stationhead can briefly stop its audio element between tracks. The
+      // normal observer is disconnected while audio is playing, so wake it
+      // only for this transition and give the page a chance to expose a
+      // Resume/Continue control without waiting for the next reload.
+      attempts = 0;
+      retryAt = 0;
+      lastTargetSignature = '';
+      attachObserver();
+      schedule(0);
+    }
     return current;
   };
   const scan = () => {
@@ -104,10 +116,10 @@ inline std::wstring StationheadAutoplayScript(const wchar_t* globalName,
       try { window.chrome?.webview?.postMessage('{{PREFIX}}-login-required'); } catch (_) {}
     }
   };
-  const schedule = () => {
+  const schedule = (delay = 100) => {
     if (scanQueued) return;
     scanQueued = true;
-    scanTimer = nativeTimeout(scan, 250);
+    scanTimer = nativeTimeout(scan, delay);
   };
   const relevant = record => {
     if (record.type === 'attributes') return Boolean(record.target?.matches?.(selector) || record.target?.closest?.(selector));
@@ -115,11 +127,13 @@ inline std::wstring StationheadAutoplayScript(const wchar_t* globalName,
     return [...(record.addedNodes || []), ...(record.removedNodes || [])].some(node =>
       node instanceof Element && (node.matches?.(selector) || node.querySelector?.(selector)));
   };
-  window.{{GLOBAL}} = { scan: schedule };
-  if (NativeMutationObserver) {
+  const attachObserver = () => {
+    if (!NativeMutationObserver || observer || !document.documentElement) return;
     observer = new NativeMutationObserver(records => { if (records.some(relevant)) schedule(); });
     observer.observe(document, { childList: true, subtree: true });
-  }
+  };
+  window.{{GLOBAL}} = { scan: schedule };
+  attachObserver();
   for (const eventName of ['play','playing','canplay','pause','ended','stalled','waiting','error']) {
     document.addEventListener(eventName, publishAudio, true);
   }
