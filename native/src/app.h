@@ -5,20 +5,13 @@
 #include "web_renderer.h"
 #include "sensors.h"
 #include "sh.h"
-#include "secondary_sh.h"
 #include "update_client.h"
 
 namespace hp {
 class App;
 
 inline bool StationheadNeedsForeground(const StationheadStatus& status) noexcept {
-
-
   return !status.audioPlaying;
-}
-
-inline bool StationheadNeedsForeground(const SecondaryStationheadStatus& status) noexcept {
-  return !status.playing;
 }
 
 enum class WorkspaceTab {
@@ -77,6 +70,33 @@ class StationheadHandleBase {
 
   bool StartupPreviewActive() const noexcept { return startupPreviewActive_; }
 
+  StationheadStatus Status() const {
+    StationheadStatus status = player_ ? player_->Status() : StationheadStatus{};
+    const bool forceInteractive = status.loginRequired || status.spotifyAuthorization ||
+                                  status.processFailed;
+    if (player_ && SuppressTrackTransitionGap(status.audioPlaying, forceInteractive)) {
+      if (status.visible) player_->KeepPlaybackBehindDashboard();
+      status.audioPlaying = true;
+      status.playing = true;
+      status.visible = false;
+      status.detail = L"track transition; waiting for next audio";
+    }
+    status.audioMuted = audioMuted_;
+    return status;
+  }
+
+  int64_t NextWakeAt() const noexcept {
+    return player_ ? player_->NextWakeAt() : 0;
+  }
+
+  bool IsInteractive(const StationheadStatus& status) const noexcept {
+    const bool forceInteractive = status.loginRequired || status.spotifyAuthorization ||
+                                  status.processFailed;
+    if (forceInteractive) return true;
+    return !status.audioPlaying &&
+           !SuppressTrackTransitionGap(status.audioPlaying, false);
+  }
+
  protected:
   static constexpr int64_t kTrackTransitionGraceMs = 12'000;
 
@@ -124,7 +144,7 @@ class StationheadHandleBase {
     bool interactive = false;
     if (!preview) {
       const auto status = player_->Status();
-      interactive = static_cast<const Derived*>(this)->IsInteractive(status);
+      interactive = IsInteractive(status);
       if (!interactive && !status.visible) return;
     }
     const RECT activeBounds = preview ? startupPreviewBounds_ : workspaceBounds_;
@@ -244,23 +264,6 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
     return player_ ? player_->ConsumeChangeFlags() : StationheadChangeNone;
   }
   bool HasAuthTab() const { return player_ && player_->HasAuthTab(); }
-  StationheadStatus Status() const {
-    StationheadStatus status = player_ ? player_->Status() : StationheadStatus{};
-    const bool forceInteractive = status.loginRequired || status.spotifyAuthorization ||
-                                  status.processFailed;
-    if (player_ && SuppressTrackTransitionGap(status.audioPlaying, forceInteractive)) {
-      if (status.visible) player_->KeepPlaybackBehindDashboard();
-      status.audioPlaying = true;
-      status.playing = true;
-      status.visible = false;
-      status.detail = L"track transition; waiting for next audio";
-    }
-    status.audioMuted = audioMuted_;
-    return status;
-  }
-  int64_t NextWakeAt() const noexcept {
-    return player_ ? player_->NextWakeAt() : 0;
-  }
 
   void SelectTab(StationheadTabKind tab) {
     selectedTab_ = tab;
@@ -279,18 +282,6 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
     player_->SelectTab(tab);
     ApplyBounds();
   }
-
-
-
-
-  bool IsInteractive(const StationheadStatus& status) const noexcept {
-    const bool forceInteractive = status.loginRequired || status.spotifyAuthorization ||
-                                  status.processFailed;
-    if (forceInteractive) return true;
-    return !status.audioPlaying &&
-           !SuppressTrackTransitionGap(status.audioPlaying, false);
-  }
-
  private:
   StationheadTabKind selectedTab_ = StationheadTabKind::None;
 };
@@ -298,14 +289,13 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
 
 
 class AppSecondaryStationheadHandle
-    : public StationheadHandleBase<AppSecondaryStationheadHandle, SecondaryStationheadPlayer> {
+    : public StationheadHandleBase<AppSecondaryStationheadHandle, StationheadPlayer> {
  public:
   AppSecondaryStationheadHandle() = default;
   AppSecondaryStationheadHandle(const AppSecondaryStationheadHandle&) = delete;
   AppSecondaryStationheadHandle& operator=(const AppSecondaryStationheadHandle&) = delete;
 
-  AppSecondaryStationheadHandle& operator=(
-      std::unique_ptr<SecondaryStationheadPlayer> player) noexcept {
+  AppSecondaryStationheadHandle& operator=(std::unique_ptr<StationheadPlayer> player) noexcept {
     player_ = std::move(player);
     ApplyAudioState();
     ApplyBounds();
@@ -339,30 +329,6 @@ class AppSecondaryStationheadHandle
     if (!player_) return;
     player_->SetPlaybackFallback(active, reason);
     ApplyBounds();
-  }
-  SecondaryStationheadStatus Status() const {
-    SecondaryStationheadStatus status = player_ ? player_->Status() : SecondaryStationheadStatus{};
-    const bool forceInteractive = status.loginRequired || status.spotifyAuthorization ||
-                                  status.processFailed;
-    if (player_ && SuppressTrackTransitionGap(status.playing, forceInteractive)) {
-      if (status.visible) player_->KeepPlaybackBehindDashboard();
-      status.playing = true;
-      status.visible = false;
-      status.detail = L"track transition; waiting for next audio";
-    }
-    status.audioMuted = audioMuted_;
-    return status;
-  }
-  int64_t NextWakeAt() const noexcept {
-    return player_ ? player_->NextWakeAt() : 0;
-  }
-
-  bool IsInteractive(const SecondaryStationheadStatus& status) const noexcept {
-    const bool forceInteractive = status.loginRequired || status.spotifyAuthorization ||
-                                  status.processFailed;
-    if (forceInteractive) return true;
-    return !status.playing &&
-           !SuppressTrackTransitionGap(status.playing, false);
   }
 };
 
@@ -429,7 +395,7 @@ class App {
   void HandleAction(UiAction action);
   void LayoutWorkspace();
   void ApplyStationheadWindowPlacement(const StationheadStatus& primaryStatus,
-                                       const SecondaryStationheadStatus& secondaryStatus);
+                                       const StationheadStatus& secondaryStatus);
   void MarkStationheadPlacementDirty() noexcept { stationheadPlacementDirty_ = true; }
   void ProcessRemoteCommands();
   void SendTelemetryAsync();

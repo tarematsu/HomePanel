@@ -1,46 +1,44 @@
-#include "secondary_sh.h"
+#include "sh.h"
 #include "sh_shared.h"
 
 namespace hp {
-void SecondaryStationheadPlayer::SetMuted(bool muted) noexcept {
+
+void StationheadPlayer::SetMuted(bool muted) noexcept {
   audioMuted_.store(muted, std::memory_order_relaxed);
   ApplyMute();
 }
 
-bool SecondaryStationheadPlayer::Muted() const noexcept {
+bool StationheadPlayer::Muted() const noexcept {
   return audioMuted_.load(std::memory_order_relaxed);
 }
 
-void SecondaryStationheadPlayer::SetVolume(double volume) noexcept {
+void StationheadPlayer::SetVolume(double volume) noexcept {
   audioVolume_.store(std::clamp(volume, 0.0, 1.0), std::memory_order_relaxed);
   ApplyVolume();
 }
 
-double SecondaryStationheadPlayer::Volume() const noexcept {
+double StationheadPlayer::Volume() const noexcept {
   return audioVolume_.load(std::memory_order_relaxed);
 }
 
-void SecondaryStationheadPlayer::ApplyAudioState() noexcept {
-  ApplyMute();
-  ApplyVolume();
-  EnsureDistinctBrowserIdentity();
-}
-
-void SecondaryStationheadPlayer::ApplyMute() noexcept {
+void StationheadPlayer::ApplyMute() const noexcept {
   const int muted = audioMuted_.load(std::memory_order_relaxed) ? 1 : 0;
-  if (appliedMuted_.exchange(muted, std::memory_order_relaxed) == muted) return;
-  const BOOL value = muted ? TRUE : FALSE;
-  const auto apply = [value](const ComPtr<ICoreWebView2>& view) noexcept {
-    if (!view) return;
-    ComPtr<ICoreWebView2_8> audio;
-    if (SUCCEEDED(view.As(&audio)) && audio) audio->put_IsMuted(value);
-  };
-  apply(webview_);
-  apply(authWebview_);
+  if (appliedMuted_.exchange(muted, std::memory_order_relaxed) != muted) {
+    const BOOL value = muted ? TRUE : FALSE;
+    const auto apply = [value](const ComPtr<ICoreWebView2>& view) noexcept {
+      if (!view) return;
+      ComPtr<ICoreWebView2_8> audio;
+      if (SUCCEEDED(view.As(&audio)) && audio) audio->put_IsMuted(value);
+    };
+    apply(webview_);
+    apply(authWebview_);
+  }
+  ApplyVolume();
 }
 
-void SecondaryStationheadPlayer::ApplyVolume() const noexcept {
-  const int percent = std::clamp(static_cast<int>(audioVolume_.load(std::memory_order_relaxed) * 100.0 + 0.5), 0, 100);
+void StationheadPlayer::ApplyVolume() const noexcept {
+  const int percent = std::clamp(
+      static_cast<int>(audioVolume_.load(std::memory_order_relaxed) * 100.0 + 0.5), 0, 100);
   if (appliedVolumePercent_.exchange(percent, std::memory_order_relaxed) == percent) return;
   const auto apply = [percent](const ComPtr<ICoreWebView2>& view) noexcept {
     if (!view) return;
@@ -51,7 +49,11 @@ void SecondaryStationheadPlayer::ApplyVolume() const noexcept {
   apply(authWebview_);
 }
 
-void SecondaryStationheadPlayer::EnsureDistinctBrowserIdentity() noexcept {
+// Window B's isolated WebView2 profile still ships the platform's default
+// user agent, which is otherwise identical to Window A's. Tag it distinctly
+// so Stationhead's own session/device bookkeeping does not conflate the two
+// independent, cookie-isolated sessions with a single device identity.
+void StationheadPlayer::EnsureDistinctBrowserIdentity() noexcept {
   if (!webview_ || identityWebview_ == webview_.Get()) return;
   identityWebview_ = webview_.Get();
   ComPtr<ICoreWebView2Settings> settings;
@@ -67,4 +69,5 @@ void SecondaryStationheadPlayer::EnsureDistinctBrowserIdentity() noexcept {
     settings2->put_UserAgent(userAgent.c_str());
   }
 }
+
 }  // namespace hp

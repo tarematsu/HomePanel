@@ -47,7 +47,7 @@ uint32_t NextDelayFromDeadline(int64_t now, int64_t deadline, uint32_t fallbackM
 
 void EnrichRenderStationheadState(
     StationheadStatus& state,
-    SecondaryStationheadStatus* secondaryStatus,
+    StationheadStatus* secondaryStatus,
     const StationheadConfig& config) {
   state.fallbackUrl = config.fallbackUrl;
   if (secondaryStatus) {
@@ -161,10 +161,10 @@ void App::StartServices() {
 
   const fs::path stationheadData = dataDir_ / L"webview2-stationhead";
   stationhead_ = std::make_unique<StationheadPlayer>(
-      window_, config_.stationhead, stationheadData, *logger_);
+      StationheadRole::Primary, window_, config_.stationhead, stationheadData, *logger_);
   if (config_.stationhead.secondaryEnabled && !config_.stationhead.secondaryUrl.empty()) {
-    secondaryStationhead_ = std::make_unique<SecondaryStationheadPlayer>(
-        window_, config_.stationhead, stationheadData, *logger_);
+    secondaryStationhead_ = std::make_unique<StationheadPlayer>(
+        StationheadRole::Secondary, window_, config_.stationhead, stationheadData, *logger_);
     logger_->Info(L"Secondary Stationhead prepared to start alongside primary");
   }
   RECT client{};
@@ -244,7 +244,7 @@ void App::StartDeferredServices(int64_t now, const StationheadStatus& stationhea
 
   bool secondaryAudioReady = true;
   if (!rendererStarted_ && secondaryStationhead_) {
-    const SecondaryStationheadStatus secondaryStatus = secondaryStationhead_->Status();
+    const StationheadStatus secondaryStatus = secondaryStationhead_->Status();
     secondaryAudioReady = secondaryStatus.playing;
   }
   const bool dashboardAudioReady = secondaryStationhead_
@@ -341,8 +341,8 @@ void App::Tick() {
   const int64_t now = UnixMillis();
 
   if (secondaryStarted_ && secondaryStationhead_) secondaryStationhead_->Tick(now);
-  SecondaryStationheadStatus secondaryStatus =
-      secondaryStationhead_ ? secondaryStationhead_->Status() : SecondaryStationheadStatus{};
+  StationheadStatus secondaryStatus =
+      secondaryStationhead_ ? secondaryStationhead_->Status() : StationheadStatus{};
   stationhead_->Tick(now);
   StationheadStatus nextStationheadState = stationhead_->Status();
   EnrichRenderStationheadState(
@@ -439,7 +439,7 @@ void App::LayoutWorkspace() {
     case WorkspaceTab::Main:
       MarkStationheadPlacementDirty();
       ApplyStationheadWindowPlacement(stationhead_->Status(),
-          secondaryStationhead_ ? secondaryStationhead_->Status() : SecondaryStationheadStatus{});
+          secondaryStationhead_ ? secondaryStationhead_->Status() : StationheadStatus{});
       break;
     case WorkspaceTab::Stationhead:
       stationhead_->SetBounds(fullBounds);
@@ -463,7 +463,7 @@ void App::LayoutWorkspace() {
 }
 
 void App::ApplyStationheadWindowPlacement(const StationheadStatus& primaryStatus,
-                                          const SecondaryStationheadStatus& secondaryStatus) {
+                                          const StationheadStatus& secondaryStatus) {
   if (!rendererStarted_ || !stationhead_ || selectedTab_ != WorkspaceTab::Main) return;
   RECT bounds = workspaceBounds_;
   if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;

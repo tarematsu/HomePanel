@@ -124,8 +124,8 @@ set(HOMEPANEL_STATIONHEAD_SOURCES
   src/stationhead_window_layout.cpp
   src/stationhead_polling_policy.h
   src/sh.cpp
-  src/secondary_sh.cpp
-  src/secondary_sh_audio.cpp)
+  src/sh_webview.cpp
+  src/sh_audio.cpp)
 
 set(HOMEPANEL_RENDERER_SOURCES
   src/renderer_core.cpp

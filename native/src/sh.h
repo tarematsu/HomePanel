@@ -10,6 +10,17 @@ enum class StationheadTabKind {
   Auth,
 };
 
+// Which Stationhead window this player instance backs. The two roles share
+// every behavior - script injection, resource blocking, the native click
+// bridge, layout/visibility rules - except for exactly two things: the
+// WebView2 profile (Secondary uses an isolated named profile) and which
+// periodic poll runs (Primary polls Stationhead's authenticated stats API,
+// Secondary runs a lightweight local-only auth probe).
+enum class StationheadRole {
+  Primary,
+  Secondary,
+};
+
 enum StationheadChangeFlags : uint32_t {
   StationheadChangeNone = 0,
   StationheadChangeReturnMain = 1u << 0,
@@ -55,17 +66,23 @@ struct StationheadStatus {
   std::wstring detail;
   // Recent per-day listening activity returned by the primary window's
   // authenticated Stationhead account endpoint, oldest first; the last entry
-  // is today (partial, still accumulating).
+  // is today (partial, still accumulating). Empty for the secondary window.
   std::vector<StationheadDailyPlayPoint> dailyPlayCounts;
   int64_t dailyPlayStatsUpdatedAt = 0;
 
   bool operator==(const StationheadStatus&) const = default;
 };
 
+// Drives one embedded Stationhead WebView2 window. Both Window A (Primary)
+// and Window B (Secondary) are the same class, distinguished only by `role_`.
 class StationheadPlayer {
  public:
-  StationheadPlayer(HWND window, StationheadConfig config, fs::path userDataFolder, Logger& log);
+  StationheadPlayer(StationheadRole role, HWND window, StationheadConfig config,
+                     fs::path userDataFolder, Logger& log);
+  StationheadPlayer(const StationheadPlayer&) = delete;
+  StationheadPlayer& operator=(const StationheadPlayer&) = delete;
   ~StationheadPlayer();
+
   void Start();
   void Stop();
   void Tick(int64_t nowMs);
@@ -95,9 +112,11 @@ class StationheadPlayer {
   void KeepPlaybackBehindDashboard();
 
  private:
+  [[nodiscard]] bool IsSecondary() const noexcept { return role_ == StationheadRole::Secondary; }
   void ApplyMute() const noexcept;
   void ApplyVolume() const noexcept;
-  void ApplyAudioPlaybackState(bool playing, int64_t nowMs, const std::wstring& source);
+  void ApplyAudioPlaybackState(bool playing, const std::wstring& source);
+  void EnsureDistinctBrowserIdentity() noexcept;
   void Create();
   void EnsureAuthController(const std::wstring& url);
   bool EnsureHostWindow();
@@ -109,16 +128,19 @@ class StationheadPlayer {
   void ConfigureAuthWebView();
   void ResetNavigationRouteState();
   void PollDailyPlayStats(int64_t nowMs);
-  void NavigatePrimaryUrl(int64_t nowMs, const std::wstring& reason);
+  void PollAuthProbe(int64_t nowMs);
+  void FinishSpotifyAuthorization(const std::wstring& detail);
+  void NavigateCurrentUrl(int64_t nowMs, const std::wstring& reason);
   std::wstring CurrentStationheadUrl() const;
   void NavigateStationheadUrl(int64_t nowMs, const std::wstring& url,
                               const std::wstring& reason, bool fallbackActive);
   bool NeedsInteractiveWindow() const;
   void SetStartupBounds();
   void SetVisible(bool visible);
-  void ScheduleRecreate(const std::wstring& reason);
+  void ScheduleRecreate(const std::wstring& reason, int64_t delayMs = 0);
   void LayoutControllers();
 
+  StationheadRole role_;
   HWND window_;
   HWND hostWindow_{};
   HWND authHostWindow_{};
@@ -126,7 +148,7 @@ class StationheadPlayer {
   fs::path userDataFolder_;
   Logger& log_;
   mutable std::mutex mutex_;
-  RECT bounds_{};
+  RECT bounds_{0, 0, 1, 1};
   StationheadTabKind selectedTab_ = StationheadTabKind::None;
   StationheadStatus status_;
   ComPtr<ICoreWebView2Environment> environment_;
@@ -151,13 +173,11 @@ class StationheadPlayer {
       std::make_shared<std::atomic<bool>>(false)};
   std::atomic<bool> creating_{false};
   std::atomic<bool> recreating_{false};
+  int64_t recreateAt_ = 0;
   std::atomic<bool> shuttingDown_{false};
   std::atomic<bool> audioPlaying_{false};
   std::atomic<bool> audioMuted_{false};
   std::atomic<double> audioVolume_{1.0};
-
-
-
   mutable std::atomic<int> appliedMuted_{-1};
   mutable std::atomic<int> appliedVolumePercent_{-1};
   std::atomic<uint32_t> pendingChangeFlags_{0};
@@ -165,14 +185,18 @@ class StationheadPlayer {
   std::wstring pendingAuthorizationUrl_;
   int64_t createdAt_ = 0;
   int64_t lastReloadAt_ = 0;
-  int64_t lastDailyPlayStatsAt_ = 0;
+  int64_t lastDailyPlayStatsAt_ = 0;  // Primary only.
+  int64_t lastAuthProbeAt_ = 0;       // Secondary only.
+  int64_t authProbeStartedAt_ = 0;    // Secondary only.
+  bool authProbeInFlight_ = false;    // Secondary only.
   int64_t nextTickAt_ = 0;
   std::wstring authPendingUrl_;
   bool spotifyAuthorization_ = false;
-  bool loginSessionActive_ = false;
+  bool loginRequired_ = false;
   bool nativeAudioTracking_ = false;
   bool viewVisible_ = false;
   bool startupPreviewActive_ = false;
   bool usingFallback_ = false;
+  ICoreWebView2* identityWebview_ = nullptr;  // Secondary only.
 };
 }

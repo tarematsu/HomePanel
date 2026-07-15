@@ -127,8 +127,8 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
       if (layoutChanged) LayoutWorkspace();
       MarkStationheadPlacementDirty();
       StationheadStatus renderStationheadState = stationhead_->Status();
-      SecondaryStationheadStatus secondaryStatus =
-          secondaryStationhead_ ? secondaryStationhead_->Status() : SecondaryStationheadStatus{};
+      StationheadStatus secondaryStatus =
+          secondaryStationhead_ ? secondaryStationhead_->Status() : StationheadStatus{};
       EnrichRenderStationheadState(
           renderStationheadState,
           secondaryStationhead_ ? &secondaryStatus : nullptr,
