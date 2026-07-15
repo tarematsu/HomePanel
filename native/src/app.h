@@ -43,13 +43,16 @@ class StationheadHandleBase {
   void Stop() { if (player_) player_->Stop(); }
 
   void SetAudioMuted(bool muted) noexcept {
+    if (audioMuted_ == muted) return;
     audioMuted_ = muted;
     ApplyAudioState();
   }
   void ToggleAudioMuted() noexcept { SetAudioMuted(!audioMuted_); }
   bool AudioMuted() const noexcept { return audioMuted_; }
   void SetAudioVolume(double volume) noexcept {
-    audioVolume_ = std::clamp(volume, 0.0, 1.0);
+    const double clamped = std::clamp(volume, 0.0, 1.0);
+    if (audioVolume_ == clamped) return;
+    audioVolume_ = clamped;
     ApplyAudioState();
   }
   double AudioVolume() const noexcept { return audioVolume_; }
@@ -197,7 +200,6 @@ class AppStationheadHandle : public StationheadHandleBase<AppStationheadHandle, 
   void Tick(int64_t nowMs) {
     if (!player_) return;
     player_->Tick(nowMs);
-    ApplyAudioState();
   }
   void Reconnect() {
     if (!player_) return;
@@ -337,7 +339,6 @@ class AppSecondaryStationheadHandle
   void Tick(int64_t nowMs) {
     if (!player_) return;
     player_->Tick(nowMs);
-    ApplyAudioState();
   }
   void Reconnect() {
     if (!player_) return;
@@ -353,7 +354,6 @@ class AppSecondaryStationheadHandle
     ApplyBounds();
   }
   SecondaryStationheadStatus Status() const {
-    ApplyAudioState();
     SecondaryStationheadStatus status = player_ ? player_->Status() : SecondaryStationheadStatus{};
     const bool forceInteractive = status.loginRequired || status.spotifyAuthorization ||
                                   status.processFailed;

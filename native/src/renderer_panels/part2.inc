@@ -223,14 +223,18 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   const bool newsChanged = nativeNewsIndex_ != state.newsIndex;
   const bool dashboardChanged = nativeRenderedDashboardRevision_ != dashboardSourceRevision_;
 
-  nativeSensors_ = state.sensors;
-  nativeAirHistory_ = state.airHistory;
-  nativeStationheadPlayHistory_ = state.stationheadPlayHistory;
-  nativeStationhead_ = state.stationhead;
-  nativeAppVersion_ = state.appVersion;
-  nativeToast_ = state.toast;
-  nativeNewsIndex_ = state.newsIndex;
-  nativeRenderedDashboardRevision_ = dashboardSourceRevision_;
+  if (sensorsChanged) nativeSensors_ = state.sensors;
+  if (historyChanged) nativeAirHistory_ = state.airHistory;
+  if (stationheadHistoryChanged) {
+    nativeStationheadPlayHistory_ = state.stationheadPlayHistory;
+  }
+  if (stationheadChanged) nativeStationhead_ = state.stationhead;
+  if (controlsChanged) {
+    nativeAppVersion_ = state.appVersion;
+    nativeToast_ = state.toast;
+  }
+  if (newsChanged) nativeNewsIndex_ = state.newsIndex;
+  if (dashboardChanged) nativeRenderedDashboardRevision_ = dashboardSourceRevision_;
   if (!EnsureNativeStaticWindows()) return;
   if (sensorsChanged || historyChanged) InvalidatePanelSection(nativeSideWindow_, PanelSection::Air);
   if (dashboardChanged) {

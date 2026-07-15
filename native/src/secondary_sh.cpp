@@ -126,6 +126,10 @@ void SecondaryStationheadPlayer::ConfigureAuthWebView() {
     settings->put_IsStatusBarEnabled(FALSE);
     settings->put_IsZoomControlEnabled(FALSE);
   }
+  ComPtr<ICoreWebView2_19> authV19;
+  if (config_.lowMemoryMode && SUCCEEDED(authWebview_.As(&authV19)) && authV19) {
+    authV19->put_MemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW);
+  }
   authWebview_->add_NavigationCompleted(
       Callback<ICoreWebView2NavigationCompletedEventHandler>(
           [this, alive, authAlive](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {

@@ -83,6 +83,7 @@ void SecondaryStationheadPlayer::ConfigureWebView() {
   if (config_.lowMemoryMode && SUCCEEDED(webview_.As(&v19))) {
     v19->put_MemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW);
   }
+  ApplyAudioState();
   ComPtr<ICoreWebView2Controller2> controller2;
   if (SUCCEEDED(controller_.As(&controller2))) {
     COREWEBVIEW2_COLOR background{255, 0, 0, 0};
