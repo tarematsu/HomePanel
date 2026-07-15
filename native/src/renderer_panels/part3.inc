@@ -334,8 +334,18 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
       ? sharedPlayback.track.title
       : (bothStationheadsOnFallback ? L"Buddy46" : L"");
   const std::wstring artist = sharedPlayback.hasTrack ? sharedPlayback.track.artist : L"";
+  const NativeMinuteFactsProjection minuteFacts = NativeMinuteFactsSnapshot();
+  std::wstring minuteFactsStatus;
+  if (minuteFacts.available) {
+    minuteFactsStatus = minuteFacts.isBroadcasting
+        ? (minuteFacts.isPaused ? L"一時停止中" : L"配信中")
+        : L"オフライン";
+    minuteFactsStatus += L" リスナー" + std::to_wstring(minuteFacts.listenerCount) + L"人";
+    if (minuteFacts.stale) minuteFactsStatus += L"(更新遅延)";
+  }
   const std::wstring detail = nativeStationhead_.loginRequired ? L"ログイン待ち"
       : nativeStationhead_.processFailed ? L"WebView再起動待ち"
+      : !minuteFactsStatus.empty() ? minuteFactsStatus
       : nativeStationhead_.audioPlaying ? L"再生中"
       : nativeStationhead_.created ? L"接続中"
       : L"起動待ち";

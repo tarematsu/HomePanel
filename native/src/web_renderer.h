@@ -77,6 +77,18 @@ struct NativePlaybackFeedStatus {
   uint64_t contentRevision = 0;
 };
 
+struct NativeMinuteFactsProjection {
+  bool available = false;
+  bool ok = false;
+  bool stale = false;
+  bool isBroadcasting = false;
+  bool isPaused = false;
+  int listenerCount = 0;
+  int onlineMemberCount = 0;
+  int64_t minuteAt = 0;
+  int64_t fetchedAt = 0;
+};
+
 inline constexpr int kRadarCanvasWidth = 1920;
 inline constexpr int kRadarCanvasHeight = 1280;
 inline constexpr COLORREF kNativeDashboardBackground = RGB(7, 10, 16);
@@ -138,6 +150,7 @@ class Renderer {
   void UpdateState(const RenderState& state);
   void TickNativePanels(int64_t nowMs, bool timerDriven = false);
   NativePlaybackFeedStatus NativePlaybackFeedStatusFor(size_t source, int64_t nowMs) const;
+  NativeMinuteFactsProjection NativeMinuteFactsSnapshot() const;
   void NotifyRadarUpdated();
   UiAction HitTest(POINT point);
 
@@ -234,6 +247,9 @@ class Renderer {
   void StartNativePlaybackBridge();
   void StopNativePlaybackBridge() noexcept;
   void NativePlaybackLoop();
+  void StartNativeMinuteFactsBridge();
+  void StopNativeMinuteFactsBridge() noexcept;
+  void NativeMinuteFactsLoop();
   NativePlaybackRender ResolveNativePlaybackLocked(size_t source, int64_t nowMs) const;
   NativePlaybackRender ResolveNativePlayback(size_t source, int64_t nowMs) const;
   NativePlaybackTickState NativePlaybackTickStateFor(int64_t nowMs) const;
@@ -296,6 +312,13 @@ class Renderer {
   std::atomic<uint64_t> nativePlaybackRevision_{0};
   std::atomic<bool> nativePlaybackStarted_{false};
   std::atomic<bool> nativePlaybackStopping_{false};
+  std::thread nativeMinuteFactsThread_;
+  std::condition_variable nativeMinuteFactsWake_;
+  std::mutex nativeMinuteFactsWakeMutex_;
+  mutable std::mutex nativeMinuteFactsMutex_;
+  NativeMinuteFactsProjection nativeMinuteFacts_{};
+  std::atomic<bool> nativeMinuteFactsStarted_{false};
+  std::atomic<bool> nativeMinuteFactsStopping_{false};
   std::thread radarComposeThread_;
   std::condition_variable radarComposeWake_;
   std::mutex radarComposeWakeMutex_;
