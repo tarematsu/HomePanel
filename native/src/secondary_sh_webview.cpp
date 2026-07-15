@@ -9,6 +9,28 @@
 
 namespace hp {
 
+void SecondaryStationheadPlayer::NavigateInitialStationhead(
+    const std::shared_ptr<std::atomic<bool>>& alive) {
+  if (!CallbackAlive(alive) || shuttingDown_ || !webview_) return;
+  SetStartupBounds();
+  lastReloadAt_ = UnixMillis();
+  const std::wstring url = CurrentStationheadUrl();
+  {
+    std::lock_guard lock(mutex_);
+    status_.created = true;
+    status_.navigating = true;
+    status_.processFailed = false;
+    status_.url = url;
+    status_.detail = L"loading secondary station";
+  }
+  const HRESULT result = webview_->Navigate(url.c_str());
+  if (FAILED(result)) {
+    ScheduleRetry(L"initial navigation failed " + HResultHex(result), 1'000);
+    return;
+  }
+  log_.Info(L"Secondary Stationhead started with isolated profile: " + url);
+}
+
 void SecondaryStationheadPlayer::ConfigureWebView() {
 
   appliedMuted_.store(-1, std::memory_order_relaxed);
@@ -69,14 +91,44 @@ void SecondaryStationheadPlayer::ConfigureWebView() {
   static const std::wstring startupScript =
       StationheadAutoplayScript(L"__homepanelSecondaryStationhead", L"secondary");
   static const std::wstring authCaptureScript = StationheadAuthCaptureScript();
-  webview_->AddScriptToExecuteOnDocumentCreated(authCaptureScript.c_str(), nullptr);
-  webview_->AddScriptToExecuteOnDocumentCreated(
-      startupScript.c_str(),
+  const HRESULT authCaptureResult = webview_->AddScriptToExecuteOnDocumentCreated(
+      authCaptureScript.c_str(),
       Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
           [this, alive](HRESULT result, LPCWSTR) -> HRESULT {
-            if (CallbackAlive(alive) && FAILED(result)) log_.Warn(L"Secondary Stationhead startup script registration failed");
+            if (!CallbackAlive(alive) || shuttingDown_) return S_OK;
+            if (FAILED(result)) {
+              log_.Warn(L"Secondary Stationhead auth capture script registration failed " +
+                        HResultHex(result));
+              ScheduleRetry(L"auth capture script registration failed");
+              return S_OK;
+            }
+            if (!webview_) return S_OK;
+            const HRESULT startupResult = webview_->AddScriptToExecuteOnDocumentCreated(
+                startupScript.c_str(),
+                Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+                    [this, alive](HRESULT startupStatus, LPCWSTR) -> HRESULT {
+                      if (!CallbackAlive(alive) || shuttingDown_) return S_OK;
+                      if (FAILED(startupStatus)) {
+                        log_.Warn(L"Secondary Stationhead startup script registration failed " +
+                                  HResultHex(startupStatus));
+                        ScheduleRetry(L"startup script registration failed");
+                        return S_OK;
+                      }
+                      NavigateInitialStationhead(alive);
+                      return S_OK;
+                    }).Get());
+            if (FAILED(startupResult)) {
+              log_.Warn(L"Secondary Stationhead startup script registration could not start " +
+                        HResultHex(startupResult));
+              ScheduleRetry(L"startup script registration could not start");
+            }
             return S_OK;
           }).Get());
+  if (FAILED(authCaptureResult)) {
+    log_.Warn(L"Secondary Stationhead auth capture script registration could not start " +
+              HResultHex(authCaptureResult));
+    ScheduleRetry(L"auth capture script registration could not start");
+  }
   webview_->add_NewWindowRequested(
       Callback<ICoreWebView2NewWindowRequestedEventHandler>(
           [this, alive](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
@@ -247,23 +299,6 @@ void SecondaryStationheadPlayer::ConfigureWebView() {
             ScheduleRetry(L"process failed", 5'000);
             return S_OK;
           }).Get(), &processFailedToken_);
-  SetStartupBounds();
-  lastReloadAt_ = UnixMillis();
-  const std::wstring url = CurrentStationheadUrl();
-  {
-    std::lock_guard lock(mutex_);
-    status_.created = true;
-    status_.navigating = true;
-    status_.processFailed = false;
-    status_.url = url;
-    status_.detail = L"loading secondary station";
-  }
-  const HRESULT result = webview_->Navigate(url.c_str());
-  if (FAILED(result)) {
-    ScheduleRetry(L"initial navigation failed " + HResultHex(result), 1'000);
-    return;
-  }
-  log_.Info(L"Secondary Stationhead started with isolated profile: " + url);
 }
 
 }  // namespace hp

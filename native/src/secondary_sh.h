@@ -58,6 +58,7 @@ class SecondaryStationheadPlayer {
 
   void Create();
   void ConfigureWebView();
+  void NavigateInitialStationhead(const std::shared_ptr<std::atomic<bool>>& alive);
   void ConfigureAuthWebView();
   void CloseWebView();
   void CloseAuthWebView();
