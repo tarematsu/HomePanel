@@ -12,6 +12,7 @@ constexpr UINT_PTR kCentralTimer = 1;
 constexpr UINT WM_HP_UPDATE_RESULT = WM_APP + 20;
 constexpr int kRestartExitCode = 42;
 constexpr uint32_t kFastTickMs = 2000;
+constexpr uint32_t kSteadyDashboardTickMs = 5000;
 constexpr uint32_t kMaxIdleTickMs = 30'000;
 constexpr int64_t kDashboardStartupFallbackMs = 10'000;
 
@@ -44,16 +45,16 @@ uint32_t NextDelayFromDeadline(int64_t now, int64_t deadline, uint32_t fallbackM
   return static_cast<uint32_t>(std::clamp<int64_t>(delta, kFastTickMs, fallbackMs));
 }
 
-StationheadStatus BuildRenderStationheadState(const AppStationheadHandle& stationhead,
-                                              const AppSecondaryStationheadHandle& secondary,
-  const StationheadConfig& config) {
-  StationheadStatus state = stationhead.Status();
+StationheadStatus BuildRenderStationheadState(
+    const StationheadStatus& stationheadStatus,
+    const SecondaryStationheadStatus* secondaryStatus,
+    const StationheadConfig& config) {
+  StationheadStatus state = stationheadStatus;
   state.fallbackUrl = config.fallbackUrl;
-  if (secondary) {
-    const SecondaryStationheadStatus secondaryStatus = secondary.Status();
-    state.loginRequired = state.loginRequired || secondaryStatus.loginRequired;
-    state.secondaryAudioMuted = secondaryStatus.audioMuted;
-    state.secondaryUrl = secondaryStatus.url;
+  if (secondaryStatus) {
+    state.loginRequired = state.loginRequired || secondaryStatus->loginRequired;
+    state.secondaryAudioMuted = secondaryStatus->audioMuted;
+    state.secondaryUrl = secondaryStatus->url;
   } else {
     state.secondaryAudioMuted = false;
     state.secondaryUrl.clear();
@@ -347,7 +348,9 @@ void App::Tick() {
   stationhead_->Tick(now);
   const StationheadStatus stationheadStatus = stationhead_->Status();
   StationheadStatus nextStationheadState = BuildRenderStationheadState(
-      stationhead_, secondaryStationhead_, config_.stationhead);
+      stationheadStatus,
+      secondaryStationhead_ ? &secondaryStatus : nullptr,
+      config_.stationhead);
   nextStationheadState.primaryAudioSelected = scheduledPrimaryAudioAudible_;
   UpdateRenderStationheadState(nextStationheadState);
   UpdateStationheadPlayHistory(stationheadStatus);
@@ -374,9 +377,14 @@ void App::Tick() {
   if (rendererStarted_) renderer_->TickNativePanels(now);
   UpdateStationheadPlaybackFallback(now);
   uint32_t nextTickMs = kMaxIdleTickMs;
-  if (!rendererStarted_ || selectedTab_ == WorkspaceTab::Main ||
-      renderState_.maintenance || StationheadNeedsForeground(renderState_.stationhead)) {
+  const bool stationheadNeedsFastTick =
+      !rendererStarted_ || renderState_.maintenance ||
+      StationheadNeedsForeground(stationheadStatus) ||
+      (secondaryStationhead_ && StationheadNeedsForeground(secondaryStatus));
+  if (stationheadNeedsFastTick) {
     nextTickMs = kFastTickMs;
+  } else if (selectedTab_ == WorkspaceTab::Main) {
+    nextTickMs = kSteadyDashboardTickMs;
   } else {
     nextTickMs = std::min(nextTickMs, NextDelayFromDeadline(now, stationhead_->NextWakeAt(), kMaxIdleTickMs));
     if (secondaryStarted_ && secondaryStationhead_) {

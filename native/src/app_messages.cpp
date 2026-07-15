@@ -124,8 +124,14 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
       }
       if (layoutChanged) LayoutWorkspace();
       MarkStationheadPlacementDirty();
+      const StationheadStatus stationheadStatus = stationhead_->Status();
+      const SecondaryStationheadStatus secondaryStatus =
+          secondaryStationhead_ ? secondaryStationhead_->Status() : SecondaryStationheadStatus{};
       const StationheadStatus nextStationheadState =
-          BuildRenderStationheadState(stationhead_, secondaryStationhead_, config_.stationhead);
+          BuildRenderStationheadState(
+              stationheadStatus,
+              secondaryStationhead_ ? &secondaryStatus : nullptr,
+              config_.stationhead);
       StationheadStatus renderStationheadState = nextStationheadState;
       renderStationheadState.primaryAudioSelected = scheduledPrimaryAudioAudible_;
       UpdateRenderStationheadState(renderStationheadState);

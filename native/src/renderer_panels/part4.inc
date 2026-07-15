@@ -67,7 +67,7 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& card) {
     const int swatchHeight = std::max(3, legendHeight * 20 / 100);
     const auto drawPreviousOverlay = [&](const RECT& rect) {
       AlphaBlendSolidColor(dc, rect, kWidgetBlack, 110);
-      HPEN dottedPen = CreatePen(PS_DOT, 1, RGB(255, 255, 255));
+      HPEN dottedPen = CreatePen(PS_DOT, 1, RGB(150, 150, 150));
       HGDIOBJ previousPen = SelectObject(dc, dottedPen);
       HGDIOBJ previousBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
       Rectangle(dc, rect.left, rect.top, rect.right, rect.bottom);
