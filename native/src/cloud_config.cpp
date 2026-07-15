@@ -4,7 +4,7 @@
 namespace hp {
 namespace {
 using winrt::Windows::Data::Json::JsonObject;
-constexpr wchar_t kCanonicalSecondaryStationheadUrl[] = L"https://www.stationhead.com/sakuramankai";
+constexpr wchar_t kCanonicalSecondaryStationheadUrl[] = L"https://www.stationhead.com/buddy46";
 JsonObject Object(const JsonObject& parent, const wchar_t* key) {
   try { return parent.GetNamedObject(key); } catch (...) { return JsonObject{}; }
 }

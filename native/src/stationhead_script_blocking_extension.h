@@ -115,6 +115,18 @@ inline std::wstring StationheadNativeStartClickBridgeScript() {
     } catch (_) {
       return originalClick.apply(this, args);
     }
+
+    // The native dispatch above can be silently dropped (message-source
+    // rejection, a failed CDP call, etc.) with no signal back to the page.
+    // Fall back to a real DOM click if the target is still sitting there
+    // unclicked a moment later, so a dropped native click doesn't leave
+    // Start Listening permanently unresponsive.
+    const target = this;
+    window.setTimeout(() => {
+      if (target.isConnected && eligible(target) && !playing()) {
+        try { originalClick.apply(target, args); } catch (_) {}
+      }
+    }, 650);
   };
 })()
 )JS";
