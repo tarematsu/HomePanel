@@ -121,12 +121,12 @@ bool Renderer::NativePlaybackActive(int64_t nowMs) const {
   std::lock_guard lock(nativePlaybackMutex_);
   for (const NativePlaybackUpdate& update : nativePlaybackUpdates_) {
     const NativePlaybackProjection& projection = update.projection;
-    if (!projection.playing || !PlaybackHasRenderableTrack(projection, nowMs)) continue;
+    if (!projection.available || !projection.playing || projection.queue.empty()) continue;
+    if (projection.queueEndAt > 0 && nowMs >= projection.queueEndAt) continue;
     const ProjectedTrackPosition position = ResolveProjectedTrackPosition(projection, nowMs);
-    if (position.index < projection.queue.size() &&
-        projection.queue[position.index].durationMs > 0) {
-      return true;
-    }
+    if (position.index >= projection.queue.size()) continue;
+    const NativePlaybackTrack& track = projection.queue[position.index];
+    if (!track.title.empty() && track.durationMs > 0) return true;
   }
   return false;
 }
