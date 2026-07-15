@@ -25,17 +25,8 @@ inline constexpr bool StationheadNonPlaybackScriptUrl(std::wstring_view uriLower
   if (!path.ends_with(L".js") && !path.ends_with(L".mjs")) return false;
 
   constexpr std::wstring_view kNonPlaybackScriptNeedles[] = {
-      L"chat",
-      L"comment",
-      L"gift",
-      L"tipping",
-      L"trending",
-      L"thread",
-      L"reaction",
-      L"emoji",
-      L"listeners",
-      L"audience",
-      L"leaderboard",
+      L"chat", L"comment", L"gift", L"tipping", L"trending", L"thread",
+      L"reaction", L"emoji", L"listeners", L"audience", L"leaderboard",
   };
   for (const std::wstring_view needle : kNonPlaybackScriptNeedles) {
     if (path.find(needle) != std::wstring_view::npos) return true;
@@ -234,11 +225,124 @@ inline std::wstring StationheadAudioOnlyUiScript() {
   return kScript;
 }
 
+inline std::wstring StationheadAutoplayRecoveryScript(const wchar_t* globalName,
+                                                       const wchar_t* messagePrefix) {
+  static constexpr wchar_t kTemplate[] = LR"JS(
+(() => {
+  const host = String(location.hostname || '').toLowerCase();
+  if (host !== 'stationhead.com' && !host.endsWith('.stationhead.com')) return;
+  if (window.{{GLOBAL}}Recovery) return;
+  window.{{GLOBAL}}Recovery = true;
+
+  const selector = "button,[role='button'],a,input[type='button'],input[type='submit'],[aria-label],[data-testid],[tabindex]";
+  const startPattern = /\b(start|join|resume|continue)\s+(listening|station|show|room)\b|\blisten\s+(now|live)\b|^(continue|続ける|続行|次へ)$/i;
+  const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const labelOf = element => [
+    element?.innerText,
+    element?.getAttribute?.('aria-label'),
+    element?.textContent,
+    element?.getAttribute?.('title'),
+    element?.getAttribute?.('value'),
+    element?.getAttribute?.('data-testid')
+  ].map(normalize).find(Boolean) || '';
+  const visible = element => {
+    if (!element || element.disabled || element.getAttribute?.('aria-disabled') === 'true' ||
+        element.getAttribute?.('aria-hidden') === 'true') return false;
+    const rect = element.getBoundingClientRect?.();
+    if (!rect || rect.width <= 2 || rect.height <= 2) return false;
+    const style = getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden' &&
+      Number(style.opacity || 1) > 0 && style.pointerEvents !== 'none';
+  };
+  const playing = () => {
+    if (navigator.mediaSession?.playbackState === 'playing') return true;
+    return Array.from(document.querySelectorAll('audio,video')).some(element =>
+      !element.paused && !element.ended && element.readyState >= 2);
+  };
+
+  let timer = 0;
+  let queued = false;
+  let lastClickAt = 0;
+  let lastSignature = '';
+  const scan = () => {
+    queued = false;
+    timer = 0;
+    if (!document.body || playing()) return;
+    let start = null;
+    for (const element of document.querySelectorAll(selector)) {
+      if (!visible(element)) continue;
+      if (startPattern.test(labelOf(element))) {
+        start = element;
+        break;
+      }
+    }
+    if (!start) return;
+    const target = start.closest?.("button,[role='button'],a,input[type='button'],input[type='submit'],[tabindex]") || start;
+    const rect = target.getBoundingClientRect();
+    const signature = `${labelOf(target)}:${Math.round(rect.left)}:${Math.round(rect.top)}`;
+    const now = Date.now();
+    if (signature !== lastSignature) {
+      lastSignature = signature;
+      lastClickAt = 0;
+    }
+    if (now - lastClickAt < 2000) return;
+    lastClickAt = now;
+    try { window.chrome?.webview?.postMessage('{{PREFIX}}-start-attempted'); } catch (_) {}
+    try { target.click?.(); } catch (_) {}
+    schedule(2200);
+  };
+  const schedule = (delay = 100) => {
+    if (queued || playing()) return;
+    queued = true;
+    timer = window.setTimeout(scan, delay);
+  };
+  const observer = new MutationObserver(records => {
+    if (records.some(record =>
+      record.type === 'characterData' || record.type === 'attributes' ||
+      [...(record.addedNodes || []), ...(record.removedNodes || [])].some(node =>
+        node instanceof Element && (node.matches?.(selector) || node.querySelector?.(selector))))) {
+      schedule();
+    }
+  });
+  const start = () => {
+    if (!document.documentElement) return;
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['aria-label', 'aria-disabled', 'aria-hidden', 'data-testid', 'disabled', 'class', 'style'],
+    });
+    schedule(0);
+    window.setInterval(() => {
+      if (!playing()) schedule(0);
+    }, 15000);
+  };
+  for (const eventName of ['pause','ended','stalled','waiting','error']) {
+    document.addEventListener(eventName, () => schedule(0), true);
+  }
+  if (document.documentElement) start();
+  else document.addEventListener('DOMContentLoaded', start, { once: true });
+})()
+)JS";
+  const auto replaceAll = [](std::wstring text, std::wstring_view from, std::wstring_view to) {
+    for (size_t at = text.find(from); at != std::wstring::npos;
+         at = text.find(from, at + to.size())) {
+      text.replace(at, from.size(), to);
+    }
+    return text;
+  };
+  return replaceAll(replaceAll(kTemplate, L"{{GLOBAL}}", globalName),
+                    L"{{PREFIX}}", messagePrefix);
+}
+
 inline std::wstring StationheadAutoplayScript(const wchar_t* globalName,
-                                              const wchar_t* messagePrefix) {
+                                               const wchar_t* messagePrefix) {
   std::wstring script = StationheadAudioOnlyUiScript();
   script.push_back(L'\n');
   script.append(StationheadAutoplayScriptBase(globalName, messagePrefix));
+  script.push_back(L'\n');
+  script.append(StationheadAutoplayRecoveryScript(globalName, messagePrefix));
   return script;
 }
 
