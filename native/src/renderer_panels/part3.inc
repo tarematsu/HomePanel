@@ -189,7 +189,7 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& card) {
                                   : std::numeric_limits<double>::quiet_NaN();
     SetTextColor(dc, std::isfinite(rainMm) && rainMm > 0 ? kWidgetBlueMuted : kWidgetSubtle);
     SelectObject(dc, TierFont(FontTier::Small));
-    RECT rainRect{column.left, column.top + bodyHeight * 80 / 100, column.right, column.bottom};
+    RECT rainRect{column.left, tempRect.bottom, column.right, column.bottom};
     const std::wstring rain = hasData ? NumberOrDash(rainMm, 0) + L"mm" : L"--";
     DrawTextInRect(dc, rain, rainRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   }
@@ -348,7 +348,7 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
     DrawWidgetCard(dc, rects.button, kWidgetSuccessSurface, CardRadius(rects.button));
     SetTextColor(dc, kWidgetGreen);
     SelectObject(dc, TierFont(FontTier::Small));
-    DrawTextInRect(dc, primaryAudioSelected ? L"A 音声ON" : L"B 音声ON", rects.button,
+    DrawTextInRect(dc, primaryAudioSelected ? L"音声A" : L"音声B", rects.button,
                    DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
     DrawWidgetCard(dc, rects.muteButton, kWidgetDangerSurface,

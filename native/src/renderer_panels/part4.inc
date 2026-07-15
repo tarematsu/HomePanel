@@ -65,30 +65,26 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& card) {
     const int legendHalf = (static_cast<int>(legend.right - legend.left)) / 2;
     const int swatchWidth = std::max(14, SpanX(body, 45));
     const int swatchHeight = std::max(3, legendHeight * 20 / 100);
+    const auto drawPreviousOverlay = [&](const RECT& rect) {
+      AlphaBlendSolidColor(dc, rect, kWidgetBlack, 110);
+      HPEN dottedPen = CreatePen(PS_DOT, 1, RGB(255, 255, 255));
+      HGDIOBJ previousPen = SelectObject(dc, dottedPen);
+      HGDIOBJ previousBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+      Rectangle(dc, rect.left, rect.top, rect.right, rect.bottom);
+      SelectObject(dc, previousBrush);
+      SelectObject(dc, previousPen);
+      DeleteObject(dottedPen);
+    };
     RECT currentSwatch{legend.left, legend.top + (legendHeight - swatchHeight) / 2,
                        legend.left + swatchWidth,
                        legend.top + (legendHeight - swatchHeight) / 2 + swatchHeight};
     RECT previousSwatch{legend.left + legendHalf, currentSwatch.top,
                         legend.left + legendHalf + swatchWidth, currentSwatch.bottom};
     DrawWidgetCard(dc, currentSwatch, kWidgetCyan, 2, 220);
-    DrawWidgetCard(dc, previousSwatch, kWidgetPurple, 2, 150);
+    drawPreviousOverlay(previousSwatch);
 
-    const bool currentComplete = std::all_of(
-        nativeDashboard_.octopusProfile.begin(), nativeDashboard_.octopusProfile.end(),
-        [](const OctopusProfileData& point) { return point.currentComplete; });
-    const bool previousComplete = std::all_of(
-        nativeDashboard_.octopusProfile.begin(), nativeDashboard_.octopusProfile.end(),
-        [](const OctopusProfileData& point) { return point.previousComplete; });
     std::wstring currentLegend = nativeDashboard_.currentEnergyLabel;
-    if (!nativeDashboard_.currentEnergyDateRange.empty()) {
-      currentLegend += L" " + nativeDashboard_.currentEnergyDateRange;
-    }
-    if (!currentComplete) currentLegend += L"（データ不足）";
     std::wstring previousLegend = nativeDashboard_.previousEnergyLabel;
-    if (!nativeDashboard_.previousEnergyDateRange.empty()) {
-      previousLegend += L" " + nativeDashboard_.previousEnergyDateRange;
-    }
-    if (!previousComplete) previousLegend += L"（データ不足）";
     SetTextColor(dc, kWidgetMuted);
     RECT currentLegendRect{currentSwatch.right + SpanX(body, 15), legend.top,
                            legend.left + legendHalf - SpanX(body, 10), legend.bottom};
@@ -125,22 +121,21 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& card) {
       const int groupWidth = count > 0
           ? static_cast<int>((plot.right - plot.left) / static_cast<double>(count)) : 0;
       const int barGap = std::max(2, SpanX(body, 6));
-      const int barWidth = std::max(3, (groupWidth - barGap * 3) / 2);
+      const int barWidth = std::max(3, groupWidth - barGap * 2);
 
       SelectObject(dc, TierFont(FontTier::Small));
       for (int index = 0; index < count; ++index) {
         const auto& point = nativeDashboard_.octopusProfile[static_cast<size_t>(index)];
         const int groupLeft = plot.left + index * groupWidth;
         const int currentLeft = groupLeft + barGap;
-        const int previousLeft = currentLeft + barWidth + barGap;
 
         if (point.currentComplete && std::isfinite(point.currentTotal)) {
           RECT bar{currentLeft, yFor(point.currentTotal), currentLeft + barWidth, plot.bottom};
           if (bar.bottom > bar.top) DrawWidgetCard(dc, bar, kWidgetCyan, 3, 220);
         }
         if (point.previousComplete && std::isfinite(point.previousTotal)) {
-          RECT bar{previousLeft, yFor(point.previousTotal), previousLeft + barWidth, plot.bottom};
-          if (bar.bottom > bar.top) DrawWidgetCard(dc, bar, kWidgetPurple, 3, 150);
+          RECT bar{currentLeft, yFor(point.previousTotal), currentLeft + barWidth, plot.bottom};
+          if (bar.bottom > bar.top) drawPreviousOverlay(bar);
         }
 
         SetTextColor(dc, kWidgetSubtle);
