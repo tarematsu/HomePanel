@@ -25,21 +25,18 @@ void Renderer::DrawAirSection(HDC dc, const RECT& card) {
   const RECT body = content;
 
   const bool connected = nativeSensors_.co2Connected;
-  const COLORREF co2Color = !connected ? kWidgetMuted
-      : nativeSensors_.co2 >= 1500 ? kWidgetDanger
-      : nativeSensors_.co2 >= 1000 ? kWidgetWarning
-      : kWidgetGreen;
   struct AirStat {
     std::wstring label;
     std::wstring value;
     COLORREF color;
   };
   const std::array<AirStat, 3> stats{{
-      {L"CO2", connected ? std::to_wstring(nativeSensors_.co2) + L" ppm" : L"--- ppm", co2Color},
+      {L"CO2", connected ? std::to_wstring(nativeSensors_.co2) + L" ppm" : L"--- ppm",
+       connected ? kWidgetGreen : kWidgetMuted},
       {L"温度", connected ? Fixed(nativeSensors_.temperatureCorrected, 1) + L"℃" : L"--.-℃",
-       kWidgetText},
+       connected ? kWidgetOrange : kWidgetMuted},
       {L"湿度", connected ? Fixed(nativeSensors_.humidityCorrected, 0) + L"%" : L"--%",
-       kWidgetText},
+       connected ? kWidgetBlueMuted : kWidgetMuted},
   }};
   const int statsHeight = SpanY(body, 270);
   const int statsGap = std::max(4, SpanX(body, 30));
@@ -82,36 +79,24 @@ void Renderer::DrawAirSection(HDC dc, const RECT& card) {
     humidityMax = std::max(humidityMax, sample.humidity);
   }
 
-  const int legendTop = body.top + statsHeight + SpanY(body, 60);
-  const int legendHeight = std::clamp(SpanY(body, 110), 14, 26);
-  SelectObject(dc, TierFont(FontTier::Small));
-  RECT legend{body.left, legendTop, body.right, legendTop + legendHeight};
-  SetTextColor(dc, kWidgetSubtle);
-  DrawTextInRect(dc, L"24時間の推移", legend, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-  const std::array<std::pair<const wchar_t*, COLORREF>, 3> legendKeys{{
-      {L"CO2", kWidgetGreen}, {L"温度", kWidgetOrange}, {L"湿度", kWidgetBlueMuted},
-  }};
-  const int keyWidth = std::max(34, SpanX(body, 120));
-  int keyRight = body.right;
-  for (int i = 2; i >= 0; --i) {
-    RECT keyRect{keyRight - keyWidth, legend.top, keyRight, legend.bottom};
-    SetTextColor(dc, legendKeys[static_cast<size_t>(i)].second);
-    DrawTextInRect(dc, legendKeys[static_cast<size_t>(i)].first, keyRect,
-                   DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
-    keyRight -= keyWidth;
+  const int plotTop = body.top + statsHeight + SpanY(body, 60);
+  const RECT plot{body.left, plotTop, body.right, body.bottom};
+  if (plot.right > plot.left + 4 && plot.bottom > plot.top + 4) {
+    HPEN gridPen = CreatePen(PS_SOLID, 1, kWidgetTrack);
+    HGDIOBJ previousPen = SelectObject(dc, gridPen);
+    for (int i = 0; i < 4; ++i) {
+      const int y = plot.top + (plot.bottom - plot.top) * i / 3;
+      MoveToEx(dc, plot.left, y, nullptr);
+      LineTo(dc, plot.right, y);
+    }
+    for (int i = 1; i <= 3; ++i) {
+      const int x = plot.left + (plot.right - plot.left) * i / 4;
+      MoveToEx(dc, x, plot.top, nullptr);
+      LineTo(dc, x, plot.bottom);
+    }
+    SelectObject(dc, previousPen);
+    DeleteObject(gridPen);
   }
-
-  RECT plot{body.left, legend.bottom + SpanY(body, 30), body.right,
-            body.bottom};
-  HPEN gridPen = CreatePen(PS_SOLID, 1, kWidgetTrack);
-  HGDIOBJ previousPen = SelectObject(dc, gridPen);
-  for (int i = 0; i < 4; ++i) {
-    const int y = plot.top + (plot.bottom - plot.top) * i / 3;
-    MoveToEx(dc, plot.left, y, nullptr);
-    LineTo(dc, plot.right, y);
-  }
-  SelectObject(dc, previousPen);
-  DeleteObject(gridPen);
 
   if (!samples.empty() && plot.bottom > plot.top + 4) {
     DrawHistoryLine(dc, samples, plot, cutoff, kWindowMs, co2Min - 80, co2Max + 80, kWidgetGreen, 2,
