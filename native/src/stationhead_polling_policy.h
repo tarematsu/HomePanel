@@ -11,6 +11,7 @@
 #undef StationheadApiPlayStatsScript
 #undef StationheadAutoplayScript
 #undef ApplyStationheadResourceBlocking
+#include "stationhead_script_blocking_extension.h"
 
 namespace hp {
 
@@ -93,6 +94,7 @@ inline void ApplyStationheadResourceBlocking(
   ApplyStationheadResourceBlockingBase(
       environment, webview, config, armed, token);
   ApplyStationheadNonPlaybackScriptBlocking(environment, webview);
+  ApplyStationheadAdditionalScriptBlocking(environment, webview);
 }
 
 // Pusher carries both track transitions and live social traffic. The socket
