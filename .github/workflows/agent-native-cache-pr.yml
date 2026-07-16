@@ -36,7 +36,20 @@ jobs:
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
           Path('/tmp/apply_native_cache.py').write_text(script, encoding='utf-8')
           PY
-          python3 /tmp/apply_native_cache.py
+          set +e
+          python3 /tmp/apply_native_cache.py > /tmp/native-cache-error.txt 2>&1
+          status=$?
+          set -e
+          cat /tmp/native-cache-error.txt
+          if [[ $status -ne 0 ]]; then
+            cp /tmp/native-cache-error.txt .github/agent-native-cache-error.txt
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add .github/agent-native-cache-error.txt
+            git commit -m "Record direct native cache patch failure"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+            exit $status
+          fi
           git diff --check
 
       - name: Commit native cache patch
