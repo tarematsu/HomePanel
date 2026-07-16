@@ -23,7 +23,9 @@ std::wstring HResultHex(HRESULT hr) {
 StationheadPlayer::StationheadPlayer(StationheadRole role, HWND window, StationheadConfig config,
                                      fs::path userDataFolder, Logger& log)
     : role_(role), window_(window), config_(std::move(config)),
-      userDataFolder_(std::move(userDataFolder)), log_(log) {
+      userDataFolder_(std::move(userDataFolder)),
+      profileName_(role == StationheadRole::Secondary ? L"stationhead-secondary" : L"Default"),
+      log_(log) {
   if (IsSecondary()) status_.url = config_.secondaryUrl;
 }
 
@@ -258,6 +260,25 @@ void StationheadPlayer::AttemptNativeStartClick(int64_t nowMs) {
   if (FAILED(result)) autoClickInFlight_ = false;
 }
 
+HRESULT StationheadPlayer::CreateProfileController(
+    HWND parentWindow,
+    ICoreWebView2CreateCoreWebView2ControllerCompletedHandler* handler) const noexcept {
+  if (!environment_ || !parentWindow || !handler) return E_INVALIDARG;
+  ComPtr<ICoreWebView2Environment10> environment10;
+  HRESULT result = environment_.As(&environment10);
+  if (FAILED(result) || !environment10) return E_NOINTERFACE;
+
+  ComPtr<ICoreWebView2ControllerOptions> options;
+  result = environment10->CreateCoreWebView2ControllerOptions(&options);
+  if (FAILED(result) || !options) return FAILED(result) ? result : E_FAIL;
+  result = options->put_ProfileName(profileName_.c_str());
+  if (FAILED(result)) return result;
+  result = options->put_IsInPrivateModeEnabled(FALSE);
+  if (FAILED(result)) return result;
+  return environment10->CreateCoreWebView2ControllerWithOptions(
+      parentWindow, options.Get(), handler);
+}
+
 void StationheadPlayer::Create() {
   if (shuttingDown_ || creating_.exchange(true)) return;
   creationStartedAt_ = UnixMillis();
@@ -311,7 +332,7 @@ void StationheadPlayer::Create() {
               return S_OK;
             });
         const HRESULT started =
-            environment_->CreateCoreWebView2Controller(hostWindow_, onController.Get());
+            CreateProfileController(hostWindow_, onController.Get());
         if (FAILED(started)) {
           creating_ = false;
           creationStartedAt_ = 0;
@@ -364,7 +385,7 @@ void StationheadPlayer::EnsureAuthController(const std::wstring& url) {
         return S_OK;
       });
   const HRESULT started =
-      environment_->CreateCoreWebView2Controller(authHostWindow_, onController.Get());
+      CreateProfileController(authHostWindow_, onController.Get());
   if (FAILED(started)) {
     authControllerStartedAt_ = 0;
     authCallbackAlive_->store(false, std::memory_order_release);
@@ -451,7 +472,7 @@ void StationheadPlayer::Tick(int64_t nowMs) {
       authProbeStartedAt_ = 0;
       log_.Warn(L"Secondary Stationhead auth probe timed out");
     }
-    if (lastAuthProbeAt_ > 0 && nowMs - lastAuthProbeAt_ >= kAuthProbeIntervalMs) {
+    if (lastAuthProbeAt_ == 0 || nowMs - lastAuthProbeAt_ >= kAuthProbeIntervalMs) {
       PollAuthProbe(nowMs);
     }
     if (authProbeInFlight_) consider(authProbeStartedAt_ + kAuthProbeTimeoutMs);

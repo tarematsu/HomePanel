@@ -126,6 +126,8 @@ class StationheadPlayer {
   void CompletePendingAuthPopupDeferral() noexcept;
   void EnsureDistinctBrowserIdentity() noexcept;
   void Create();
+  HRESULT CreateProfileController(
+      HWND parentWindow, ICoreWebView2CreateCoreWebView2ControllerCompletedHandler* handler) const noexcept;
   void EnsureAuthController(const std::wstring& url);
   bool EnsureHostWindow();
   bool EnsureAuthHostWindow();
@@ -155,6 +157,7 @@ class StationheadPlayer {
   HWND authHostWindow_{};
   StationheadConfig config_;
   fs::path userDataFolder_;
+  std::wstring profileName_;
   Logger& log_;
   mutable std::mutex mutex_;
   RECT bounds_{0, 0, 1, 1};

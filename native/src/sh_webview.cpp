@@ -191,7 +191,7 @@ void StationheadPlayer::ConfigureWebView() {
                 });
 
             const HRESULT createResult =
-                environment_->CreateCoreWebView2Controller(authHostWindow_, onController.Get());
+                CreateProfileController(authHostWindow_, onController.Get());
             if (FAILED(createResult)) {
               authControllerStartedAt_ = 0;
               authCallbackAlive_->store(false, std::memory_order_release);

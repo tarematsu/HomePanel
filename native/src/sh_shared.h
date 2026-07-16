@@ -660,11 +660,12 @@ inline void ApplyStationheadResourceBlocking(ICoreWebView2Environment* environme
             bool block = false;
             bool needsUri = true;
             if (hasContext) {
-              const bool armedNow = context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_STYLESHEET &&
-                  armed.load(std::memory_order_relaxed);
+              // Stationhead loads route and player styles lazily. Blocking every
+              // stylesheet after audio starts can leave only the already-rendered
+              // header visible while the station body stays black.
+              (void)armed;
               if ((blockImages && context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE) ||
                   (blockFonts && context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT) ||
-                  (context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_STYLESHEET && armedNow) ||
                   context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_TEXT_TRACK ||
                   context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MANIFEST ||
                   context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_CSP_VIOLATION_REPORT) {
