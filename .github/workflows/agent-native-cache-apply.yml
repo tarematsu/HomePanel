@@ -1,36 +1,49 @@
 name: Apply native panel cache optimizations
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/cache-native-panels
+      - main
+    paths:
+      - ".github/workflows/agent-native-cache-apply.yml"
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    if: github.actor != 'github-actions[bot]'
+    if: >-
+      github.actor != 'github-actions[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent/cache-native-panels
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
-      - name: Apply focused native cache patch
+      - name: Apply native cache patch
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           def replace_once(path: str, old: str, new: str) -> None:
               target = Path(path)
               text = target.read_text(encoding='utf-8')
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f'{path}: expected one replacement, found {count}')
+                  raise SystemExit(f'{path}: expected one match, found {count}: {old[:100]!r}')
               target.write_text(text.replace(old, new), encoding='utf-8', newline='')
+
+          def replace_regex(path: str, pattern: str, replacement: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding='utf-8')
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'{path}: regex expected one match, found {count}: {pattern[:100]!r}')
+              target.write_text(updated, encoding='utf-8', newline='')
 
           replace_once(
               'native/src/web_renderer.h',
@@ -155,17 +168,17 @@ jobs:
           replace_once(
               'native/src/dashboard_data.h',
               '''  bool switchBotDoorOpen = false;
-          bool switchBotMotion = false;
-          std::vector<SwitchBotDeviceData> switchBotDevices;
+            bool switchBotMotion = false;
+            std::vector<SwitchBotDeviceData> switchBotDevices;
           };''',
               '''  bool switchBotDoorOpen = false;
-          bool switchBotMotion = false;
-          std::vector<SwitchBotDeviceData> switchBotDevices;
+            bool switchBotMotion = false;
+            std::vector<SwitchBotDeviceData> switchBotDevices;
 
-          uint64_t weatherRevision = 0;
-          uint64_t newsRevision = 0;
-          uint64_t octopusRevision = 0;
-          uint64_t switchBotRevision = 0;
+            uint64_t weatherRevision = 0;
+            uint64_t newsRevision = 0;
+            uint64_t octopusRevision = 0;
+            uint64_t switchBotRevision = 0;
           };''')
 
           replace_once(
@@ -176,8 +189,8 @@ jobs:
               '''using winrt::Windows::Data::Json::JsonValueType;
 
           uint64_t SectionRevision(const JsonObject& object, const std::wstring& cloudError) {
-            std::string source = WideToUtf8(object.Stringify().c_str());
-            source.push_back('\\0');
+            std::string source = WideToUtf8(std::wstring(object.Stringify().c_str()));
+            source.push_back('\0');
             source += WideToUtf8(cloudError);
             return Fnv1a64(source);
           }
@@ -187,34 +200,31 @@ jobs:
           replace_once(
               'native/src/dashboard_data.cpp',
               '''    const JsonObject weather = json::Object(root, L"weather");
-            next.weatherStatus = ReadStatus(weather);''',
+              next.weatherStatus = ReadStatus(weather);''',
               '''    const JsonObject weather = json::Object(root, L"weather");
-            next.weatherRevision = SectionRevision(weather, next.cloudError);
-            next.weatherStatus = ReadStatus(weather);''')
-
+              next.weatherRevision = SectionRevision(weather, next.cloudError);
+              next.weatherStatus = ReadStatus(weather);''')
           replace_once(
               'native/src/dashboard_data.cpp',
               '''    const JsonObject news = json::Object(root, L"news");
-            next.newsStatus = ReadStatus(news);''',
+              next.newsStatus = ReadStatus(news);''',
               '''    const JsonObject news = json::Object(root, L"news");
-            next.newsRevision = SectionRevision(news, next.cloudError);
-            next.newsStatus = ReadStatus(news);''')
-
+              next.newsRevision = SectionRevision(news, next.cloudError);
+              next.newsStatus = ReadStatus(news);''')
           replace_once(
               'native/src/dashboard_data.cpp',
               '''    const JsonObject octopus = json::Object(root, L"octopus");
-            next.octopusStatus = ReadStatus(octopus);''',
+              next.octopusStatus = ReadStatus(octopus);''',
               '''    const JsonObject octopus = json::Object(root, L"octopus");
-            next.octopusRevision = SectionRevision(octopus, next.cloudError);
-            next.octopusStatus = ReadStatus(octopus);''')
-
+              next.octopusRevision = SectionRevision(octopus, next.cloudError);
+              next.octopusStatus = ReadStatus(octopus);''')
           replace_once(
               'native/src/dashboard_data.cpp',
               '''    const JsonObject switchbot = json::Object(root, L"switchbot");
-            next.switchBotStatus = ReadStatus(switchbot);''',
+              next.switchBotStatus = ReadStatus(switchbot);''',
               '''    const JsonObject switchbot = json::Object(root, L"switchbot");
-            next.switchBotRevision = SectionRevision(switchbot, next.cloudError);
-            next.switchBotStatus = ReadStatus(switchbot);''')
+              next.switchBotRevision = SectionRevision(switchbot, next.cloudError);
+              next.switchBotStatus = ReadStatus(switchbot);''')
 
           replace_once(
               'native/src/renderer_state.cpp',
@@ -223,7 +233,6 @@ jobs:
               '''  width_ = nextWidth;
             height_ = nextHeight;
             ++nativeLayoutRevision_;''')
-
           replace_once(
               'native/src/renderer_state.cpp',
               '''  bounds_ = bounds;
@@ -232,31 +241,9 @@ jobs:
             ++nativeLayoutRevision_;
             width_ = std::max(1L, bounds.right - bounds.left);''')
 
-          replace_once(
+          replace_regex(
               'native/src/renderer_state.cpp',
-              '''bool Renderer::LoadDashboard(const fs::path& jsonPath, bool* changed) {
-            if (changed) *changed = false;
-            try {
-              std::ifstream input(jsonPath, std::ios::binary);
-              if (!input) return false;
-              std::string text((std::istreambuf_iterator<char>(input)), {});
-              if (text.empty()) return false;
-              if (text == dashboardUtf8_) return true;
-              DashboardSnapshot snapshot;
-              if (!ParseDashboardSnapshot(text, snapshot)) return false;
-              newsCount_ = snapshot.newsItemCount;
-              nativeDashboard_ = std::move(snapshot);
-              dashboardUtf8_ = std::move(text);
-              ++dashboardSourceRevision_;
-              if (changed) *changed = true;
-              return true;
-            } catch (...) {
-              dashboardUtf8_.clear();
-              newsCount_ = 0;
-              ++dashboardSourceRevision_;
-              return false;
-            }
-          }''',
+              r'''bool Renderer::LoadDashboard\(const fs::path& jsonPath, bool\* changed\) \{.*?\n\}\n\nRECT Renderer::ClientBounds''',
               '''bool Renderer::LoadDashboard(const fs::path& jsonPath, bool* changed) {
             if (changed) *changed = false;
             try {
@@ -312,7 +299,9 @@ jobs:
             } catch (...) {
               return false;
             }
-          }''')
+          }
+
+          RECT Renderer::ClientBounds''')
 
           replace_once(
               'native/src/renderer_panels/part2.inc',
@@ -433,7 +422,6 @@ jobs:
             }
             nativeSectionBitmaps_.clear();
             for (auto& [key, entry] : nativeArtworkBitmaps_) {''')
-
           replace_once(
               'native/src/renderer_panels/part2.inc',
               '''  nativeArtworkBitmaps_.clear();
@@ -448,41 +436,9 @@ jobs:
             radarBitmapUseCounter_ = 0;
             {''')
 
-          replace_once(
+          replace_regex(
               'native/src/renderer_panels/part2.inc',
-              '''void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
-            const bool sensorsChanged = nativeSensors_ != state.sensors;
-            const bool historyChanged = nativeAirHistory_ != state.airHistory;
-            const bool stationheadChanged = nativeStationhead_ != state.stationhead;
-            const bool stationheadHistoryChanged = nativeStationheadPlayHistory_ != state.stationheadPlayHistory;
-            const bool controlsChanged = nativeAppVersion_ != state.appVersion || nativeToast_ != state.toast;
-            const bool newsChanged = nativeNewsIndex_ != state.newsIndex;
-            const bool dashboardChanged = nativeRenderedDashboardRevision_ != dashboardSourceRevision_;
-
-            if (sensorsChanged) nativeSensors_ = state.sensors;
-            if (historyChanged) nativeAirHistory_ = state.airHistory;
-            if (stationheadHistoryChanged) {
-              nativeStationheadPlayHistory_ = state.stationheadPlayHistory;
-            }
-            if (stationheadChanged) nativeStationhead_ = state.stationhead;
-            if (controlsChanged) {
-              nativeAppVersion_ = state.appVersion;
-              nativeToast_ = state.toast;
-            }
-            if (newsChanged) nativeNewsIndex_ = state.newsIndex;
-            if (dashboardChanged) nativeRenderedDashboardRevision_ = dashboardSourceRevision_;
-            if (!EnsureNativeStaticWindows()) return;
-            if (sensorsChanged || historyChanged) InvalidatePanelSection(nativeMainWindow_, PanelSection::Energy);
-            if (dashboardChanged) {
-              InvalidatePanelSection(nativeSideWindow_, PanelSection::Weather);
-              InvalidatePanelSection(nativeSideWindow_, PanelSection::Air);
-            }
-            if (dashboardChanged || newsChanged) InvalidatePanelSection(nativeMainWindow_, PanelSection::News);
-            if (controlsChanged) InvalidatePanelSection(nativeSideWindow_, PanelSection::Controls);
-            if (stationheadChanged || stationheadHistoryChanged) {
-              InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
-            }
-          }''',
+              r'''void Renderer::UpdateNativeStaticPanels\(const RenderState& state\) \{.*?\n\}\n\nvoid Renderer::TickNativePanels''',
               '''void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
             const bool sensorsChanged = nativeSensors_ != state.sensors;
             const bool historyChanged = nativeAirHistory_ != state.airHistory;
@@ -500,9 +456,7 @@ jobs:
               RebuildNativeAirGraph(UnixMillis());
             }
             if (sensorsChanged || historyChanged) ++nativeAirRenderRevision_;
-            if (stationheadHistoryChanged) {
-              nativeStationheadPlayHistory_ = state.stationheadPlayHistory;
-            }
+            if (stationheadHistoryChanged) nativeStationheadPlayHistory_ = state.stationheadPlayHistory;
             if (stationheadChanged) nativeStationhead_ = state.stationhead;
             if (controlsChanged) {
               nativeAppVersion_ = state.appVersion;
@@ -527,7 +481,9 @@ jobs:
             if (stationheadChanged || stationheadHistoryChanged) {
               InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
             }
-          }''')
+          }
+
+          void Renderer::TickNativePanels''')
 
           replace_once(
               'native/src/renderer_panels/part2.inc',
@@ -545,7 +501,6 @@ jobs:
               DrawCachedPanelSection(scope.dc, sections.weather, PanelSection::Energy,
                                      dashboardEnergyRevision_, &Renderer::DrawEnergySection);
             }''')
-
           replace_once(
               'native/src/renderer_panels/part2.inc',
               '''  if (IntersectRect(&overlap, &scope.dirty, &sections.energy)) {
@@ -563,39 +518,14 @@ jobs:
                                      nativeNewsRenderRevision_, &Renderer::DrawNewsSection);
             }''')
 
-          replace_once(
+          replace_regex(
               'native/src/renderer_panels/part3.inc',
-              '''  const int64_t now = UnixMillis();
-            constexpr int64_t kWindowMs = 24LL * 60 * 60 * 1000;
-            const int64_t cutoff = now - kWindowMs;
-            std::vector<AirHistorySample> samples;
-            samples.reserve(nativeAirHistory_.size());
-            double co2Min = std::numeric_limits<double>::max();
-            double co2Max = std::numeric_limits<double>::lowest();
-            double temperatureMin = std::numeric_limits<double>::max();
-            double temperatureMax = std::numeric_limits<double>::lowest();
-            double humidityMin = std::numeric_limits<double>::max();
-            double humidityMax = std::numeric_limits<double>::lowest();
-            for (const auto& sample : nativeAirHistory_) {
-              if (sample.timestamp < cutoff || sample.co2 < 250 || sample.co2 > 10000 ||
-                  sample.temperature < -40 || sample.temperature > 85 ||
-                  sample.humidity < 0 || sample.humidity > 100) {
-                continue;
-              }
-              samples.push_back(sample);
-              co2Min = std::min(co2Min, static_cast<double>(sample.co2));
-              co2Max = std::max(co2Max, static_cast<double>(sample.co2));
-              temperatureMin = std::min(temperatureMin, sample.temperature);
-              temperatureMax = std::max(temperatureMax, sample.temperature);
-              humidityMin = std::min(humidityMin, sample.humidity);
-              humidityMax = std::max(humidityMax, sample.humidity);
-            }
-''',
+              r'''  const int64_t now = UnixMillis\(\);.*?\n  const int plotTop =''',
               '''  constexpr int64_t kWindowMs = 24LL * 60 * 60 * 1000;
             const auto& samples = nativeAirGraph_.samples;
             const int64_t cutoff = nativeAirGraph_.cutoff;
-''')
 
+            const int plotTop =''')
           replace_once(
               'native/src/renderer_panels/part3.inc',
               '''    DrawHistoryLine(dc, samples, plot, cutoff, kWindowMs, co2Min - 80, co2Max + 80, kWidgetGreen, 2,
@@ -626,23 +556,9 @@ jobs:
               '''constexpr int64_t kRadarTileFailureTtlMs = 5 * 60'000;''',
               '''constexpr int64_t kRadarTileFailureTtlMs = 5 * 60'000;
           constexpr size_t kRadarBitmapCacheLimit = 16;''')
-
-          replace_once(
+          replace_regex(
               'native/src/renderer_radar_ui.cpp',
-              '''HBITMAP DecodeRadarTile(const fs::path& dataDir, const std::wstring& url,
-                                         int width, int height) {
-            static constexpr wchar_t kDataHostPrefix[] = L"https://data.homepanel/";
-            if (url.empty()) return nullptr;
-            if (url.rfind(kDataHostPrefix, 0) == 0) {
-              std::wstring relative = url.substr(std::size(kDataHostPrefix) - 1);
-              if (relative.empty() || relative.find(L"..") != std::wstring::npos) return nullptr;
-              for (auto& character : relative) {
-                if (character == L'/') character = L'\\';
-              }
-              return DecodeImageFileToBitmap(dataDir / relative, width, height);
-            }
-            return nullptr;
-          }''',
+              r'''HBITMAP DecodeRadarTile\(.*?\n\}\n\nbool FileMatchesText''',
               '''std::optional<fs::path> RadarTilePath(const fs::path& dataDir,
                                                        const std::wstring& url) {
             static constexpr wchar_t kDataHostPrefix[] = L"https://data.homepanel/";
@@ -655,8 +571,9 @@ jobs:
               if (character == L'/') character = L'\\';
             }
             return dataDir / relative;
-          }''')
+          }
 
+          bool FileMatchesText''')
           replace_once(
               'native/src/renderer_radar_ui.cpp',
               '''}  // namespace
@@ -669,7 +586,7 @@ jobs:
             if (width <= 0 || height <= 0) return nullptr;
             const std::wstring cacheKey = key + L"#" + Utf8ToWide(FileStamp(path)) + L"#" +
                 std::to_wstring(width) + L"x" + std::to_wstring(height);
-            const auto found = radarBitmaps_.find(cacheKey);
+            auto found = radarBitmaps_.find(cacheKey);
             if (found != radarBitmaps_.end()) {
               found->second.lastUsed = ++radarBitmapUseCounter_;
               return found->second.bitmap;
@@ -690,7 +607,6 @@ jobs:
           }
 
           void Renderer::StartRadarCompose() {''')
-
           replace_once(
               'native/src/renderer_radar_ui.cpp',
               '''  HBITMAP radarSatelliteBitmap = DecodeImageFileToBitmap(
@@ -707,7 +623,6 @@ jobs:
             HBITMAP radarMapBitmap = CachedRadarBitmap(
                 L"radar-map", mapPath, kRadarCanvasWidth, kRadarCanvasHeight);
             if (!radarSatelliteBitmap || !radarMapBitmap) return;''')
-
           replace_once(
               'native/src/renderer_radar_ui.cpp',
               '''  if (!composed) {
@@ -716,7 +631,6 @@ jobs:
               return;
             }''',
               '''  if (!composed) return;''')
-
           replace_once(
               'native/src/renderer_radar_ui.cpp',
               '''  if (!composeDc) {
@@ -729,7 +643,6 @@ jobs:
               DeleteObject(composed);
               return;
             }''')
-
           replace_once(
               'native/src/renderer_radar_ui.cpp',
               '''    HBITMAP tileBitmap = DecodeRadarTile(dataDir_, tile.url, tileWidth, tileHeight);
@@ -757,7 +670,6 @@ jobs:
                           static_cast<int>(std::lround(tile.destination.y * scaleY)),
                           tileWidth, tileHeight);
               ++loadedTiles;''')
-
           replace_once(
               'native/src/renderer_radar_ui.cpp',
               '''  SelectObject(composeDc, previousComposed);
@@ -768,43 +680,19 @@ jobs:
               '''  SelectObject(composeDc, previousComposed);
             DeleteDC(composeDc);
 ''')
-
-          # Focused source-level regression checks for the intended optimizations.
-          checks = {
-              'native/src/renderer_state.cpp': [
-                  'dashboardSourceStampValid_',
-                  'dashboardWeatherRevision_',
-                  'dashboardEnergyRevision_',
-                  'dashboardNewsRevision_',
-              ],
-              'native/src/renderer_panels/part2.inc': [
-                  'RebuildNativeAirGraph',
-                  'DrawCachedPanelSection',
-                  'nativeSectionBitmaps_',
-              ],
-              'native/src/renderer_radar_ui.cpp': [
-                  'CachedRadarBitmap',
-                  'RadarTilePath',
-                  'kRadarBitmapCacheLimit',
-              ],
-          }
-          for path, needles in checks.items():
-              text = Path(path).read_text(encoding='utf-8')
-              for needle in needles:
-                  if needle not in text:
-                      raise SystemExit(f'{path}: missing {needle}')
           PY
-
           git diff --check
 
-      - name: Commit patch and remove helper workflow
+      - name: Commit native cache patch
         shell: bash
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git rm .github/workflows/agent-native-cache-apply.yml
+          git rm .github/workflows/agent-native-cache-apply.yml \
+            .github/workflows/agent-native-cache-pr.yml \
+            .github/agent-native-cache-error.txt
           git add native/src/web_renderer.h native/src/dashboard_data.h native/src/dashboard_data.cpp \
             native/src/renderer_state.cpp native/src/renderer_panels/part2.inc \
             native/src/renderer_panels/part3.inc native/src/renderer_radar_ui.cpp
           git commit -m "Cache native dashboard rendering"
-          git push origin HEAD:agent/cache-native-panels
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
