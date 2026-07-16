@@ -344,6 +344,20 @@ class AppSecondaryStationheadHandle
     player_->SetPlaybackFallback(active, reason);
     ApplyBounds();
   }
+  void ShowAfterAudioStop() {
+    if (!player_) return;
+    ApplyInteractiveBounds();
+    player_->ShowAfterAudioStop();
+    ApplyBounds();
+  }
+  void ReleaseCompletedAuth() {
+    if (!player_) return;
+    player_->ReleaseCompletedAuth();
+    ApplyBounds();
+  }
+  uint32_t ConsumeChangeFlags() {
+    return player_ ? player_->ConsumeChangeFlags() : StationheadChangeNone;
+  }
 };
 
 class App {
