@@ -32,7 +32,7 @@ void ApplyCloudError(PanelDataStatus& status, const std::wstring& error) {
 }
 
 std::wstring DateRangeText(const JsonObject& comparison, const wchar_t* startName,
-                           const wchar_t* endName) {
+                            const wchar_t* endName) {
   const std::wstring start = json::Text(comparison, startName);
   const std::wstring end = json::Text(comparison, endName);
   if (start.empty()) return end;
@@ -85,7 +85,9 @@ bool ParseDashboardSnapshot(const std::string& text, DashboardSnapshot& output, 
     next.weatherStatus = ReadStatus(weather);
     next.city = json::Text(weather, L"city");
     const JsonObject hourly = json::Object(weather, L"hourly");
-    for (int hour = 0; hour < 24 && next.weatherHours.size() < 8; ++hour) {
+    static constexpr std::array<int, 12> kWeatherHourOrder{
+        22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    for (const int hour : kWeatherHourOrder) {
       const std::wstring key = std::to_wstring(hour);
       try {
         if (!hourly.HasKey(key) || hourly.GetNamedValue(key).ValueType() != JsonValueType::Object) continue;
