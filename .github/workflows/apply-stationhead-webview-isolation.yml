@@ -26,38 +26,38 @@ jobs:
 
           def replace_once(text: str, old: str, new: str, label: str) -> str:
               count = text.count(old)
+              print(f'{label}: {count} match(es)')
               if count != 1:
                   raise SystemExit(f'{label}: expected one match, found {count}')
               return text.replace(old, new, 1)
 
           app_path = Path('native/src/app.cpp')
           app = app_path.read_text(encoding='utf-8')
-          app = replace_once(
-              app,
-              '''  const fs::path stationheadData = dataDir_ / L"webview2-stationhead";
-          stationhead_ = std::make_unique<StationheadPlayer>(
-              StationheadRole::Primary, window_, config_.stationhead, stationheadData, *logger_);
-          if (config_.stationhead.secondaryEnabled && !config_.stationhead.secondaryUrl.empty()) {
-            secondaryStationhead_ = std::make_unique<StationheadPlayer>(
-                StationheadRole::Secondary, window_, config_.stationhead, stationheadData, *logger_);
-            logger_->Info(L"Secondary Stationhead prepared to start alongside primary");
-          }
-          ''',
-              '''  // Keep the primary on its existing folder so its login survives this
-          // migration. Window B gets its own user-data folder and therefore its own
-          // browser process, cache, service workers, cookies, and storage.
-          const fs::path primaryStationheadData = dataDir_ / L"webview2-stationhead";
-          const fs::path secondaryStationheadData = dataDir_ / L"webview2-stationhead-secondary";
-          stationhead_ = std::make_unique<StationheadPlayer>(
-              StationheadRole::Primary, window_, config_.stationhead, primaryStationheadData, *logger_);
-          if (config_.stationhead.secondaryEnabled && !config_.stationhead.secondaryUrl.empty()) {
-            secondaryStationhead_ = std::make_unique<StationheadPlayer>(
-                StationheadRole::Secondary, window_, config_.stationhead, secondaryStationheadData, *logger_);
-            logger_->Info(L"Secondary Stationhead prepared with isolated WebView2 user data");
-          }
-          ''',
-              'separate Stationhead data folders',
+          old_app = (
+              '  const fs::path stationheadData = dataDir_ / L"webview2-stationhead";\n'
+              '  stationhead_ = std::make_unique<StationheadPlayer>(\n'
+              '      StationheadRole::Primary, window_, config_.stationhead, stationheadData, *logger_);\n'
+              '  if (config_.stationhead.secondaryEnabled && !config_.stationhead.secondaryUrl.empty()) {\n'
+              '    secondaryStationhead_ = std::make_unique<StationheadPlayer>(\n'
+              '        StationheadRole::Secondary, window_, config_.stationhead, stationheadData, *logger_);\n'
+              '    logger_->Info(L"Secondary Stationhead prepared to start alongside primary");\n'
+              '  }\n'
           )
+          new_app = (
+              '  // Keep the primary on its existing folder so its login survives this\n'
+              '  // migration. Window B gets its own user-data folder and therefore its own\n'
+              '  // browser process, cache, service workers, cookies, and storage.\n'
+              '  const fs::path primaryStationheadData = dataDir_ / L"webview2-stationhead";\n'
+              '  const fs::path secondaryStationheadData = dataDir_ / L"webview2-stationhead-secondary";\n'
+              '  stationhead_ = std::make_unique<StationheadPlayer>(\n'
+              '      StationheadRole::Primary, window_, config_.stationhead, primaryStationheadData, *logger_);\n'
+              '  if (config_.stationhead.secondaryEnabled && !config_.stationhead.secondaryUrl.empty()) {\n'
+              '    secondaryStationhead_ = std::make_unique<StationheadPlayer>(\n'
+              '        StationheadRole::Secondary, window_, config_.stationhead, secondaryStationheadData, *logger_);\n'
+              '    logger_->Info(L"Secondary Stationhead prepared with isolated WebView2 user data");\n'
+              '  }\n'
+          )
+          app = replace_once(app, old_app, new_app, 'separate Stationhead data folders')
           if app.count('primaryStationheadData') != 2:
               raise SystemExit('primary Stationhead folder wiring is incomplete')
           if app.count('secondaryStationheadData') != 2:
@@ -68,23 +68,24 @@ jobs:
 
           webview_path = Path('native/src/sh_webview.cpp')
           webview = webview_path.read_text(encoding='utf-8')
-          webview = replace_once(
-              webview,
-              '''  ComPtr<ICoreWebView2_19> v19;
-          if (config_.lowMemoryMode && SUCCEEDED(webview_.As(&v19))) {
-            v19->put_MemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW);
-          }
-          ApplyMute();
-          ''',
-              '''  // An audio WebView must not be marked as a low-memory discard target.
-          // Once the dashboard moves it behind the native surface, WebView2 can
-          // otherwise unload and recreate the page, stopping playback and causing
-          // Start Listening to be clicked again. Keep LOW only for the transient
-          // authorization WebView below.
-          ApplyMute();
-          ''',
-              'keep playback WebViews out of low-memory mode',
+          old_webview = (
+              '  ComPtr<ICoreWebView2_19> v19;\n'
+              '  if (config_.lowMemoryMode && SUCCEEDED(webview_.As(&v19))) {\n'
+              '    v19->put_MemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW);\n'
+              '  }\n'
+              '  ApplyMute();\n'
           )
+          new_webview = (
+              '  // An audio WebView must not be marked as a low-memory discard target.\n'
+              '  // Once the dashboard moves it behind the native surface, WebView2 can\n'
+              '  // otherwise unload and recreate the page, stopping playback and causing\n'
+              '  // Start Listening to be clicked again. Keep LOW only for the transient\n'
+              '  // authorization WebView below.\n'
+              '  ApplyMute();\n'
+          )
+          webview = replace_once(
+              webview, old_webview, new_webview,
+              'keep playback WebViews out of low-memory mode')
           if webview.count('COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW') != 1:
               raise SystemExit('LOW memory target must remain only on the auth WebView')
           webview_path.write_text(webview, encoding='utf-8')
