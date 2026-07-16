@@ -258,13 +258,13 @@ void App::ClearStartupStationheadPreview() {
   if (secondaryStationhead_) secondaryStationhead_->ClearStartupPreviewBounds();
 }
 
-void App::StartDeferredServices(int64_t now, const StationheadStatus& stationheadStatus) {
-  const bool primaryAudioReady = stationheadStatus.audioPlaying;
+void App::StartDeferredServices(int64_t now, const StationheadStatus&) {
+  const bool primaryAudioReady = stationhead_->RawStatus().audioPlaying;
   const bool secondaryEnabled = static_cast<bool>(secondaryStationhead_);
   bool secondaryAudioReady = true;
-  if (!rendererStarted_ && secondaryEnabled) {
-    const StationheadStatus secondaryStatus = secondaryStationhead_->Status();
-    secondaryAudioReady = secondaryStatus.playing;
+  if (secondaryEnabled) {
+    const StationheadStatus secondaryStatus = secondaryStationhead_->RawStatus();
+    secondaryAudioReady = secondaryStatus.audioPlaying;
   }
   const bool dashboardAudioReady =
       DashboardAudioReady(primaryAudioReady, secondaryEnabled, secondaryAudioReady);

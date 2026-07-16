@@ -21,6 +21,11 @@ std::wstring HResultHex(HRESULT hr) {
 
 void StationheadPlayer::ConfigureWebView() {
   const auto alive = createCallbackAlive_;
+  webViewConfigured_ = false;
+  startupScriptRegistrationComplete_ = false;
+  startupNavigationStarted_ = false;
+  startupScriptDeadline_ =
+      UnixMillis() + kStationheadStartupScriptRegistrationTimeoutMs;
 
   appliedMuted_.store(-1, std::memory_order_relaxed);
   appliedVolumePercent_.store(-1, std::memory_order_relaxed);
@@ -80,48 +85,63 @@ void StationheadPlayer::ConfigureWebView() {
   if (IsSecondary()) EnsureDistinctBrowserIdentity();
 
   static const std::wstring authCaptureScript = StationheadAuthCaptureScript();
-  webview_->AddScriptToExecuteOnDocumentCreated(authCaptureScript.c_str(), nullptr);
+  const HRESULT authCaptureResult =
+      webview_->AddScriptToExecuteOnDocumentCreated(authCaptureScript.c_str(), nullptr);
+  if (FAILED(authCaptureResult)) {
+    log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
+              L" auth capture script registration failed " + HResultHex(authCaptureResult));
+  }
   static const std::wstring primaryStartupScript =
       StationheadAutoplayScript(L"__homepanelPrimaryStationhead", L"stationhead");
   static const std::wstring secondaryStartupScript =
       StationheadAutoplayScript(L"__homepanelSecondaryStationhead", L"secondary");
   const std::wstring& startupScript = IsSecondary() ? secondaryStartupScript : primaryStartupScript;
-  webview_->AddScriptToExecuteOnDocumentCreated(
+  const HRESULT startupScriptResult = webview_->AddScriptToExecuteOnDocumentCreated(
       startupScript.c_str(),
       Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
           [this, alive](HRESULT result, LPCWSTR) -> HRESULT {
             if (!CallbackAlive(alive)) return S_OK;
             if (FAILED(result)) {
-              log_.Warn(L"Stationhead " + std::wstring(RoleTag()) + L" startup script registration failed " +
-                        HResultHex(result));
+              log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
+                        L" startup script registration failed " + HResultHex(result));
             }
-            if (!pendingAuthorizationUrl_.empty()) {
-              const std::wstring authorizationUrl = pendingAuthorizationUrl_;
-              pendingAuthorizationUrl_.clear();
-              OpenSpotifyAuthorization(authorizationUrl);
-            } else {
-              NavigateCurrentUrl(UnixMillis(), L"startup");
-            }
+            startupScriptRegistrationComplete_ = true;
+            TryStartInitialNavigation();
             return S_OK;
           }).Get());
+  if (FAILED(startupScriptResult)) {
+    log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
+              L" startup script registration could not start " +
+              HResultHex(startupScriptResult));
+    startupScriptRegistrationComplete_ = true;
+  }
 
   webview_->add_NewWindowRequested(
       Callback<ICoreWebView2NewWindowRequestedEventHandler>(
           [this, alive](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
             if (!CallbackAlive(alive) || !args) return S_OK;
 
-            args->put_Handled(TRUE);
-            if (!environment_ || !EnsureAuthHostWindow()) return S_OK;
+            if (!environment_ || !EnsureAuthHostWindow()) {
+              args->put_Handled(FALSE);
+              log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
+                        L" could not prepare the Spotify popup host");
+              return S_OK;
+            }
             LPWSTR uriRaw = nullptr;
             args->get_Uri(&uriRaw);
             const std::wstring uri = uriRaw ? uriRaw : L"";
             if (uriRaw) CoTaskMemFree(uriRaw);
             ComPtr<ICoreWebView2Deferral> deferral;
-            if (FAILED(args->GetDeferral(&deferral)) || !deferral) return S_OK;
+            if (FAILED(args->GetDeferral(&deferral)) || !deferral) {
+              args->put_Handled(FALSE);
+              return S_OK;
+            }
+            args->put_Handled(TRUE);
             ComPtr<ICoreWebView2NewWindowRequestedEventArgs> popupArgs = args;
             CloseAuthWebView();
             authCallbackAlive_ = std::make_shared<std::atomic<bool>>(true);
             const auto authAlive = authCallbackAlive_;
+            authControllerStartedAt_ = UnixMillis();
             spotifyAuthorization_ = true;
             SelectTab(StationheadTabKind::Auth);
 
@@ -133,6 +153,7 @@ void StationheadPlayer::ConfigureWebView() {
                     deferral->Complete();
                     return S_OK;
                   }
+                  authControllerStartedAt_ = 0;
                   if (FAILED(result) || !controller || shuttingDown_) {
                     if (controller) controller->Close();
                     FinishSpotifyAuthorization(L"Spotify popup creation failed " + HResultHex(result));
@@ -162,6 +183,7 @@ void StationheadPlayer::ConfigureWebView() {
             const HRESULT createResult =
                 environment_->CreateCoreWebView2Controller(authHostWindow_, onController.Get());
             if (FAILED(createResult)) {
+              authControllerStartedAt_ = 0;
               authCallbackAlive_->store(false, std::memory_order_release);
               FinishSpotifyAuthorization(L"Spotify popup creation could not start " + HResultHex(createResult));
               deferral->Complete();
@@ -367,6 +389,9 @@ void StationheadPlayer::ConfigureWebView() {
   }
   createdAt_ = lastReloadAt_ = UnixMillis();
   resourceBlockingArmed_ = false;
+  webViewConfigured_ = true;
+  TryStartInitialNavigation();
+  PostChange();
 }
 
 void StationheadPlayer::ConfigureAuthWebView() {
@@ -442,7 +467,13 @@ void StationheadPlayer::ConfigureAuthWebView() {
             return S_OK;
           }).Get(), &authProcessFailedToken_);
   ApplyMute();
-  if (!authPendingUrl_.empty()) authWebview_->Navigate(authPendingUrl_.c_str());
+  if (!authPendingUrl_.empty()) {
+    const HRESULT navigationResult = authWebview_->Navigate(authPendingUrl_.c_str());
+    if (FAILED(navigationResult)) {
+      FinishSpotifyAuthorization(
+          L"Spotify auth navigation could not start " + HResultHex(navigationResult));
+    }
+  }
 }
 
 void StationheadPlayer::CloseWebView() {
@@ -470,6 +501,12 @@ void StationheadPlayer::CloseWebView() {
   nativeAudioTracking_ = false;
   resourceBlockingArmed_ = false;
   identityWebview_ = nullptr;
+  autoClickInFlight_ = false;
+  webViewConfigured_ = false;
+  startupScriptRegistrationComplete_ = false;
+  startupNavigationStarted_ = false;
+  startupScriptDeadline_ = 0;
+  ResetNavigationRouteState();
   if (controller_) controller_->Close();
   webview_.Reset();
   controller_.Reset();
@@ -477,6 +514,8 @@ void StationheadPlayer::CloseWebView() {
   appliedMuted_.store(-1, std::memory_order_relaxed);
   appliedVolumePercent_.store(-1, std::memory_order_relaxed);
   if (hostWindow_ && IsWindow(hostWindow_)) ShowWindow(hostWindow_, SW_HIDE);
+  viewVisible_ = false;
+  selectedTab_ = StationheadTabKind::None;
   spotifyAuthorization_ = false;
   loginRequired_ = false;
   lastAuthProbeAt_ = 0;
@@ -484,10 +523,15 @@ void StationheadPlayer::CloseWebView() {
   authProbeInFlight_ = false;
   std::lock_guard lock(mutex_);
   status_.created = false;
+  status_.navigating = false;
+  status_.audioPlaying = false;
+  status_.playing = false;
+  status_.visible = false;
 }
 
 void StationheadPlayer::CloseAuthWebView() {
   authCallbackAlive_->store(false, std::memory_order_release);
+  authControllerStartedAt_ = 0;
   if (authWebview_) {
     if (authNavigationToken_.value) authWebview_->remove_NavigationCompleted(authNavigationToken_);
     if (authMessageToken_.value) authWebview_->remove_WebMessageReceived(authMessageToken_);

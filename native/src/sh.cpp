@@ -110,8 +110,10 @@ void StationheadPlayer::ApplyAudioPlaybackState(bool playing, const std::wstring
     status_.detail = usingFallback_ ? L"fallback audio stopped" : L"audio stopped";
   }
   nextTickAt_ = 0;
-  nextAutoClickAt_ = 0;
-  if (changed) log_.Warn(L"Stationhead " + std::wstring(RoleTag()) + L" audio stopped (" + source + L")");
+  if (changed) {
+    nextAutoClickAt_ = UnixMillis() + kStationheadPostPlaybackStopClickDelayMs;
+    log_.Warn(L"Stationhead " + std::wstring(RoleTag()) + L" audio stopped (" + source + L")");
+  }
   // Don't reveal the player here: a stop can be a brief track-transition gap,
   // and the App layer's RefreshVisibility()/SelectTab(None) calls (which know
   // about the transition grace period) already re-evaluate visibility on the
@@ -122,6 +124,22 @@ void StationheadPlayer::ApplyAudioPlaybackState(bool playing, const std::wstring
 
 void StationheadPlayer::NavigateCurrentUrl(int64_t nowMs, const std::wstring& reason) {
   NavigateStationheadUrl(nowMs, CurrentStationheadUrl(), reason, usingFallback_);
+}
+
+void StationheadPlayer::TryStartInitialNavigation() {
+  if (!webViewConfigured_ || !startupScriptRegistrationComplete_ ||
+      startupNavigationStarted_ || shuttingDown_ || !webview_) {
+    return;
+  }
+  startupNavigationStarted_ = true;
+  startupScriptDeadline_ = 0;
+  if (!pendingAuthorizationUrl_.empty()) {
+    const std::wstring authorizationUrl = pendingAuthorizationUrl_;
+    pendingAuthorizationUrl_.clear();
+    OpenSpotifyAuthorization(authorizationUrl);
+  } else {
+    NavigateCurrentUrl(UnixMillis(), L"startup");
+  }
 }
 
 std::wstring StationheadPlayer::CurrentStationheadUrl() const {
@@ -203,8 +221,11 @@ void StationheadPlayer::PollAuthProbe(int64_t nowMs) {
 // stale between detection and dispatch the way an earlier page-computed
 // position could.
 void StationheadPlayer::AttemptNativeStartClick(int64_t nowMs) {
-  if (!webview_ || autoClickInFlight_ || audioPlaying_.load(std::memory_order_relaxed)) return;
-  nextAutoClickAt_ = nowMs + 2'500;
+  if (!webview_ || autoClickInFlight_ ||
+      audioPlaying_.load(std::memory_order_relaxed) || nowMs < nextAutoClickAt_) {
+    return;
+  }
+  nextAutoClickAt_ = nowMs + kStationheadAutoClickRetryMs;
   autoClickInFlight_ = true;
   const auto alive = createCallbackAlive_;
   static const std::wstring locateScript = StationheadLocateStartButtonScript();
@@ -214,15 +235,23 @@ void StationheadPlayer::AttemptNativeStartClick(int64_t nowMs) {
       Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
           [this, alive, view](HRESULT scriptResult, LPCWSTR resultJson) -> HRESULT {
             if (!CallbackAlive(alive)) return S_OK;
-            autoClickInFlight_ = false;
-            if (FAILED(scriptResult) || !resultJson) return S_OK;
+            if (FAILED(scriptResult) || !resultJson) {
+              autoClickInFlight_ = false;
+              return S_OK;
+            }
             double x = 0.0;
             double y = 0.0;
-            if (!ParseStationheadLocateButtonResult(resultJson, x, y)) return S_OK;
+            if (!ParseStationheadLocateButtonResult(resultJson, x, y)) {
+              autoClickInFlight_ = false;
+              return S_OK;
+            }
+            nextAutoClickAt_ = std::max(
+                nextAutoClickAt_, UnixMillis() + kStationheadAutoClickSuccessGraceMs);
             log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
                       L" auto-clicking Start Listening at " + std::to_wstring(x) +
                       L"," + std::to_wstring(y));
             DispatchStationheadNativeClick(view.Get(), x, y, log_, RoleTag());
+            autoClickInFlight_ = false;
             return S_OK;
           }).Get());
   if (FAILED(result)) autoClickInFlight_ = false;
@@ -291,23 +320,40 @@ void StationheadPlayer::EnsureAuthController(const std::wstring& url) {
   authCallbackAlive_->store(false, std::memory_order_release);
   authCallbackAlive_ = std::make_shared<std::atomic<bool>>(true);
   const auto alive = authCallbackAlive_;
+  authControllerStartedAt_ = UnixMillis();
   const auto onController = Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
       [this, alive](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
         if (!CallbackAlive(alive)) {
           if (controller) controller->Close();
           return S_OK;
         }
+        authControllerStartedAt_ = 0;
         if (FAILED(result) || !controller || shuttingDown_) {
           if (controller) controller->Close();
+          if (!shuttingDown_) {
+            FinishSpotifyAuthorization(
+                L"Spotify auth controller creation failed " + HResultHex(result));
+          }
           return S_OK;
         }
         authController_ = controller;
         authController_->put_IsVisible(FALSE);
         authController_->get_CoreWebView2(&authWebview_);
+        if (!authWebview_) {
+          FinishSpotifyAuthorization(L"Spotify auth WebView unavailable");
+          return S_OK;
+        }
         ConfigureAuthWebView();
         return S_OK;
       });
-  environment_->CreateCoreWebView2Controller(authHostWindow_, onController.Get());
+  const HRESULT started =
+      environment_->CreateCoreWebView2Controller(authHostWindow_, onController.Get());
+  if (FAILED(started)) {
+    authControllerStartedAt_ = 0;
+    authCallbackAlive_->store(false, std::memory_order_release);
+    FinishSpotifyAuthorization(
+        L"Spotify auth controller could not start " + HResultHex(started));
+  }
 }
 
 void StationheadPlayer::Tick(int64_t nowMs) {
@@ -326,6 +372,27 @@ void StationheadPlayer::Tick(int64_t nowMs) {
   }
   if (!webview_) {
     if (!creating_ && nowMs - createdAt_ > 5'000) Create();
+    nextTickAt_ = nowMs + 1'000;
+    return;
+  }
+  if (!startupNavigationStarted_) {
+    if (!startupScriptRegistrationComplete_ && startupScriptDeadline_ > 0 &&
+        nowMs >= startupScriptDeadline_) {
+      startupScriptRegistrationComplete_ = true;
+      log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
+                L" startup script registration timed out; continuing without it");
+      TryStartInitialNavigation();
+    }
+    if (!startupNavigationStarted_) {
+      nextTickAt_ = nowMs + 1'000;
+      return;
+    }
+  }
+  if (spotifyAuthorization_ && authControllerStartedAt_ > 0 &&
+      nowMs - authControllerStartedAt_ >= kStationheadAuthControllerTimeoutMs) {
+    authCallbackAlive_->store(false, std::memory_order_release);
+    authControllerStartedAt_ = 0;
+    FinishSpotifyAuthorization(L"Spotify auth controller creation timed out");
     nextTickAt_ = nowMs + 1'000;
     return;
   }

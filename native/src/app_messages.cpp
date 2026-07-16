@@ -156,7 +156,11 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
       if (!rendererStarted_) {
         StartDeferredServices(UnixMillis(), renderState_.stationhead);
       } else if (!layoutChanged && stateChanged) {
-        ApplyStationheadWindowPlacement(renderState_.stationhead, secondaryStatus);
+        if (selectedTab_ == WorkspaceTab::Main) {
+          ApplyStationheadWindowPlacement(renderState_.stationhead, secondaryStatus);
+        } else {
+          LayoutWorkspace();
+        }
       }
       if (layoutChanged || stateChanged) PublishRenderStateNow();
       return 0;

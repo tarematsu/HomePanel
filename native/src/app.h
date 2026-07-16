@@ -70,8 +70,14 @@ class StationheadHandleBase {
 
   bool StartupPreviewActive() const noexcept { return startupPreviewActive_; }
 
-  StationheadStatus Status() const {
+  StationheadStatus RawStatus() const {
     StationheadStatus status = player_ ? player_->Status() : StationheadStatus{};
+    status.audioMuted = audioMuted_;
+    return status;
+  }
+
+  StationheadStatus Status() const {
+    StationheadStatus status = RawStatus();
     const bool forceInteractive = status.loginRequired || status.spotifyAuthorization ||
                                   status.processFailed;
     if (player_ && SuppressTrackTransitionGap(status.audioPlaying, forceInteractive)) {
@@ -81,7 +87,6 @@ class StationheadHandleBase {
       status.visible = false;
       status.detail = L"track transition; waiting for next audio";
     }
-    status.audioMuted = audioMuted_;
     return status;
   }
 

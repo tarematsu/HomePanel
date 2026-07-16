@@ -122,6 +122,7 @@ class StationheadPlayer {
   void ApplyMute() const noexcept;
   void ApplyVolume() const noexcept;
   void ApplyAudioPlaybackState(bool playing, const std::wstring& source);
+  void TryStartInitialNavigation();
   void EnsureDistinctBrowserIdentity() noexcept;
   void Create();
   void EnsureAuthController(const std::wstring& url);
@@ -191,6 +192,8 @@ class StationheadPlayer {
   std::atomic<bool> changeMessagePending_{false};
   std::wstring pendingAuthorizationUrl_;
   int64_t createdAt_ = 0;
+  int64_t startupScriptDeadline_ = 0;
+  int64_t authControllerStartedAt_ = 0;
   int64_t lastReloadAt_ = 0;
   int64_t lastDailyPlayStatsAt_ = 0;  // Primary only.
   int64_t lastAuthProbeAt_ = 0;       // Secondary only.
@@ -198,6 +201,9 @@ class StationheadPlayer {
   bool authProbeInFlight_ = false;    // Secondary only.
   int64_t nextAutoClickAt_ = 0;
   bool autoClickInFlight_ = false;
+  bool webViewConfigured_ = false;
+  bool startupScriptRegistrationComplete_ = false;
+  bool startupNavigationStarted_ = false;
   int64_t nextTickAt_ = 0;
   std::wstring authPendingUrl_;
   bool spotifyAuthorization_ = false;
