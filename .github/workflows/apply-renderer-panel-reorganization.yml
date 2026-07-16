@@ -1,0 +1,30 @@
+name: Apply Renderer Panel Reorganization
+
+on:
+  push:
+    branches:
+      - agent/cache-native-panels
+    paths:
+      - "native/scripts/reorganize_renderer_panels_once.py"
+      - ".github/workflows/apply-renderer-panel-reorganization.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/cache-native-panels
+      - name: Reorganize renderer panel fragments
+        run: python native/scripts/reorganize_renderer_panels_once.py
+      - name: Commit reorganization
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add native/src/renderer_panels.cpp native/src/renderer_panels
+          git diff --cached --quiet || git commit -m "refactor(native): organize renderer panel fragments by responsibility"
+          git push origin HEAD:agent/cache-native-panels
