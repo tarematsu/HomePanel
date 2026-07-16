@@ -1,4 +1,5 @@
 #include "app.h"
+#include "web_renderer.h"
 #include "cloud_config.h"
 #include "version.h"
 

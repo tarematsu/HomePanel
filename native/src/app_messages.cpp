@@ -3,6 +3,7 @@
 
 
 #include "app.h"
+#include "web_renderer.h"
 
 namespace hp {
 namespace {
