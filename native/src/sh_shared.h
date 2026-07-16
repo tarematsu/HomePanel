@@ -314,10 +314,14 @@ inline std::wstring StationheadAuthProbeScript(int channelId) {
     cache: 'no-store',
     headers: Object.assign({ accept: 'application/json' }, headers),
   }).then(response => {
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       window.__homepanelStationheadRejectedAuthorization = headers.authorization;
       window.__homepanelStationheadAuthHeaders = null;
       post({ type: 'stationhead-auth-probe', state: 'auth-failed', status: response.status });
+      return;
+    }
+    if (response.status === 403) {
+      post({ type: 'stationhead-auth-probe', state: 'forbidden', status: response.status });
       return;
     }
     if (!response.ok) throw new Error('http-' + response.status);

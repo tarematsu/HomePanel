@@ -22,6 +22,7 @@ std::wstring HResultHex(HRESULT hr) {
 void StationheadPlayer::ConfigureWebView() {
   const auto alive = createCallbackAlive_;
   webViewConfigured_ = false;
+  authCaptureScriptRegistrationComplete_ = false;
   startupScriptRegistrationComplete_ = false;
   startupNavigationStarted_ = false;
   startupScriptDeadline_ =
@@ -85,11 +86,24 @@ void StationheadPlayer::ConfigureWebView() {
   if (IsSecondary()) EnsureDistinctBrowserIdentity();
 
   static const std::wstring authCaptureScript = StationheadAuthCaptureScript();
-  const HRESULT authCaptureResult =
-      webview_->AddScriptToExecuteOnDocumentCreated(authCaptureScript.c_str(), nullptr);
+  const HRESULT authCaptureResult = webview_->AddScriptToExecuteOnDocumentCreated(
+      authCaptureScript.c_str(),
+      Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+          [this, alive](HRESULT result, LPCWSTR) -> HRESULT {
+            if (!CallbackAlive(alive)) return S_OK;
+            if (FAILED(result)) {
+              log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
+                        L" auth capture script registration failed " + HResultHex(result));
+            }
+            authCaptureScriptRegistrationComplete_ = true;
+            TryStartInitialNavigation();
+            return S_OK;
+          }).Get());
   if (FAILED(authCaptureResult)) {
     log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
-              L" auth capture script registration failed " + HResultHex(authCaptureResult));
+              L" auth capture script registration could not start " +
+              HResultHex(authCaptureResult));
+    authCaptureScriptRegistrationComplete_ = true;
   }
   static const std::wstring primaryStartupScript =
       StationheadAutoplayScript(L"__homepanelPrimaryStationhead", L"stationhead");
@@ -281,8 +295,22 @@ void StationheadPlayer::ConfigureWebView() {
                 return S_OK;
               }
               if (type == L"stationhead-auth-ready") {
-                lastDailyPlayStatsAt_ = 0;
+                loginRequired_ = false;
+                {
+                  std::lock_guard lock(mutex_);
+                  status_.loginRequired = false;
+                  status_.detail = L"Stationhead authentication ready";
+                }
+                if (IsSecondary()) {
+                  lastAuthProbeAt_ = 0;
+                  authProbeStartedAt_ = 0;
+                  authProbeInFlight_ = false;
+                } else {
+                  lastDailyPlayStatsAt_ = 0;
+                }
+                nextAutoClickAt_ = 0;
                 nextTickAt_ = 0;
+                PostChange();
                 return S_OK;
               }
               if (type == L"stationhead-play-stats-error") {
@@ -516,6 +544,7 @@ void StationheadPlayer::CloseWebView() {
   identityWebview_ = nullptr;
   autoClickInFlight_ = false;
   webViewConfigured_ = false;
+  authCaptureScriptRegistrationComplete_ = false;
   startupScriptRegistrationComplete_ = false;
   startupNavigationStarted_ = false;
   stationNavigationStarted_ = false;

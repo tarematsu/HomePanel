@@ -209,6 +209,7 @@ class StationheadPlayer {
   int64_t nextAutoClickAt_ = 0;
   bool autoClickInFlight_ = false;
   bool webViewConfigured_ = false;
+  bool authCaptureScriptRegistrationComplete_ = false;
   bool startupScriptRegistrationComplete_ = false;
   bool startupNavigationStarted_ = false;
   bool stationNavigationStarted_ = false;

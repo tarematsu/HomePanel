@@ -129,8 +129,9 @@ void StationheadPlayer::NavigateCurrentUrl(int64_t nowMs, const std::wstring& re
 }
 
 void StationheadPlayer::TryStartInitialNavigation() {
-  if (!webViewConfigured_ || !startupScriptRegistrationComplete_ ||
-      startupNavigationStarted_ || shuttingDown_ || !webview_) {
+  if (!webViewConfigured_ || !authCaptureScriptRegistrationComplete_ ||
+      !startupScriptRegistrationComplete_ || startupNavigationStarted_ ||
+      shuttingDown_ || !webview_) {
     return;
   }
   startupNavigationStarted_ = true;
@@ -424,8 +425,10 @@ void StationheadPlayer::Tick(int64_t nowMs) {
     return;
   }
   if (!startupNavigationStarted_) {
-    if (!startupScriptRegistrationComplete_ && startupScriptDeadline_ > 0 &&
-        nowMs >= startupScriptDeadline_) {
+    if ((!authCaptureScriptRegistrationComplete_ ||
+         !startupScriptRegistrationComplete_) &&
+        startupScriptDeadline_ > 0 && nowMs >= startupScriptDeadline_) {
+      authCaptureScriptRegistrationComplete_ = true;
       startupScriptRegistrationComplete_ = true;
       log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
                 L" startup script registration timed out; continuing without it");

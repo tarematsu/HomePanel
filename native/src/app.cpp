@@ -605,6 +605,7 @@ void App::HandleAction(UiAction action) {
       break;
     case UiAction::StationheadReconnect:
       stationhead_->Reconnect();
+      if (secondaryStationhead_) secondaryStationhead_->Reconnect();
       break;
     case UiAction::StationheadAudioToggle:
       ToggleStationheadAudio();
