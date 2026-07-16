@@ -1,0 +1,213 @@
+name: Apply Stationhead startup order fix
+
+on:
+  push:
+    branches:
+      - agent/fix-stationhead-startup-order
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-stationhead-startup-order
+          fetch-depth: 0
+
+      - name: Apply focused startup patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          app_path = Path('native/src/app.cpp')
+          app = app_path.read_text(encoding='utf-8')
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          app = replace_once(
+              app,
+              "constexpr int64_t kDashboardStartupFallbackMs = 10'000;\n",
+              """constexpr int64_t kDashboardStartupFallbackMs = 30'000;
+          int startupShowCommand = SW_SHOW;
+
+          constexpr bool DashboardAudioReady(bool primaryAudioReady,
+                                             bool secondaryEnabled,
+                                             bool secondaryAudioReady) noexcept {
+            return primaryAudioReady && (!secondaryEnabled || secondaryAudioReady);
+          }
+
+          static_assert(DashboardAudioReady(true, false, false));
+          static_assert(!DashboardAudioReady(false, false, false));
+          static_assert(DashboardAudioReady(true, true, true));
+          static_assert(!DashboardAudioReady(true, true, false));
+          static_assert(!DashboardAudioReady(false, true, true));
+          static_assert(kDashboardStartupFallbackMs == 30'000);
+          """,
+              'startup policy',
+          )
+
+          app = replace_once(
+              app,
+              """  ShowWindow(window_, showCommand == SW_HIDE ? SW_SHOW : showCommand);
+            UpdateWindow(window_);
+            ScheduleNextTick(kFastTickMs);
+          """,
+              """  startupShowCommand = showCommand == SW_HIDE ? SW_SHOW : showCommand;
+          """,
+              'defer parent visibility',
+          )
+
+          app = replace_once(
+              app,
+              """void App::StartServices() {
+            startupAt_ = UnixMillis();
+          """,
+              """void App::StartServices() {
+          """,
+              'defer startup deadline origin',
+          )
+
+          app = replace_once(
+              app,
+              """  lastNewsRotateAt_ = newsCount_ > 1 ? startupAt_ : 0;
+          """,
+              "",
+              'move news timer origin',
+          )
+
+          old_start = """  stationhead_->Start();
+            logger_->Info(L\"Stationhead startup was prioritized before native dashboard initialization\");
+            // Route audio before creating the secondary WebView so both players cannot
+            // emit their first audio while WebView2 is applying the mute state.
+            ApplyScheduledStationheadAudioProfile(true);
+
+
+            if (secondaryStationhead_) {
+              secondaryStationhead_->Start();
+              secondaryStarted_ = true;
+              logger_->Info(L\"Secondary Stationhead started alongside primary\");
+            }
+            ApplyStartupStationheadPreview();
+            ApplyScheduledStationheadAudioProfile(true);
+          """
+          new_start = """  ApplyStartupStationheadPreview();
+            startupAt_ = UnixMillis();
+            lastNewsRotateAt_ = newsCount_ > 1 ? startupAt_ : 0;
+
+            // Route audio before either WebView can emit its first audio.
+            ApplyScheduledStationheadAudioProfile(true);
+            stationhead_->Start();
+            logger_->Info(L\"Primary Stationhead started in the startup preview\");
+            if (secondaryStationhead_) {
+              secondaryStationhead_->Start();
+              secondaryStarted_ = true;
+              logger_->Info(L\"Secondary Stationhead started alongside primary\");
+            }
+
+            // Do not expose an empty native shell before the Stationhead surfaces
+            // have startup geometry and their WebView creation has been requested.
+            ShowWindow(window_, startupShowCommand);
+            UpdateWindow(window_);
+            ScheduleNextTick(kFastTickMs);
+          """
+          app = replace_once(app, old_start, new_start, 'Stationhead-first startup sequence')
+
+          deferred_pattern = re.compile(
+              r"void App::StartDeferredServices\(int64_t now, const StationheadStatus& stationheadStatus\) \{.*?\n\}\n\nvoid App::StopServices",
+              re.S,
+          )
+          deferred_replacement = """void App::StartDeferredServices(int64_t now, const StationheadStatus& stationheadStatus) {
+            const bool primaryAudioReady = stationheadStatus.audioPlaying;
+            const bool secondaryEnabled = static_cast<bool>(secondaryStationhead_);
+            bool secondaryAudioReady = true;
+            if (!rendererStarted_ && secondaryEnabled) {
+              const StationheadStatus secondaryStatus = secondaryStationhead_->Status();
+              secondaryAudioReady = secondaryStatus.playing;
+            }
+            const bool dashboardAudioReady =
+                DashboardAudioReady(primaryAudioReady, secondaryEnabled, secondaryAudioReady);
+            const bool startupDeadlineReached = now - startupAt_ >= kDashboardStartupFallbackMs;
+            if (dashboardAudioReady && playbackReadyAt_ == 0) playbackReadyAt_ = now;
+
+            if (!rendererStarted_ && (dashboardAudioReady || startupDeadlineReached)) {
+              renderer_->Initialize();
+              rendererStarted_ = true;
+              ClearStartupStationheadPreview();
+              LayoutWorkspace();
+              PublishRenderStateNow();
+              renderer_->TickNativePanels(now);
+              InvalidateAll();
+              if (dashboardAudioReady) {
+                logger_->Info(secondaryEnabled
+                    ? L\"Native dashboard started after Stationhead A/B audio confirmation\"
+                    : L\"Native dashboard started after Stationhead audio confirmation\");
+              } else {
+                logger_->Info(L\"Native dashboard started after startup fallback deadline\");
+              }
+            }
+
+            if (!cloudStarted_ && (dashboardAudioReady || startupDeadlineReached)) {
+              cloud_->Start();
+              cloudStarted_ = true;
+              logger_->Info(dashboardAudioReady
+                  ? L\"Cloud synchronization started after Stationhead startup confirmation\"
+                  : L\"Cloud synchronization started after startup fallback deadline\");
+            }
+
+            const bool updateDelayElapsed = playbackReadyAt_ > 0
+                ? now - playbackReadyAt_ >= 15'000
+                : now - startupAt_ >= 60'000;
+            if (!startupUpdateScheduled_ && cloudStarted_ && updateDelayElapsed) {
+              startupUpdateScheduled_ = true;
+              CheckForUpdateAsync(false);
+              logger_->Info(L\"Background update check started after startup-critical work\");
+            }
+          }
+
+          void App::StopServices"""
+          app, count = deferred_pattern.subn(deferred_replacement, app, count=1)
+          if count != 1:
+              raise SystemExit(f'deferred startup policy: expected one match, found {count}')
+
+          app_path.write_text(app, encoding='utf-8')
+
+          messages_path = Path('native/src/app_messages.cpp')
+          messages = messages_path.read_text(encoding='utf-8')
+          messages = replace_once(
+              messages,
+              """      const bool stateChanged =
+                    UpdateRenderStationheadState(std::move(renderStationheadState));
+                  if (layoutChanged || stateChanged) PublishRenderStateNow();
+          """,
+              """      const bool stateChanged =
+                    UpdateRenderStationheadState(std::move(renderStationheadState));
+                  if (!rendererStarted_ && stateChanged) {
+                    StartDeferredServices(UnixMillis(), renderState_.stationhead);
+                  }
+                  if (layoutChanged || stateChanged) PublishRenderStateNow();
+          """,
+              'immediate audio-ready handoff',
+          )
+          messages_path.write_text(messages, encoding='utf-8')
+          PY
+
+          rm .github/workflows/apply-startup-order-fix.yml
+          git diff --check
+
+      - name: Commit focused fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add native/src/app.cpp native/src/app_messages.cpp .github/workflows/apply-startup-order-fix.yml
+          git commit -m "Fix Stationhead-first native startup order"
+          git push origin HEAD:agent/fix-stationhead-startup-order
