@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       prefix:
-        description: R2 object prefix to read
+        description: Optional R2 object prefix to read
         required: false
-        default: hp/
+        default: ""
       limit:
         description: Maximum number of newest objects to download
         required: false
@@ -15,10 +15,15 @@ on:
     branches:
       - main
     paths:
-      - .github/workflows/fetch-cloudflare-observability.yml
+      - "cloud/**"
+      - ".github/workflows/fetch-cloudflare-observability.yml"
 
 permissions:
   contents: read
+
+concurrency:
+  group: r2-observability-hp-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   fetch:
@@ -28,7 +33,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       AWS_DEFAULT_REGION: auto
       R2_BUCKET: cloudflare-managed-1609110a
-      OBJECT_PREFIX: ${{ inputs.prefix || 'hp/' }}
+      OBJECT_PREFIX: ${{ inputs.prefix || '' }}
       OBJECT_LIMIT: ${{ inputs.limit || '25' }}
 
     steps:
@@ -111,17 +116,21 @@ jobs:
             count=$((count + 1))
           done < object-keys.txt
 
+          [ "$count" -gt 0 ] || {
+            echo "No Logpush objects were found in $R2_BUCKET for prefix '$OBJECT_PREFIX'" >&2
+            exit 1
+          }
+
           echo "count=$count" >> "$GITHUB_OUTPUT"
           {
             echo "## Cloudflare observability"
             echo
             echo "- Bucket: \`$R2_BUCKET\`"
-            echo "- Prefix: \`$OBJECT_PREFIX\`"
+            echo "- Prefix: \`${OBJECT_PREFIX:-<none>}\`"
             echo "- Downloaded objects: **$count**"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload logs as workflow artifact
-        if: steps.download.outputs.count != '0'
         uses: actions/upload-artifact@v4
         with:
           name: cloudflare-observability-hp-${{ github.run_id }}
