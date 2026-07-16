@@ -33,7 +33,7 @@ jobs:
         with:
           show-progress: false
           ref: ${{ github.head_ref || github.ref_name }}
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Apply native app refactor
         if: github.event_name == 'pull_request' && github.head_ref == 'agent/cache-native-panels'
