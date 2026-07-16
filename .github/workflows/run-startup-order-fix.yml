@@ -19,6 +19,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run focused patch
+        id: patch
         shell: bash
         run: |
           awk '
@@ -26,11 +27,28 @@ jobs:
             capture && /^          PY$/ { exit }
             capture { sub(/^          /, ""); print }
           ' .github/workflows/apply-startup-order-fix.yml > /tmp/apply-startup-order-fix.py
-          python3 /tmp/apply-startup-order-fix.py
+          set +e
+          python3 /tmp/apply-startup-order-fix.py > /tmp/startup-patch.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/startup-patch.log
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
           rm .github/workflows/run-startup-order-fix.yml
           git diff --check
 
+      - name: Upload patch diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: startup-patch-diagnostics
+          path: |
+            /tmp/startup-patch.log
+            /tmp/apply-startup-order-fix.py
+
       - name: Commit source fix
+        if: steps.patch.outcome == 'success'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
