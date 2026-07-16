@@ -1,0 +1,36 @@
+name: Diagnose secondary Stationhead state fix
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'agent/isolate-stationhead-webview-data'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Run patch script for diagnostics
+        shell: bash
+        run: |
+          awk '
+            /python3 - <<'\''PY'\''/ { capture=1; next }
+            capture && /^          PY$/ { exit }
+            capture { sub(/^          /, ""); print }
+          ' .github/workflows/apply-secondary-state-fix.yml > /tmp/secondary-state.py
+          set +e
+          python3 /tmp/secondary-state.py > /tmp/secondary-state.log 2>&1
+          echo $? > /tmp/secondary-state.status
+          set -e
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: secondary-state-diagnostics
+          path: |
+            /tmp/secondary-state.log
+            /tmp/secondary-state.status
+            /tmp/secondary-state.py
