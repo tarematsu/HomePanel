@@ -1,0 +1,42 @@
+name: Run Stationhead startup order fix
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'agent/fix-stationhead-startup-order'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Run focused patch
+        shell: bash
+        run: |
+          awk '
+            /python3 - <<'\''PY'\''/ { capture=1; next }
+            capture && /^          PY$/ { exit }
+            capture { sub(/^          /, ""); print }
+          ' .github/workflows/apply-startup-order-fix.yml > /tmp/apply-startup-order-fix.py
+          python3 /tmp/apply-startup-order-fix.py
+          rm .github/workflows/run-startup-order-fix.yml
+          git diff --check
+
+      - name: Commit source fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add native/src/app.cpp native/src/app_messages.cpp \
+            .github/workflows/apply-startup-order-fix.yml \
+            .github/workflows/run-startup-order-fix.yml
+          git commit -m "Fix Stationhead-first native startup order"
+          git push origin HEAD:${{ github.head_ref }}
