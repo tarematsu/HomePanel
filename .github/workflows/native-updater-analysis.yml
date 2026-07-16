@@ -11,38 +11,7 @@ concurrency:
   group: native-updater-analysis-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: write
-
 jobs:
-  apply-shared-stationhead-udf:
-    if: github.head_ref == 'agent/share-stationhead-user-data'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-          fetch-depth: 0
-      - name: Apply shared UDF patch
-        shell: bash
-        run: |
-          python3 .github/scripts/apply_shared_stationhead_udf.py
-          git checkout origin/main -- .github/workflows/native-updater-analysis.yml
-          rm -f .github/scripts/apply_shared_stationhead_udf.py
-          rm -f .github/workflows/apply-shared-stationhead-udf.yml
-          rm -f .github/workflows/run-shared-stationhead-udf.yml
-          rm -f .ci-trigger-shared-stationhead-udf
-          git diff --check
-      - name: Commit source changes
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Share Stationhead user data across profiles"
-          git push origin HEAD:${{ github.head_ref }}
-
   analyze-updater:
     runs-on: windows-2022
     timeout-minutes: 30
