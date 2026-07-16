@@ -11,35 +11,7 @@ concurrency:
   group: native-updater-analysis-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: write
-
 jobs:
-  apply-secondary-initial-auth-probe:
-    if: github.head_ref == 'agent/share-stationhead-user-data'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-          fetch-depth: 0
-      - name: Apply initial auth probe fix
-        shell: bash
-        run: |
-          python3 .github/scripts/fix_secondary_initial_auth_probe.py
-          git checkout origin/main -- .github/workflows/native-updater-analysis.yml
-          rm -f .github/scripts/fix_secondary_initial_auth_probe.py
-          git diff --check
-      - name: Commit source change
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Run the secondary auth probe on first tick"
-          git push origin HEAD:${{ github.head_ref }}
-
   analyze-updater:
     runs-on: windows-2022
     timeout-minutes: 30

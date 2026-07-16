@@ -472,7 +472,7 @@ void StationheadPlayer::Tick(int64_t nowMs) {
       authProbeStartedAt_ = 0;
       log_.Warn(L"Secondary Stationhead auth probe timed out");
     }
-    if (lastAuthProbeAt_ > 0 && nowMs - lastAuthProbeAt_ >= kAuthProbeIntervalMs) {
+    if (lastAuthProbeAt_ == 0 || nowMs - lastAuthProbeAt_ >= kAuthProbeIntervalMs) {
       PollAuthProbe(nowMs);
     }
     if (authProbeInFlight_) consider(authProbeStartedAt_ + kAuthProbeTimeoutMs);
