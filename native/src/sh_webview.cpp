@@ -159,27 +159,8 @@ void StationheadPlayer::ConfigureWebView() {
                   return S_OK;
                 });
 
-            HRESULT createResult = E_FAIL;
-            if (!IsSecondary()) {
-              createResult = environment_->CreateCoreWebView2Controller(authHostWindow_, onController.Get());
-            } else {
-              ComPtr<ICoreWebView2Environment10> environment10;
-              if (FAILED(environment_.As(&environment10)) || !environment10) {
-                FinishSpotifyAuthorization(L"WebView2 multi-profile API unavailable");
-                deferral->Complete();
-                return S_OK;
-              }
-              ComPtr<ICoreWebView2ControllerOptions> options;
-              if (FAILED(environment10->CreateCoreWebView2ControllerOptions(options.GetAddressOf())) || !options) {
-                FinishSpotifyAuthorization(L"Spotify popup profile options creation failed");
-                deferral->Complete();
-                return S_OK;
-              }
-              options->put_ProfileName(L"stationhead-secondary");
-              options->put_IsInPrivateModeEnabled(FALSE);
-              createResult = environment10->CreateCoreWebView2ControllerWithOptions(
-                  authHostWindow_, options.Get(), onController.Get());
-            }
+            const HRESULT createResult =
+                environment_->CreateCoreWebView2Controller(authHostWindow_, onController.Get());
             if (FAILED(createResult)) {
               authCallbackAlive_->store(false, std::memory_order_release);
               FinishSpotifyAuthorization(L"Spotify popup creation could not start " + HResultHex(createResult));
@@ -381,7 +362,7 @@ void StationheadPlayer::ConfigureWebView() {
     status_.created = true;
     status_.navigating = true;
     status_.url = CurrentStationheadUrl();
-    status_.detail = IsSecondary() ? L"creating isolated WebView2 profile" : L"起動中";
+    status_.detail = IsSecondary() ? L"creating isolated WebView2 environment" : L"起動中";
     status_.spotifyConfigured = spotifyConfigured;
   }
   createdAt_ = lastReloadAt_ = UnixMillis();

@@ -49,7 +49,7 @@ void StationheadPlayer::ApplyVolume() const noexcept {
   apply(authWebview_);
 }
 
-// Window B's isolated WebView2 profile still ships the platform's default
+// Window B's isolated WebView2 environment still ships the platform's default
 // user agent, which is otherwise identical to Window A's. Tag it distinctly
 // so Stationhead's own session/device bookkeeping does not conflate the two
 // independent, cookie-isolated sessions with a single device identity.

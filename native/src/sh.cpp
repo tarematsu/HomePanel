@@ -276,29 +276,8 @@ void StationheadPlayer::Create() {
               ConfigureWebView();
               return S_OK;
             });
-        HRESULT started = E_FAIL;
-        if (!IsSecondary()) {
-          started = environment_->CreateCoreWebView2Controller(hostWindow_, onController.Get());
-        } else {
-          ComPtr<ICoreWebView2Environment10> environment10;
-          if (FAILED(environment_.As(&environment10)) || !environment10) {
-            creating_ = false;
-            ScheduleRecreate(L"WebView2 multi-profile API unavailable", 30'000);
-            return;
-          }
-          ComPtr<ICoreWebView2ControllerOptions> options;
-          const HRESULT optionsResult =
-              environment10->CreateCoreWebView2ControllerOptions(options.GetAddressOf());
-          if (FAILED(optionsResult) || !options) {
-            creating_ = false;
-            ScheduleRecreate(L"profile options creation failed " + HResultHex(optionsResult));
-            return;
-          }
-          options->put_ProfileName(L"stationhead-secondary");
-          options->put_IsInPrivateModeEnabled(FALSE);
-          started = environment10->CreateCoreWebView2ControllerWithOptions(
-              hostWindow_, options.Get(), onController.Get());
-        }
+        const HRESULT started =
+            environment_->CreateCoreWebView2Controller(hostWindow_, onController.Get());
         if (FAILED(started)) {
           creating_ = false;
           ScheduleRecreate(L"controller creation could not start " + HResultHex(started));
@@ -328,17 +307,7 @@ void StationheadPlayer::EnsureAuthController(const std::wstring& url) {
         ConfigureAuthWebView();
         return S_OK;
       });
-  if (!IsSecondary()) {
-    environment_->CreateCoreWebView2Controller(authHostWindow_, onController.Get());
-    return;
-  }
-  ComPtr<ICoreWebView2Environment10> environment10;
-  if (FAILED(environment_.As(&environment10)) || !environment10) return;
-  ComPtr<ICoreWebView2ControllerOptions> options;
-  if (FAILED(environment10->CreateCoreWebView2ControllerOptions(options.GetAddressOf())) || !options) return;
-  options->put_ProfileName(L"stationhead-secondary");
-  options->put_IsInPrivateModeEnabled(FALSE);
-  environment10->CreateCoreWebView2ControllerWithOptions(authHostWindow_, options.Get(), onController.Get());
+  environment_->CreateCoreWebView2Controller(authHostWindow_, onController.Get());
 }
 
 void StationheadPlayer::Tick(int64_t nowMs) {

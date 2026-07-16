@@ -108,13 +108,30 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
       return 1;
     }
     case WM_HP_STATIONHEAD_CHANGED: {
-      const uint32_t changes = stationhead_->ConsumeChangeFlags();
+      const uint32_t primaryChanges = stationhead_->ConsumeChangeFlags();
+      const uint32_t secondaryChanges = secondaryStationhead_
+          ? secondaryStationhead_->ConsumeChangeFlags()
+          : 0;
+      const uint32_t changes = primaryChanges | secondaryChanges;
       bool layoutChanged = false;
-      if ((changes & StationheadChangeReleaseAuth) != 0) {
+      if ((primaryChanges & StationheadChangeReleaseAuth) != 0) {
         stationhead_->ReleaseCompletedAuth();
       }
-      if ((changes & StationheadChangeShowPlayer) != 0) {
+      if (secondaryStationhead_ &&
+          (secondaryChanges & StationheadChangeReleaseAuth) != 0) {
+        secondaryStationhead_->ReleaseCompletedAuth();
+      }
+      bool showPlayer = false;
+      if ((primaryChanges & StationheadChangeShowPlayer) != 0) {
         stationhead_->ShowAfterAudioStop();
+        showPlayer = true;
+      }
+      if (secondaryStationhead_ &&
+          (secondaryChanges & StationheadChangeShowPlayer) != 0) {
+        secondaryStationhead_->ShowAfterAudioStop();
+        showPlayer = true;
+      }
+      if (showPlayer) {
         if (selectedTab_ != WorkspaceTab::Stationhead) {
           selectedTab_ = WorkspaceTab::Stationhead;
           layoutChanged = true;
