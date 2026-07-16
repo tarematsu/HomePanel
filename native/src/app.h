@@ -3,11 +3,13 @@
 #include "cloud_client.h"
 #include "config.h"
 #include "logger.h"
+#include "render_state.h"
 #include "sensors.h"
 #include "update_client.h"
-#include "web_renderer.h"
 
 namespace hp {
+
+class Renderer;
 
 class App {
  public:
