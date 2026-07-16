@@ -14,7 +14,21 @@ constexpr int kRestartExitCode = 42;
 constexpr uint32_t kFastTickMs = 2000;
 constexpr uint32_t kSteadyDashboardTickMs = 5000;
 constexpr uint32_t kMaxIdleTickMs = 30'000;
-constexpr int64_t kDashboardStartupFallbackMs = 10'000;
+constexpr int64_t kDashboardStartupFallbackMs = 30'000;
+int startupShowCommand = SW_SHOW;
+
+constexpr bool DashboardAudioReady(bool primaryAudioReady,
+                                   bool secondaryEnabled,
+                                   bool secondaryAudioReady) noexcept {
+  return primaryAudioReady && (!secondaryEnabled || secondaryAudioReady);
+}
+
+static_assert(DashboardAudioReady(true, false, false));
+static_assert(!DashboardAudioReady(false, false, false));
+static_assert(DashboardAudioReady(true, true, true));
+static_assert(!DashboardAudioReady(true, true, false));
+static_assert(!DashboardAudioReady(false, true, true));
+static_assert(kDashboardStartupFallbackMs == 30'000);
 
 std::wstring InstalledHomePanelVersion(const fs::path& executable) {
   DWORD handle = 0;
@@ -142,20 +156,16 @@ void App::CreateMainWindow(int showCommand) {
     const DWORD error = GetLastError();
     throw std::runtime_error("CreateWindowEx failed (" + std::to_string(error) + ")");
   }
-  ShowWindow(window_, showCommand == SW_HIDE ? SW_SHOW : showCommand);
-  UpdateWindow(window_);
-  ScheduleNextTick(kFastTickMs);
+  startupShowCommand = showCommand == SW_HIDE ? SW_SHOW : showCommand;
 }
 
 void App::StartServices() {
-  startupAt_ = UnixMillis();
   renderer_ = std::make_unique<Renderer>(window_, config_.screenWidth, config_.screenHeight);
   if (!renderer_->LoadDashboard(dataDir_ / L"dashboard.json")) {
     logger_->Warn(L"No valid dashboard cache; local layers will remain available");
   }
   newsCount_ = renderer_->NewsCount();
   newsIndex_ = 0;
-  lastNewsRotateAt_ = newsCount_ > 1 ? startupAt_ : 0;
 
 
 
@@ -172,20 +182,25 @@ void App::StartServices() {
     renderer_->Resize(client.right - client.left, client.bottom - client.top);
     LayoutWorkspace();
   }
-  stationhead_->Start();
-  logger_->Info(L"Stationhead startup was prioritized before native dashboard initialization");
-  // Route audio before creating the secondary WebView so both players cannot
-  // emit their first audio while WebView2 is applying the mute state.
+  ApplyStartupStationheadPreview();
+  startupAt_ = UnixMillis();
+  lastNewsRotateAt_ = newsCount_ > 1 ? startupAt_ : 0;
+
+  // Route audio before either WebView can emit its first audio.
   ApplyScheduledStationheadAudioProfile(true);
-
-
+  stationhead_->Start();
+  logger_->Info(L"Primary Stationhead started in the startup preview");
   if (secondaryStationhead_) {
     secondaryStationhead_->Start();
     secondaryStarted_ = true;
     logger_->Info(L"Secondary Stationhead started alongside primary");
   }
-  ApplyStartupStationheadPreview();
-  ApplyScheduledStationheadAudioProfile(true);
+
+  // Do not expose an empty native shell before the Stationhead surfaces
+  // have startup geometry and their WebView creation has been requested.
+  ShowWindow(window_, startupShowCommand);
+  UpdateWindow(window_);
+  ScheduleNextTick(kFastTickMs);
 
   const std::wstring deviceToken = LoadProtectedToken(dataDir_ / L"device-token.dat", L"HOMEPANEL_DEVICE_TOKEN");
   const std::wstring actionToken = LoadProtectedToken(dataDir_ / L"action-token.dat", L"HOMEPANEL_ACTION_TOKEN");
@@ -239,19 +254,16 @@ void App::ClearStartupStationheadPreview() {
 
 void App::StartDeferredServices(int64_t now, const StationheadStatus& stationheadStatus) {
   const bool primaryAudioReady = stationheadStatus.audioPlaying;
-
-
-
+  const bool secondaryEnabled = static_cast<bool>(secondaryStationhead_);
   bool secondaryAudioReady = true;
-  if (!rendererStarted_ && secondaryStationhead_) {
+  if (!rendererStarted_ && secondaryEnabled) {
     const StationheadStatus secondaryStatus = secondaryStationhead_->Status();
     secondaryAudioReady = secondaryStatus.playing;
   }
-  const bool dashboardAudioReady = secondaryStationhead_
-      ? (primaryAudioReady || secondaryAudioReady)
-      : primaryAudioReady;
+  const bool dashboardAudioReady =
+      DashboardAudioReady(primaryAudioReady, secondaryEnabled, secondaryAudioReady);
   const bool startupDeadlineReached = now - startupAt_ >= kDashboardStartupFallbackMs;
-  if (primaryAudioReady && playbackReadyAt_ == 0) playbackReadyAt_ = now;
+  if (dashboardAudioReady && playbackReadyAt_ == 0) playbackReadyAt_ = now;
 
   if (!rendererStarted_ && (dashboardAudioReady || startupDeadlineReached)) {
     renderer_->Initialize();
@@ -261,16 +273,20 @@ void App::StartDeferredServices(int64_t now, const StationheadStatus& stationhea
     PublishRenderStateNow();
     renderer_->TickNativePanels(now);
     InvalidateAll();
-    logger_->Info(dashboardAudioReady
-        ? L"Native dashboard started after at least one Stationhead audio confirmation"
-        : L"Native dashboard started after startup fallback deadline");
+    if (dashboardAudioReady) {
+      logger_->Info(secondaryEnabled
+          ? L"Native dashboard started after Stationhead A/B audio confirmation"
+          : L"Native dashboard started after Stationhead audio confirmation");
+    } else {
+      logger_->Info(L"Native dashboard started after startup fallback deadline");
+    }
   }
 
-  if (!cloudStarted_ && (primaryAudioReady || startupDeadlineReached)) {
+  if (!cloudStarted_ && (dashboardAudioReady || startupDeadlineReached)) {
     cloud_->Start();
     cloudStarted_ = true;
-    logger_->Info(primaryAudioReady
-        ? L"Cloud synchronization started after Stationhead audio confirmation"
+    logger_->Info(dashboardAudioReady
+        ? L"Cloud synchronization started after Stationhead startup confirmation"
         : L"Cloud synchronization started after startup fallback deadline");
   }
 

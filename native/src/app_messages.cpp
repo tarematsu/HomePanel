@@ -136,6 +136,9 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
       renderStationheadState.primaryAudioSelected = scheduledPrimaryAudioAudible_;
       const bool stateChanged =
           UpdateRenderStationheadState(std::move(renderStationheadState));
+        if (!rendererStarted_ && stateChanged) {
+          StartDeferredServices(UnixMillis(), renderState_.stationhead);
+        }
       if (layoutChanged || stateChanged) PublishRenderStateNow();
       return 0;
     }
