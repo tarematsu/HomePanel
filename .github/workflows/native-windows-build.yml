@@ -75,7 +75,7 @@ jobs:
             throw "Native configure modified checked-in source files."
           }
 
-      - name: Verify static Stationhead source build
+      - name: Verify static native source build
         shell: pwsh
         run: |
           $generatedDir = "native/build-ci/generated/stationhead"
@@ -96,6 +96,18 @@ jobs:
           )) {
             if (Test-Path -LiteralPath $path) {
               throw "Removed Stationhead/browser dashboard source '$path' still exists."
+            }
+          }
+          $appSource = Get-Content -LiteralPath "native/src/app.cpp" -Raw
+          foreach ($token in @(
+            '#include "app_air_history.cpp"',
+            '#include "app_stationhead_history.cpp"',
+            '#include "app_update.cpp"',
+            '#include "app_messages.cpp"',
+            '#include "app_commands.cpp"'
+          )) {
+            if ($appSource.Contains($token)) {
+              throw "App implementation include '$token' must be compiled as its own translation unit."
             }
           }
 
@@ -270,8 +282,6 @@ jobs:
                 -Headers @{ Authorization = "Bearer $($env:HOMEPANEL_REFRESH_TOKEN)" } `
                 -ContentType "application/json" -Body '{"sources":["update_check"]}' | Out-Null
             } else {
-
-
               Invoke-RestMethod -Method Post -Uri "$url/v1/update/ping" | Out-Null
             }
             Write-Host "Update rollout triggered; devices will be commanded on their next sync."

@@ -1,102 +1,3 @@
-}
-
-struct MusicRowRects {
-  RECT row{};
-  RECT artwork{};
-  RECT button{};
-  RECT muteButton{};
-  RECT status{};
-};
-
-MusicRowRects MusicRowFromBody(const RECT& body) {
-  const int rowHeight = std::max(1, static_cast<int>(body.bottom - body.top));
-  MusicRowRects rects;
-  rects.row = body;
-  const int pad = std::max(2, rowHeight * 8 / 100);
-  const int artSize = std::max(1, rowHeight - pad * 2);
-  rects.artwork = RECT{rects.row.left, rects.row.top + pad, rects.row.left + artSize,
-                       rects.row.top + pad + artSize};
-  const int buttonGap = std::max(3, rowHeight * 4 / 100);
-  const int buttonHeight = std::min(
-      std::clamp(rowHeight * 28 / 100, 20, 44),
-      std::max(1, (rowHeight - buttonGap) / 2));
-  const int buttonWidth = std::clamp(SpanX(body, 170), 64, 140);
-  const int statusHeight = std::clamp(rowHeight * 14 / 100, 16, 30);
-  const int clusterHeight = buttonHeight * 2 + statusHeight + buttonGap * 2;
-  const int clusterTop = rects.row.top + std::max(0, (rowHeight - clusterHeight) / 2);
-  rects.button = RECT{rects.row.right - buttonWidth, clusterTop, rects.row.right,
-                      clusterTop + buttonHeight};
-  rects.muteButton = RECT{rects.row.right - buttonWidth, rects.button.bottom + buttonGap,
-                          rects.row.right, rects.button.bottom + buttonGap + buttonHeight};
-  rects.status = RECT{rects.row.right - buttonWidth, rects.muteButton.bottom + buttonGap,
-                      rects.row.right, rects.muteButton.bottom + buttonGap + statusHeight};
-  return rects;
-}
-
-RECT MusicProgressRectFromBody(const RECT& body) {
-  const MusicRowRects rects = MusicRowFromBody(body);
-  const int rowHeight = std::max(1, static_cast<int>(rects.row.bottom - rects.row.top));
-  const int pad = std::max(6, rowHeight * 10 / 100);
-  RECT progress{
-      rects.artwork.right + pad,
-      rects.row.top + rowHeight * 64 / 100,
-      rects.button.left - pad,
-      rects.row.bottom - rowHeight * 2 / 100,
-  };
-  if (progress.right <= progress.left) progress.right = progress.left + 1;
-  if (progress.bottom <= progress.top) progress.bottom = progress.top + 1;
-  return progress;
-}
-
-RECT ClockTimeRectFromCard(const RECT& card) {
-  const RECT content = CardContentRect(card);
-  const LONG dateBottom = content.top + SpanY(content, 320);
-  RECT timeRect{content.left, dateBottom, content.right, content.bottom};
-  if (timeRect.right <= timeRect.left) timeRect.right = timeRect.left + 1;
-  if (timeRect.bottom <= timeRect.top) timeRect.bottom = timeRect.top + 1;
-  return timeRect;
-}
-
-void StretchRadarInto(HDC destDc, const RECT& destRect, HBITMAP radarBitmap) {
-  const int destWidth = static_cast<int>(destRect.right - destRect.left);
-  const int destHeight = static_cast<int>(destRect.bottom - destRect.top);
-  if (!radarBitmap || destWidth <= 0 || destHeight <= 0) return;
-  HDC sourceDc = CreateCompatibleDC(destDc);
-  if (!sourceDc) return;
-  const double scale = std::max(static_cast<double>(destWidth) / kRadarCanvasWidth,
-                                static_cast<double>(destHeight) / kRadarCanvasHeight);
-  const int sourceWidth = std::clamp(
-      static_cast<int>(std::lround(destWidth / scale)), 1, kRadarCanvasWidth);
-  const int sourceHeight = std::clamp(
-      static_cast<int>(std::lround(destHeight / scale)), 1, kRadarCanvasHeight);
-  const int sourceLeft = (kRadarCanvasWidth - sourceWidth) / 2;
-  const int sourceTop = (kRadarCanvasHeight - sourceHeight) / 2;
-  HGDIOBJ previous = SelectObject(sourceDc, radarBitmap);
-  SetStretchBltMode(destDc, HALFTONE);
-  SetBrushOrgEx(destDc, 0, 0, nullptr);
-  StretchBlt(destDc, destRect.left, destRect.top, destWidth, destHeight,
-             sourceDc, sourceLeft, sourceTop, sourceWidth, sourceHeight, SRCCOPY);
-  SelectObject(sourceDc, previous);
-  DeleteDC(sourceDc);
-}
-
-struct CachedPanelMemoryDc {
-  HDC value = nullptr;
-  ~CachedPanelMemoryDc() {
-    if (value) DeleteDC(value);
-  }
-};
-
-HDC NativePanelMemoryDc(HDC compatibleDc) {
-  thread_local CachedPanelMemoryDc cached;
-  if (!cached.value) cached.value = CreateCompatibleDC(compatibleDc);
-  return cached.value;
-}
-
-constexpr UINT_PTR kNativePanelTickTimer = 1;
-constexpr UINT kNativePanelTickMs = 1'000;
-}
-
 const std::array<Renderer::NativePanelSlot, 3>& Renderer::NativePanelSlots() {
   static const std::array<NativePanelSlot, 3> slots{{
       {&Renderer::nativeRadarWindow_, &NativeDashboardLayout::radar,
@@ -225,8 +126,8 @@ void Renderer::InvalidatePanelSection(HWND window, PanelSection section) {
     switch (section) {
       case PanelSection::Clock: rect = sections.clock; break;
       case PanelSection::ClockTime: rect = ClockTimeRectFromCard(sections.clock); break;
-      case PanelSection::Air: rect = sections.air; break;
       case PanelSection::Weather: rect = sections.weather; break;
+      case PanelSection::Energy: rect = sections.energy; break;
       case PanelSection::Controls: rect = sections.controls; break;
       default: break;
     }
@@ -237,7 +138,7 @@ void Renderer::InvalidatePanelSection(HWND window, PanelSection section) {
       case PanelSection::PlaybackProgress:
         rect = MusicProgressRectFromBody(CardBodyRect(CardContentRect(sections.music)));
         break;
-      case PanelSection::Energy: rect = sections.energy; break;
+      case PanelSection::Air: rect = sections.air; break;
       case PanelSection::News: rect = sections.news; break;
       default: break;
     }
@@ -256,81 +157,13 @@ void Renderer::DestroyNativeStaticWindows() {
     const HWND hwnd = this->*slot.window;
     if (hwnd && IsWindow(hwnd)) DestroyWindow(hwnd);
   }
-  for (auto& [hwnd, buffer] : nativeBackBuffers_) {
-    if (buffer.bitmap) DeleteObject(buffer.bitmap);
-  }
-  nativeBackBuffers_.clear();
-  for (auto& [key, entry] : nativeArtworkBitmaps_) {
-    if (entry.bitmap) DeleteObject(entry.bitmap);
-  }
-  nativeArtworkBitmaps_.clear();
-  nativeArtworkUseCounter_ = 0;
+  ResetNativeBitmapCaches();
   {
     std::lock_guard lock(radarFrameMutex_);
     if (radarFrameBitmap_) DeleteObject(radarFrameBitmap_);
     radarFrameBitmap_ = nullptr;
   }
   for (const NativePanelSlot& slot : NativePanelSlots()) this->*slot.window = nullptr;
-}
-
-void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
-  const bool sensorsChanged = nativeSensors_ != state.sensors;
-  const bool historyChanged = nativeAirHistory_ != state.airHistory;
-  const bool stationheadChanged = nativeStationhead_ != state.stationhead;
-  const bool stationheadHistoryChanged = nativeStationheadPlayHistory_ != state.stationheadPlayHistory;
-  const bool controlsChanged = nativeAppVersion_ != state.appVersion || nativeToast_ != state.toast;
-  const bool newsChanged = nativeNewsIndex_ != state.newsIndex;
-  const bool dashboardChanged = nativeRenderedDashboardRevision_ != dashboardSourceRevision_;
-
-  if (sensorsChanged) nativeSensors_ = state.sensors;
-  if (historyChanged) nativeAirHistory_ = state.airHistory;
-  if (stationheadHistoryChanged) {
-    nativeStationheadPlayHistory_ = state.stationheadPlayHistory;
-  }
-  if (stationheadChanged) nativeStationhead_ = state.stationhead;
-  if (controlsChanged) {
-    nativeAppVersion_ = state.appVersion;
-    nativeToast_ = state.toast;
-  }
-  if (newsChanged) nativeNewsIndex_ = state.newsIndex;
-  if (dashboardChanged) nativeRenderedDashboardRevision_ = dashboardSourceRevision_;
-  if (!EnsureNativeStaticWindows()) return;
-  if (sensorsChanged || historyChanged) InvalidatePanelSection(nativeMainWindow_, PanelSection::Energy);
-  if (dashboardChanged) {
-    InvalidatePanelSection(nativeSideWindow_, PanelSection::Weather);
-    InvalidatePanelSection(nativeSideWindow_, PanelSection::Air);
-  }
-  if (dashboardChanged || newsChanged) InvalidatePanelSection(nativeMainWindow_, PanelSection::News);
-  if (controlsChanged) InvalidatePanelSection(nativeSideWindow_, PanelSection::Controls);
-  if (stationheadChanged || stationheadHistoryChanged) {
-    InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
-  }
-}
-
-void Renderer::TickNativePanels(int64_t nowMs, bool timerDriven) {
-  if (!nativeDashboardVisible_ || (!timerDriven && nativePanelTimerActive_)) return;
-
-  SYSTEMTIME localTime{};
-  GetLocalTime(&localTime);
-  const int clockDayKey = static_cast<int>(localTime.wYear) * 10'000 +
-      static_cast<int>(localTime.wMonth) * 100 + static_cast<int>(localTime.wDay);
-  const bool clockDayChanged = clockDayKey != nativeClockDayKey_;
-  nativeClockDayKey_ = clockDayKey;
-
-  const NativePlaybackTickState playbackState = NativePlaybackTickStateFor(nowMs);
-  const bool playbackChanged = playbackState != nativePlaybackTickState_;
-  nativePlaybackTickState_ = playbackState;
-  if (nativeSideWindow_ && IsWindow(nativeSideWindow_) && IsWindowVisible(nativeSideWindow_)) {
-    InvalidatePanelSection(nativeSideWindow_,
-                           clockDayChanged ? PanelSection::Clock : PanelSection::ClockTime);
-  }
-  if (nativeMainWindow_ && IsWindow(nativeMainWindow_) && IsWindowVisible(nativeMainWindow_)) {
-    if (playbackChanged) {
-      InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
-    } else if (playbackState.active) {
-      InvalidatePanelSection(nativeMainWindow_, PanelSection::PlaybackProgress);
-    }
-  }
 }
 
 LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -396,11 +229,13 @@ void Renderer::PaintNativeSide(HWND hwnd) {
   if (IntersectRect(&overlap, &scope.dirty, &sections.clock)) {
     DrawClockSection(scope.dc, sections.clock);
   }
-  if (IntersectRect(&overlap, &scope.dirty, &sections.air)) {
-    DrawWeatherSection(scope.dc, sections.air);
-  }
   if (IntersectRect(&overlap, &scope.dirty, &sections.weather)) {
-    DrawEnergySection(scope.dc, sections.weather);
+    DrawCachedPanelSection(scope.dc, sections.weather, PanelSection::Weather,
+                           dashboardRevisions_.weather, &Renderer::DrawWeatherSection);
+  }
+  if (IntersectRect(&overlap, &scope.dirty, &sections.energy)) {
+    DrawCachedPanelSection(scope.dc, sections.energy, PanelSection::Energy,
+                           dashboardRevisions_.energy, &Renderer::DrawEnergySection);
   }
   if (IntersectRect(&overlap, &scope.dirty, &sections.controls)) {
     DrawControlsSection(scope.dc, sections.controls);
@@ -415,11 +250,13 @@ void Renderer::PaintNativeMain(HWND hwnd) {
   if (IntersectRect(&overlap, &scope.dirty, &sections.music)) {
     DrawMusicSection(scope.dc, sections.music);
   }
-  if (IntersectRect(&overlap, &scope.dirty, &sections.energy)) {
-    DrawAirSection(scope.dc, sections.energy);
+  if (IntersectRect(&overlap, &scope.dirty, &sections.air)) {
+    DrawCachedPanelSection(scope.dc, sections.air, PanelSection::Air,
+                           nativeAirRenderRevision_, &Renderer::DrawAirSection);
   }
   if (IntersectRect(&overlap, &scope.dirty, &sections.news)) {
-    DrawNewsSection(scope.dc, sections.news);
+    DrawCachedPanelSection(scope.dc, sections.news, PanelSection::News,
+                           nativeNewsRenderRevision_, &Renderer::DrawNewsSection);
   }
 }
 
@@ -468,4 +305,5 @@ void Renderer::PaintNativeRadar(HWND hwnd) {
   SelectObject(scope.dc, previousFont);
 
   SelectClipRgn(scope.dc, nullptr);
-  DrawCardOutline(scope.dc, bounds, radius);
+  DrawCardOutline(scope.dc, bounds, radius);}
+

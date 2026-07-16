@@ -1,22 +1,17 @@
-#pragma comment(lib, "version.lib")
-
 #include "app.h"
+#include "web_renderer.h"
 #include "cloud_config.h"
 #include "version.h"
-#include <winrt/Windows.Data.Json.h>
 
 namespace hp {
 namespace {
 constexpr wchar_t kWindowClass[] = L"HomePanelNativeWindow";
 constexpr UINT_PTR kCentralTimer = 1;
-constexpr UINT WM_HP_UPDATE_RESULT = WM_APP + 20;
-constexpr int kRestartExitCode = 42;
 constexpr uint32_t kFastTickMs = 2000;
 constexpr uint32_t kSteadyDashboardTickMs = 5000;
 constexpr uint32_t kMaxIdleTickMs = 30'000;
 constexpr int64_t kDashboardStartupFallbackMs = 30'000;
 constexpr int64_t kDashboardAudioStabilityMs = 1'500;
-int startupShowCommand = SW_SHOW;
 
 constexpr bool DashboardAudioReady(bool primaryAudioReady,
                                    bool secondaryEnabled,
@@ -32,50 +27,11 @@ static_assert(!DashboardAudioReady(false, true, true));
 static_assert(kDashboardStartupFallbackMs == 30'000);
 static_assert(kDashboardAudioStabilityMs >= 1'000);
 
-std::wstring InstalledHomePanelVersion(const fs::path& executable) {
-  DWORD handle = 0;
-  const DWORD size = GetFileVersionInfoSizeW(executable.c_str(), &handle);
-  if (!size) return {};
-  std::vector<BYTE> data(size);
-  if (!GetFileVersionInfoW(executable.c_str(), 0, size, data.data())) return {};
-  VS_FIXEDFILEINFO* info = nullptr;
-  UINT infoSize = 0;
-  if (!VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &infoSize) ||
-      !info || infoSize < sizeof(VS_FIXEDFILEINFO) || info->dwSignature != 0xfeef04bd) {
-    return {};
-  }
-  std::wostringstream version;
-  version << HIWORD(info->dwFileVersionMS) << L'.'
-          << LOWORD(info->dwFileVersionMS) << L'.'
-          << HIWORD(info->dwFileVersionLS);
-  const WORD revision = LOWORD(info->dwFileVersionLS);
-  if (revision) version << L'.' << revision;
-  return version.str();
-}
-
-
 uint32_t NextDelayFromDeadline(int64_t now, int64_t deadline, uint32_t fallbackMs) {
   if (deadline <= 0) return fallbackMs;
   if (deadline <= now) return kFastTickMs;
   const int64_t delta = deadline - now;
   return static_cast<uint32_t>(std::clamp<int64_t>(delta, kFastTickMs, fallbackMs));
-}
-
-void EnrichRenderStationheadState(
-    StationheadStatus& state,
-    StationheadStatus* secondaryStatus,
-    const StationheadConfig& config) {
-  state.fallbackUrl = config.fallbackUrl;
-  if (secondaryStatus) {
-    state.loginRequired = state.loginRequired || secondaryStatus->loginRequired;
-    state.secondaryAudioMuted = secondaryStatus->audioMuted;
-    state.secondaryPlaying = secondaryStatus->playing;
-    state.secondaryUrl = std::move(secondaryStatus->url);
-  } else {
-    state.secondaryAudioMuted = false;
-    state.secondaryPlaying = false;
-    state.secondaryUrl.clear();
-  }
 }
 
 }
@@ -99,13 +55,11 @@ int App::Run(int showCommand) {
   CreateMainWindow(showCommand);
   StartServices();
   MSG message{};
-  running_ = true;
   int getMessageResult = 0;
   while ((getMessageResult = GetMessageW(&message, nullptr, 0, 0)) > 0) {
     TranslateMessage(&message);
     DispatchMessageW(&message);
   }
-  running_ = false;
   exitCode_ = getMessageResult < 0 ? 1 : static_cast<int>(message.wParam);
   logger_->Info(L"HomePanel exiting code " + std::to_wstring(exitCode_));
   return exitCode_;
@@ -160,7 +114,7 @@ void App::CreateMainWindow(int showCommand) {
     const DWORD error = GetLastError();
     throw std::runtime_error("CreateWindowEx failed (" + std::to_string(error) + ")");
   }
-  startupShowCommand = showCommand == SW_HIDE ? SW_SHOW : showCommand;
+  startupShowCommand_ = showCommand == SW_HIDE ? SW_SHOW : showCommand;
 }
 
 void App::StartServices() {
@@ -205,7 +159,7 @@ void App::StartServices() {
 
   // Do not expose an empty native shell before the Stationhead surfaces
   // have startup geometry and their WebView creation has been requested.
-  ShowWindow(window_, startupShowCommand);
+  ShowWindow(window_, startupShowCommand_);
   UpdateWindow(window_);
   ScheduleNextTick(kFastTickMs);
 
@@ -408,7 +362,7 @@ void App::Tick() {
   UpdateStationheadPlaybackFallback(now);
   uint32_t nextTickMs = kMaxIdleTickMs;
   const bool stationheadNeedsFastTick =
-      !rendererStarted_ || renderState_.maintenance ||
+      !rendererStarted_ ||
       StationheadNeedsForeground(stationheadStatus) ||
       (secondaryStationhead_ && StationheadNeedsForeground(secondaryStatus));
   if (stationheadNeedsFastTick) {
@@ -435,7 +389,7 @@ void App::Draw() {
     PublishRenderState();
     // Message handlers own state updates. Avoid sensor locks and Stationhead status
     // reconstruction on every incidental WM_PAINT.
-    renderer_->Render(paint.rcPaint, renderState_);
+    renderer_->Render();
   }
   EndPaint(window_, &paint);
 }
@@ -488,7 +442,6 @@ void App::LayoutWorkspace() {
       }
       break;
   }
-  renderState_.workspaceTab = static_cast<int>(selectedTab_);
   MarkRenderStateDirty();
   InvalidateAll();
 }
@@ -572,26 +525,6 @@ void App::InvalidateAll() {
 
 void App::HandleAction(UiAction action) {
   switch (action) {
-    case UiAction::WorkspaceMain:
-      selectedTab_ = WorkspaceTab::Main;
-      LayoutWorkspace();
-      break;
-    case UiAction::WorkspaceAuth:
-      if (stationhead_->HasAuthTab()) {
-        selectedTab_ = WorkspaceTab::Auth;
-        LayoutWorkspace();
-      } else {
-        renderState_.toast = L"認証タブが開いていません";
-        toastUntil_ = UnixMillis() + 3000;
-        PublishRenderStateNow();
-      }
-      break;
-    case UiAction::DataRefresh:
-      renderState_.toast = cloud_->RequestRemoteRefresh()
-        ? L"Cloudflareへ更新を要求しました" : L"更新要求に失敗しました";
-      toastUntil_ = UnixMillis() + 4000;
-      PublishRenderStateNow();
-      break;
     case UiAction::AppUpdate:
       CheckForUpdateAsync(true);
       break;
@@ -599,31 +532,13 @@ void App::HandleAction(UiAction action) {
       exitCode_ = kRestartExitCode;
       DestroyWindow(window_);
       break;
-    case UiAction::Maintenance:
-      renderState_.maintenance = !renderState_.maintenance;
-      PublishRenderStateNow();
-      break;
-    case UiAction::StationheadReconnect:
-      stationhead_->Reconnect();
-      if (secondaryStationhead_) secondaryStationhead_->Reconnect();
-      break;
     case UiAction::StationheadAudioToggle:
       ToggleStationheadAudio();
       break;
     case UiAction::StationheadAudioMute:
       MuteStationheadAudio();
       break;
-    case UiAction::ClearCache:
-      ClearDisplayCache();
-      break;
-    case UiAction::ShowLog:
-      ShellExecuteW(window_, L"open", L"notepad.exe", QuotePath(dataDir_ / L"homepanel.log").c_str(),
-                    rootDir_.c_str(), SW_SHOWNORMAL);
-      break;
-    case UiAction::CloseMaintenance:
-      renderState_.maintenance = false;
-      PublishRenderStateNow();
-      break;
+    case UiAction::None:
     default:
       break;
   }
@@ -639,10 +554,3 @@ void App::LogUnhandled(DWORD code, void* address) {
 }
 
 
-
-
-#include "app_air_history.cpp"
-#include "app_stationhead_history.cpp"
-#include "app_update.cpp"
-#include "app_messages.cpp"
-#include "app_commands.cpp"

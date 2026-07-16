@@ -3,6 +3,7 @@
 
 
 #include "app.h"
+#include "web_renderer.h"
 
 namespace hp {
 namespace {
@@ -43,20 +44,8 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         LayoutWorkspace();
       }
       return 0;
-    case WM_LBUTTONUP: {
-      if (!renderer_) return 0;
-      POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-      HandleAction(renderer_->HitTest(point));
-      return 0;
-    }
-    case WM_KEYDOWN:
-      if (wParam == VK_F12) {
-        renderState_.maintenance = !renderState_.maintenance;
-        PublishRenderStateNow();
-      } else if (wParam == VK_ESCAPE && renderState_.maintenance) {
-        renderState_.maintenance = false;
-        PublishRenderStateNow();
-      }
+    case WM_LBUTTONUP:
+      if (renderer_) HandleAction(renderer_->TakePendingAction());
       return 0;
     case WM_HP_CLOUD_UPDATED: {
       bool dashboardChanged = false;
@@ -181,7 +170,7 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_HP_COMMANDS_UPDATED:
       ProcessRemoteCommands();
       return 0;
-    case WM_HP_UPDATE_RESULT: {
+    case kUpdateResultMessage: {
       std::unique_ptr<wchar_t[]> updateMessage(reinterpret_cast<wchar_t*>(lParam));
       if (updateMessage && updateMessage[0] != L'\0') {
         renderState_.toast = updateMessage.get();

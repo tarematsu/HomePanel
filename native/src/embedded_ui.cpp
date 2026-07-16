@@ -1,4 +1,5 @@
 #include "common.h"
+#include "file_utils.h"
 #include "version.h"
 
 namespace hp {
@@ -14,22 +15,10 @@ std::string ReadResource(int id) {
   return std::string(bytes, bytes + size);
 }
 
-bool FileMatches(const fs::path& path, const std::string& content) {
-  std::error_code error;
-  if (!fs::is_regular_file(path, error) || fs::file_size(path, error) != content.size()) return false;
-  std::ifstream input(path, std::ios::binary);
-  if (!input) return false;
-  return std::equal(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>(), content.begin(), content.end());
-}
-
-bool NonEmptyFile(const fs::path& path) {
-  std::error_code error;
-  return fs::is_regular_file(path, error) && fs::file_size(path, error) > 0;
-}
 
 bool WriteContent(const fs::path& path, const std::string& content) {
   if (content.empty()) return false;
-  if (FileMatches(path, content)) return true;
+  if (file::MatchesText(path, content)) return true;
   return AtomicWriteBytes(path, content.data(), static_cast<DWORD>(content.size()));
 }
 
@@ -45,39 +34,31 @@ constexpr RuntimeAsset kRuntimeAssets[] = {
     {112, L"radar-map.png"},
 };
 
-uint64_t HashBytes(const std::string& content) {
-  uint64_t hash = 1469598103934665603ULL;
-  for (const unsigned char byte : content) {
-    hash ^= byte;
-    hash *= 1099511628211ULL;
-  }
-  return hash;
-}
 
 std::string ExecutableStamp(const fs::path& executable) {
   std::error_code error;
   const auto size = fs::file_size(executable, error);
   std::ostringstream stamp;
-  stamp << WideToUtf8(kVersion) << "|native-assets-v2";
+  stamp << WideToUtf8(kVersion) << "|native-assets-v3";
   if (!error) stamp << '|' << size;
   for (const RuntimeAsset& asset : kRuntimeAssets) {
     const std::string content = ReadResource(asset.id);
-    stamp << '|' << asset.id << ':' << content.size() << ':' << std::hex << HashBytes(content) << std::dec;
+    stamp << '|' << asset.id << ':' << content.size() << ':' << std::hex << Fnv1a64(content) << std::dec;
   }
   for (const RuntimeAsset& asset : kWeatherIconAssets) {
     const std::string content = ReadResource(asset.id);
-    stamp << '|' << asset.id << ':' << content.size() << ':' << std::hex << HashBytes(content) << std::dec;
+    stamp << '|' << asset.id << ':' << content.size() << ':' << std::hex << Fnv1a64(content) << std::dec;
   }
   return stamp.str();
 }
 
 bool RuntimeAssetsReady(const fs::path& folder, const std::string& stamp) {
-  if (!FileMatches(folder / L"native-assets.signature", stamp)) return false;
+  if (!file::MatchesText(folder / L"native-assets.signature", stamp)) return false;
   for (const RuntimeAsset& asset : kRuntimeAssets) {
-    if (!NonEmptyFile(folder / asset.name)) return false;
+    if (!file::NonEmpty(folder / asset.name)) return false;
   }
   for (const RuntimeAsset& asset : kWeatherIconAssets) {
-    if (!NonEmptyFile(folder / asset.name)) return false;
+    if (!file::NonEmpty(folder / asset.name)) return false;
   }
   return true;
 }

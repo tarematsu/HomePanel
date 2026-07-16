@@ -1,8 +1,5 @@
-
-
-
-
 #include "app.h"
+#include "version.h"
 #include <winrt/Windows.Data.Json.h>
 
 namespace hp {
@@ -32,7 +29,7 @@ bool SavePendingCommandAcks(const fs::path& path, const PendingCommandAcks& pend
   }
   return AtomicWriteText(path, output.str());
 }
-}
+}  // namespace
 
 void App::ProcessRemoteCommands() {
   const fs::path path = dataDir_ / L"commands.json";
@@ -51,7 +48,8 @@ void App::ProcessRemoteCommands() {
       if (id <= 0 || command.empty()) continue;
 
       if (const auto pending = pendingAcks.find(id); pending != pendingAcks.end()) {
-        if (cloud_->AcknowledgeCommand(id, pending->second, L"completed earlier; acknowledgement retry")) {
+        if (cloud_->AcknowledgeCommand(
+                id, pending->second, L"completed earlier; acknowledgement retry")) {
           pendingAcks.erase(pending);
           if (!SavePendingCommandAcks(pendingAckPath, pendingAcks)) {
             logger_->Warn(L"Failed to persist command acknowledgement retry state");
@@ -83,9 +81,6 @@ void App::ProcessRemoteCommands() {
       } else if (command == L"reload_dashboard") {
         cloud_->RefreshNow();
       } else if (command == L"check_update") {
-
-
-
         if (updateBusy_.load(std::memory_order_acquire)) {
           logger_->Info(L"Update install command deferred because an update check is already running");
           continue;
@@ -97,10 +92,6 @@ void App::ProcessRemoteCommands() {
         result = L"unknown command";
       }
 
-
-
-
-
       pendingAcks[id] = success;
       if (!SavePendingCommandAcks(pendingAckPath, pendingAcks)) {
         logger_->Warn(L"Failed to persist completed remote command " + std::to_wstring(id));
@@ -108,10 +99,14 @@ void App::ProcessRemoteCommands() {
       if (cloud_->AcknowledgeCommand(id, success, result)) {
         pendingAcks.erase(id);
         if (!SavePendingCommandAcks(pendingAckPath, pendingAcks)) {
-          logger_->Warn(L"Failed to clear completed remote command acknowledgement " + std::to_wstring(id));
+          logger_->Warn(
+              L"Failed to clear completed remote command acknowledgement " +
+              std::to_wstring(id));
         }
       } else {
-        logger_->Warn(L"Remote command acknowledgement deferred without re-execution: " + std::to_wstring(id));
+        logger_->Warn(
+            L"Remote command acknowledgement deferred without re-execution: " +
+            std::to_wstring(id));
       }
     }
     std::error_code ignored;
@@ -152,9 +147,8 @@ void App::ClearDisplayCache() {
   fs::remove(dataDir_ / L"radar.json", ignored);
   fs::remove_all(dataDir_ / L"radar-cache", ignored);
   cloud_->RefreshNow();
-  renderState_.toast = L"表示キャッシュを削除しました。ログイン情報と履歴は保持しています";
-  ShowToast(std::move(renderState_.toast), 5000);
+  ShowToast(L"表示キャッシュを削除しました。ログイン情報と履歴は保持しています", 5000);
   logger_->Info(L"Display cache cleared; WebView user data and telemetry outbox preserved");
 }
 
-}
+}  // namespace hp

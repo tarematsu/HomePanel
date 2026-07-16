@@ -13,10 +13,6 @@ endif()
 option(HOMEPANEL_CI_STRICT "Treat compiler and linker warnings as errors" OFF)
 option(HOMEPANEL_CI_STATIC_ANALYSIS "Run MSVC native code analysis" OFF)
 
-
-
-
-
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 set(HOMEPANEL_RADAR_SATELLITE "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ui/radar-satellite.png")
@@ -111,6 +107,13 @@ endfunction()
 set(HOMEPANEL_CORE_SOURCES
   src/main.cpp
   src/app.cpp
+  src/app_air_history.cpp
+  src/app_stationhead_history.cpp
+  src/app_stationhead_handles.cpp
+  src/app_stationhead_state.cpp
+  src/app_update.cpp
+  src/app_messages.cpp
+  src/app_commands.cpp
   src/config.cpp
   src/cloud_config.cpp
   src/logger.cpp
@@ -128,9 +131,16 @@ set(HOMEPANEL_STATIONHEAD_SOURCES
   src/sh_audio.cpp)
 
 set(HOMEPANEL_RENDERER_SOURCES
-  src/renderer_core.cpp
+  src/renderer_lifecycle.cpp
+  src/renderer_dashboard.cpp
+  src/renderer_panel_state.cpp
+  src/renderer_bitmap_cache.cpp
   src/renderer_panels.cpp
-  src/renderer_radar_ui.cpp)
+  src/renderer_radar_ui.cpp
+  src/dashboard_native_playback.cpp
+  src/dashboard_native_minute_facts.cpp
+  src/dashboard_playback_resolve.cpp
+  src/embedded_ui.cpp)
 
 set(HOMEPANEL_RESOURCE_SOURCES
   "${HOMEPANEL_GENERATED_HOME_RC}"

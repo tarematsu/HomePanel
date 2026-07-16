@@ -2,22 +2,47 @@
 
 
 
+#pragma comment(lib, "version.lib")
+
 #include "app.h"
+#include "version.h"
 
 namespace hp {
+namespace {
+
+std::wstring InstalledHomePanelVersion(const fs::path& executable) {
+  DWORD handle = 0;
+  const DWORD size = GetFileVersionInfoSizeW(executable.c_str(), &handle);
+  if (!size) return {};
+  std::vector<BYTE> data(size);
+  if (!GetFileVersionInfoW(executable.c_str(), 0, size, data.data())) return {};
+  VS_FIXEDFILEINFO* info = nullptr;
+  UINT infoSize = 0;
+  if (!VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &infoSize) ||
+      !info || infoSize < sizeof(VS_FIXEDFILEINFO) || info->dwSignature != 0xfeef04bd) {
+    return {};
+  }
+  std::wostringstream version;
+  version << HIWORD(info->dwFileVersionMS) << L'.'
+          << LOWORD(info->dwFileVersionMS) << L'.'
+          << HIWORD(info->dwFileVersionLS);
+  const WORD revision = LOWORD(info->dwFileVersionLS);
+  if (revision) version << L'.' << revision;
+  return version.str();
+}
+
+}  // namespace
 
 void App::CheckForUpdateAsync(bool install) {
   if (updateBusy_.exchange(true)) {
     if (install) {
-      renderState_.toast = L"更新確認はすでに実行中です";
-      ShowToast(std::move(renderState_.toast), 4000);
+      ShowToast(L"更新確認はすでに実行中です", 4000);
     }
     return;
   }
   if (updateThread_.joinable()) updateThread_.join();
   if (install) {
-    renderState_.toast = L"署名・ハッシュを確認して更新を準備しています";
-    ShowToast(std::move(renderState_.toast), 15'000);
+    ShowToast(L"署名・ハッシュを確認して更新を準備しています", 15'000);
   }
 
   updateThread_ = std::thread([this, install] {
@@ -51,7 +76,7 @@ void App::CheckForUpdateAsync(bool install) {
     if (!message.empty()) {
       auto copy = std::make_unique<wchar_t[]>(message.size() + 1);
       wcscpy_s(copy.get(), message.size() + 1, message.c_str());
-      if (PostMessageW(window_, WM_HP_UPDATE_RESULT, 0, reinterpret_cast<LPARAM>(copy.get()))) {
+      if (PostMessageW(window_, kUpdateResultMessage, 0, reinterpret_cast<LPARAM>(copy.get()))) {
         copy.release();
       }
     }

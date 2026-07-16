@@ -6,7 +6,6 @@ namespace {
 constexpr int kNativeSideId = 101;
 constexpr int kNativeMainId = 102;
 constexpr int kNativeRadarId = 108;
-constexpr size_t kNativeBitmapCacheLimit = 24;
 
 constexpr COLORREF kWidgetBackground = kNativeDashboardBackground;
 constexpr COLORREF kWidgetSurface = RGB(20, 26, 36);
@@ -16,12 +15,10 @@ constexpr COLORREF kWidgetText = RGB(238, 242, 248);
 constexpr COLORREF kWidgetMuted = RGB(159, 171, 189);
 constexpr COLORREF kWidgetSubtle = RGB(110, 122, 141);
 
-constexpr COLORREF kWidgetBlue = RGB(10, 132, 255);
 constexpr COLORREF kWidgetBlueMuted = RGB(100, 176, 255);
 constexpr COLORREF kWidgetGreen = RGB(48, 209, 88);
 constexpr COLORREF kWidgetOrange = RGB(255, 159, 10);
 constexpr COLORREF kWidgetCyan = RGB(50, 173, 230);
-constexpr COLORREF kWidgetPurple = RGB(175, 82, 222);
 constexpr COLORREF kWidgetBlack = RGB(0, 0, 0);
 constexpr COLORREF kWidgetTrack = RGB(42, 52, 66);
 constexpr COLORREF kWidgetWarning = RGB(255, 214, 10);
@@ -282,10 +279,10 @@ bool IsWeatherNightHour(int hour) {
   return hour < 6 || hour >= 18;
 }
 
+template <typename ValueOf>
 void DrawHistoryLine(HDC dc, const std::vector<AirHistorySample>& samples, const RECT& plot,
                      int64_t cutoff, int64_t spanMs, double minValue, double maxValue,
-                     COLORREF color, int width,
-                     const std::function<double(const AirHistorySample&)>& valueOf) {
+                     COLORREF color, int width, ValueOf&& valueOf) {
   if (samples.empty() || maxValue <= minValue) return;
   HGDIOBJ previousPen = SelectObject(dc, CachedSolidPen(width, color));
   bool started = false;
@@ -358,34 +355,10 @@ void DrawSectionCard(HDC dc, const RECT& rect) {
   DrawCardOutline(dc, rect, radius);
 }
 
-void DrawHeaderStatus(HDC dc, const RECT& header, const PanelDataStatus& status) {
-  const wchar_t* text = nullptr;
-  COLORREF color = kWidgetSubtle;
-  switch (status.state) {
-    case PanelDataState::Waiting:
-      text = L"取得待ち";
-      color = kWidgetSubtle;
-      break;
-    case PanelDataState::Stale:
-      text = L"更新停滞";
-      color = kWidgetWarning;
-      break;
-    case PanelDataState::Error:
-      text = L"取得エラー";
-      color = kWidgetDanger;
-      break;
-    case PanelDataState::Ok:
-    default:
-      return;
-  }
-  SetTextColor(dc, color);
-  DrawTextInRect(dc, text, header, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
-}
-
 struct SidebarSections {
   RECT clock{};
-  RECT air{};
   RECT weather{};
+  RECT energy{};
   RECT controls{};
 };
 
@@ -410,17 +383,17 @@ SidebarSections SplitSidebarSections(const RECT& client) {
   int top = client.top;
   sections.clock = RECT{client.left, top, client.right, top + cardHeight};
   top = sections.clock.bottom + gap;
-  sections.air = RECT{client.left, top, client.right, top + cardHeight};
-  top = sections.air.bottom + gap;
   sections.weather = RECT{client.left, top, client.right, top + cardHeight};
   top = sections.weather.bottom + gap;
+  sections.energy = RECT{client.left, top, client.right, top + cardHeight};
+  top = sections.energy.bottom + gap;
   sections.controls = RECT{client.left, top, client.right, top + controlsHeight};
   return sections;
 }
 
 struct MainSections {
   RECT music{};
-  RECT energy{};
+  RECT air{};
   RECT news{};
 };
 
@@ -435,9 +408,9 @@ MainSections SplitMainSections(const RECT& client) {
   sections.news = RECT{client.left, client.bottom - newsHeight, client.right, client.bottom};
   const LONG rowBottom = std::max(client.top + 1, sections.news.top - gapY);
   sections.music = RECT{client.left, client.top, client.left + musicWidth, rowBottom};
-  sections.energy = RECT{sections.music.right + gapX, client.top, client.right, rowBottom};
-  if (sections.energy.right <= sections.energy.left) {
-    sections.energy.right = sections.energy.left + 1;
+  sections.air = RECT{sections.music.right + gapX, client.top, client.right, rowBottom};
+  if (sections.air.right <= sections.air.left) {
+    sections.air.right = sections.air.left + 1;
   }
   return sections;
 }
@@ -468,4 +441,102 @@ ControlsRects ControlsFromContent(const RECT& content) {
   rects.status = RECT{content.left, rects.update.bottom + statusGap,
                       content.right, rects.update.bottom + statusGap + statusHeight};
   if (rects.status.bottom <= rects.status.top) rects.status.bottom = rects.status.top + 1;
+  return rects;}
+
+struct MusicRowRects {
+  RECT row{};
+  RECT artwork{};
+  RECT button{};
+  RECT muteButton{};
+  RECT status{};
+};
+
+MusicRowRects MusicRowFromBody(const RECT& body) {
+  const int rowHeight = std::max(1, static_cast<int>(body.bottom - body.top));
+  MusicRowRects rects;
+  rects.row = body;
+  const int pad = std::max(2, rowHeight * 8 / 100);
+  const int artSize = std::max(1, rowHeight - pad * 2);
+  rects.artwork = RECT{rects.row.left, rects.row.top + pad, rects.row.left + artSize,
+                       rects.row.top + pad + artSize};
+  const int buttonGap = std::max(3, rowHeight * 4 / 100);
+  const int buttonHeight = std::min(
+      std::clamp(rowHeight * 28 / 100, 20, 44),
+      std::max(1, (rowHeight - buttonGap) / 2));
+  const int buttonWidth = std::clamp(SpanX(body, 170), 64, 140);
+  const int statusHeight = std::clamp(rowHeight * 14 / 100, 16, 30);
+  const int clusterHeight = buttonHeight * 2 + statusHeight + buttonGap * 2;
+  const int clusterTop = rects.row.top + std::max(0, (rowHeight - clusterHeight) / 2);
+  rects.button = RECT{rects.row.right - buttonWidth, clusterTop, rects.row.right,
+                      clusterTop + buttonHeight};
+  rects.muteButton = RECT{rects.row.right - buttonWidth, rects.button.bottom + buttonGap,
+                          rects.row.right, rects.button.bottom + buttonGap + buttonHeight};
+  rects.status = RECT{rects.row.right - buttonWidth, rects.muteButton.bottom + buttonGap,
+                      rects.row.right, rects.muteButton.bottom + buttonGap + statusHeight};
   return rects;
+}
+
+RECT MusicProgressRectFromBody(const RECT& body) {
+  const MusicRowRects rects = MusicRowFromBody(body);
+  const int rowHeight = std::max(1, static_cast<int>(rects.row.bottom - rects.row.top));
+  const int pad = std::max(6, rowHeight * 10 / 100);
+  RECT progress{
+      rects.artwork.right + pad,
+      rects.row.top + rowHeight * 64 / 100,
+      rects.button.left - pad,
+      rects.row.bottom - rowHeight * 2 / 100,
+  };
+  if (progress.right <= progress.left) progress.right = progress.left + 1;
+  if (progress.bottom <= progress.top) progress.bottom = progress.top + 1;
+  return progress;
+}
+
+RECT ClockTimeRectFromCard(const RECT& card) {
+  const RECT content = CardContentRect(card);
+  const LONG dateBottom = content.top + SpanY(content, 320);
+  RECT timeRect{content.left, dateBottom, content.right, content.bottom};
+  if (timeRect.right <= timeRect.left) timeRect.right = timeRect.left + 1;
+  if (timeRect.bottom <= timeRect.top) timeRect.bottom = timeRect.top + 1;
+  return timeRect;
+}
+
+void StretchRadarInto(HDC destDc, const RECT& destRect, HBITMAP radarBitmap) {
+  const int destWidth = static_cast<int>(destRect.right - destRect.left);
+  const int destHeight = static_cast<int>(destRect.bottom - destRect.top);
+  if (!radarBitmap || destWidth <= 0 || destHeight <= 0) return;
+  HDC sourceDc = CreateCompatibleDC(destDc);
+  if (!sourceDc) return;
+  const double scale = std::max(static_cast<double>(destWidth) / kRadarCanvasWidth,
+                                static_cast<double>(destHeight) / kRadarCanvasHeight);
+  const int sourceWidth = std::clamp(
+      static_cast<int>(std::lround(destWidth / scale)), 1, kRadarCanvasWidth);
+  const int sourceHeight = std::clamp(
+      static_cast<int>(std::lround(destHeight / scale)), 1, kRadarCanvasHeight);
+  const int sourceLeft = (kRadarCanvasWidth - sourceWidth) / 2;
+  const int sourceTop = (kRadarCanvasHeight - sourceHeight) / 2;
+  HGDIOBJ previous = SelectObject(sourceDc, radarBitmap);
+  SetStretchBltMode(destDc, HALFTONE);
+  SetBrushOrgEx(destDc, 0, 0, nullptr);
+  StretchBlt(destDc, destRect.left, destRect.top, destWidth, destHeight,
+             sourceDc, sourceLeft, sourceTop, sourceWidth, sourceHeight, SRCCOPY);
+  SelectObject(sourceDc, previous);
+  DeleteDC(sourceDc);
+}
+
+struct CachedPanelMemoryDc {
+  HDC value = nullptr;
+  ~CachedPanelMemoryDc() {
+    if (value) DeleteDC(value);
+  }
+};
+
+HDC NativePanelMemoryDc(HDC compatibleDc) {
+  thread_local CachedPanelMemoryDc cached;
+  if (!cached.value) cached.value = CreateCompatibleDC(compatibleDc);
+  return cached.value;
+}
+
+constexpr UINT_PTR kNativePanelTickTimer = 1;
+constexpr UINT kNativePanelTickMs = 1'000;
+}
+
