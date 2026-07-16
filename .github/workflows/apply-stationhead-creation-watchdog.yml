@@ -1,0 +1,278 @@
+name: Apply Stationhead creation watchdog
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'agent/isolate-stationhead-webview-data'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Add generation-safe WebView2 creation watchdog
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              print(f'{label}: {count} match(es)')
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          shared_policy_path = Path('native/src/sh_shared.h')
+          shared_policy = shared_policy_path.read_text(encoding='utf-8')
+          shared_policy = replace_once(
+              shared_policy,
+              "inline constexpr int64_t kStationheadStartupScriptRegistrationTimeoutMs = 5'000;\n",
+              "inline constexpr int64_t kStationheadWebViewCreationTimeoutMs = 30'000;\n"
+              "inline constexpr int64_t kStationheadStartupScriptRegistrationTimeoutMs = 5'000;\n",
+              'add WebView creation timeout policy')
+          shared_policy_path.write_text(shared_policy, encoding='utf-8')
+
+          environment_header_path = Path('native/src/shared_webview_environment.h')
+          environment_header = environment_header_path.read_text(encoding='utf-8')
+          environment_header = replace_once(
+              environment_header,
+              '  void Acquire(const fs::path& userDataFolder, Completion completion);\n',
+              '  void Acquire(const fs::path& userDataFolder, Completion completion);\n'
+              '  void Invalidate(const fs::path& userDataFolder);\n',
+              'declare environment invalidation')
+          environment_header = replace_once(
+              environment_header,
+              '    uint32_t acquireCount = 0;\n'
+              '    bool creating = false;\n',
+              '    uint32_t acquireCount = 0;\n'
+              '    uint64_t generation = 0;\n'
+              '    bool creating = false;\n',
+              'add environment generation')
+          environment_header = replace_once(
+              environment_header,
+              '  void Complete(const std::wstring& key, HRESULT result,\n'
+              '                ICoreWebView2Environment* environment);\n',
+              '  void Complete(const std::wstring& key, uint64_t generation, HRESULT result,\n'
+              '                ICoreWebView2Environment* environment);\n',
+              'version environment completion')
+          environment_header_path.write_text(environment_header, encoding='utf-8')
+
+          environment_path = Path('native/src/shared_webview_environment.cpp')
+          environment = environment_path.read_text(encoding='utf-8')
+          environment = replace_once(
+              environment,
+              '  bool startCreation = false;\n'
+              '  fs::path folderForCreation;\n',
+              '  bool startCreation = false;\n'
+              '  uint64_t creationGeneration = 0;\n'
+              '  fs::path folderForCreation;\n',
+              'track creation generation')
+          environment = replace_once(
+              environment,
+              '        entry.creating = true;\n'
+              '        startCreation = true;\n'
+              '        folderForCreation = entry.userDataFolder;\n',
+              '        entry.creating = true;\n'
+              '        creationGeneration = ++entry.generation;\n'
+              '        startCreation = true;\n'
+              '        folderForCreation = entry.userDataFolder;\n',
+              'allocate environment generation')
+          environment = replace_once(
+              environment,
+              '    Complete(requestedKey, HRESULT_FROM_WIN32(directoryError.value()), nullptr);\n',
+              '    Complete(requestedKey, creationGeneration,\n'
+              '             HRESULT_FROM_WIN32(directoryError.value()), nullptr);\n',
+              'version directory failure completion')
+          environment = replace_once(
+              environment,
+              '  const auto key = std::make_shared<std::wstring>(requestedKey);\n'
+              '  const HRESULT started = CreateCoreWebView2EnvironmentWithOptions(\n'
+              '      nullptr, folderForCreation.c_str(), options.Get(),\n'
+              '      Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(\n'
+              '          [this, key](HRESULT result, ICoreWebView2Environment* environment) -> HRESULT {\n'
+              '            Complete(*key, FAILED(result) || !environment\n'
+              '                               ? (FAILED(result) ? result : E_POINTER)\n'
+              '                               : S_OK,\n'
+              '                     environment);\n'
+              '            return S_OK;\n'
+              '          }).Get());\n'
+              '  if (FAILED(started)) Complete(requestedKey, started, nullptr);\n'
+              '}\n'
+              '\n'
+              'void SharedWebViewEnvironment::Complete(const std::wstring& key, HRESULT result,\n'
+              '                                        ICoreWebView2Environment* environment) {\n',
+              '  const auto key = std::make_shared<std::wstring>(requestedKey);\n'
+              '  const HRESULT started = CreateCoreWebView2EnvironmentWithOptions(\n'
+              '      nullptr, folderForCreation.c_str(), options.Get(),\n'
+              '      Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(\n'
+              '          [this, key, creationGeneration](\n'
+              '              HRESULT result, ICoreWebView2Environment* environment) -> HRESULT {\n'
+              '            Complete(*key, creationGeneration,\n'
+              '                     FAILED(result) || !environment\n'
+              '                         ? (FAILED(result) ? result : E_POINTER)\n'
+              '                         : S_OK,\n'
+              '                     environment);\n'
+              '            return S_OK;\n'
+              '          }).Get());\n'
+              '  if (FAILED(started)) {\n'
+              '    Complete(requestedKey, creationGeneration, started, nullptr);\n'
+              '  }\n'
+              '}\n'
+              '\n'
+              'void SharedWebViewEnvironment::Invalidate(const fs::path& userDataFolder) {\n'
+              '  const std::wstring key = NormalizePath(userDataFolder);\n'
+              '  std::vector<Completion> callbacks;\n'
+              '  {\n'
+              '    std::lock_guard lock(mutex_);\n'
+              '    auto iterator = entries_.find(key);\n'
+              '    if (iterator == entries_.end()) return;\n'
+              '    Entry& entry = iterator->second;\n'
+              '    ++entry.generation;\n'
+              '    entry.creating = false;\n'
+              '    entry.environment.Reset();\n'
+              '    callbacks.swap(entry.pending);\n'
+              '  }\n'
+              '  const HRESULT timeout = HRESULT_FROM_WIN32(ERROR_TIMEOUT);\n'
+              '  for (auto& callback : callbacks) callback(timeout, nullptr);\n'
+              '}\n'
+              '\n'
+              'void SharedWebViewEnvironment::Complete(const std::wstring& key,\n'
+              '                                        uint64_t generation, HRESULT result,\n'
+              '                                        ICoreWebView2Environment* environment) {\n',
+              'add generation-safe completion and invalidation')
+          environment = replace_once(
+              environment,
+              '    Entry& entry = iterator->second;\n'
+              '    entry.creating = false;\n',
+              '    Entry& entry = iterator->second;\n'
+              '    if (entry.generation != generation) return;\n'
+              '    entry.creating = false;\n',
+              'ignore stale environment completions')
+          environment_path.write_text(environment, encoding='utf-8')
+
+          header_path = Path('native/src/sh.h')
+          header = header_path.read_text(encoding='utf-8')
+          header = replace_once(
+              header,
+              '  std::atomic<bool> creating_{false};\n'
+              '  std::atomic<bool> recreating_{false};\n'
+              '  int64_t recreateAt_ = 0;\n',
+              '  std::atomic<bool> creating_{false};\n'
+              '  std::atomic<bool> recreating_{false};\n'
+              '  int64_t creationStartedAt_ = 0;\n'
+              '  int64_t recreateAt_ = 0;\n',
+              'track player creation start')
+          header_path.write_text(header, encoding='utf-8')
+
+          sh_path = Path('native/src/sh.cpp')
+          sh = sh_path.read_text(encoding='utf-8')
+          sh = replace_once(
+              sh,
+              'void StationheadPlayer::Create() {\n'
+              '  if (shuttingDown_ || creating_.exchange(true)) return;\n'
+              '  if (!EnsureHostWindow()) {\n'
+              '    creating_ = false;\n',
+              'void StationheadPlayer::Create() {\n'
+              '  if (shuttingDown_ || creating_.exchange(true)) return;\n'
+              '  creationStartedAt_ = UnixMillis();\n'
+              '  if (!EnsureHostWindow()) {\n'
+              '    creating_ = false;\n'
+              '    creationStartedAt_ = 0;\n',
+              'start creation watchdog')
+          sh = replace_once(
+              sh,
+              '        if (FAILED(result) || !environment || shuttingDown_) {\n'
+              '          creating_ = false;\n',
+              '        if (FAILED(result) || !environment || shuttingDown_) {\n'
+              '          creating_ = false;\n'
+              '          creationStartedAt_ = 0;\n',
+              'clear watchdog on environment failure')
+          sh = replace_once(
+              sh,
+              '              creating_ = false;\n'
+              '              if (FAILED(controllerResult) || !controller || shuttingDown_) {\n',
+              '              creating_ = false;\n'
+              '              creationStartedAt_ = 0;\n'
+              '              if (FAILED(controllerResult) || !controller || shuttingDown_) {\n',
+              'clear watchdog on controller completion')
+          sh = replace_once(
+              sh,
+              '        if (FAILED(started)) {\n'
+              '          creating_ = false;\n'
+              '          ScheduleRecreate(L"controller creation could not start " + HResultHex(started));\n',
+              '        if (FAILED(started)) {\n'
+              '          creating_ = false;\n'
+              '          creationStartedAt_ = 0;\n'
+              '          ScheduleRecreate(L"controller creation could not start " + HResultHex(started));\n',
+              'clear watchdog on synchronous controller failure')
+          sh = replace_once(
+              sh,
+              '  nextTickAt_ = nowMs + 60\'000;\n'
+              '  if (recreating_.load(std::memory_order_relaxed) && nowMs >= recreateAt_) {\n',
+              '  nextTickAt_ = nowMs + 60\'000;\n'
+              '  if (creating_.load(std::memory_order_relaxed) && creationStartedAt_ > 0 &&\n'
+              '      nowMs - creationStartedAt_ >= kStationheadWebViewCreationTimeoutMs) {\n'
+              '    createCallbackAlive_->store(false, std::memory_order_release);\n'
+              '    creating_ = false;\n'
+              '    creationStartedAt_ = 0;\n'
+              '    SharedWebViewEnvironment::Instance().Invalidate(userDataFolder_);\n'
+              '    ScheduleRecreate(L"WebView2 environment/controller creation timed out", 1\'000);\n'
+              '    nextTickAt_ = nowMs + 1\'000;\n'
+              '    return;\n'
+              '  }\n'
+              '  if (recreating_.load(std::memory_order_relaxed) && nowMs >= recreateAt_) {\n',
+              'abort stalled environment or controller creation')
+          sh_path.write_text(sh, encoding='utf-8')
+
+          webview_path = Path('native/src/sh_webview.cpp')
+          webview = webview_path.read_text(encoding='utf-8')
+          webview = replace_once(
+              webview,
+              'void StationheadPlayer::CloseWebView() {\n'
+              '  createCallbackAlive_->store(false, std::memory_order_release);\n',
+              'void StationheadPlayer::CloseWebView() {\n'
+              '  createCallbackAlive_->store(false, std::memory_order_release);\n'
+              '  creating_ = false;\n'
+              '  creationStartedAt_ = 0;\n',
+              'clear creation watchdog on close')
+          webview_path.write_text(webview, encoding='utf-8')
+
+          combined = '\n'.join(path.read_text(encoding='utf-8') for path in [
+              shared_policy_path, environment_header_path, environment_path,
+              header_path, sh_path, webview_path,
+          ])
+          required = [
+              'kStationheadWebViewCreationTimeoutMs',
+              'void Invalidate(const fs::path& userDataFolder)',
+              'entry.generation != generation',
+              'creationStartedAt_',
+              'environment/controller creation timed out',
+          ]
+          for marker in required:
+              if marker not in combined:
+                  raise SystemExit(f'missing creation-watchdog marker: {marker}')
+          PY
+
+          rm .github/workflows/apply-stationhead-creation-watchdog.yml
+          git diff --check
+
+      - name: Commit creation watchdog
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add native/src/shared_webview_environment.cpp \
+            native/src/shared_webview_environment.h native/src/sh.cpp \
+            native/src/sh.h native/src/sh_shared.h native/src/sh_webview.cpp \
+            .github/workflows/apply-stationhead-creation-watchdog.yml
+          git commit -m "Add Stationhead WebView creation watchdog"
+          git push origin HEAD:${{ github.head_ref }}
