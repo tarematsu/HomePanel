@@ -1,1 +1,1 @@
-native/src/renderer_state.cpp: expected one replacement, found 0: '  width_ = nextWidth;\n    height_ = nextHeight;'
+native/src/web_renderer.h: expected one replacement, found 0: '  struct NativeBackBuffer {\n  HBITMAP bitmap = nullptr;\n  int width = 0;\n  int height = 0;\n};\n\nstruct NativePanelPaintSc'
