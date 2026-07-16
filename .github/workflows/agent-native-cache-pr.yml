@@ -1,0 +1,40 @@
+name: Refactor native renderer responsibilities
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/agent-native-refactor.py"
+      - ".github/workflows/agent-native-cache-pr.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    if: >-
+      github.actor != 'github-actions[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Apply renderer refactor
+        shell: bash
+        run: |
+          python3 .github/agent-native-refactor.py
+          git diff --check
+
+      - name: Commit refactor
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/agent-native-refactor.py .github/workflows/agent-native-cache-pr.yml
+          git add -A
+          git commit -m "Refactor native renderer responsibilities"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
