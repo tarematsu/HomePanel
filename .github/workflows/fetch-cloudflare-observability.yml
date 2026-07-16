@@ -22,8 +22,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       AWS_DEFAULT_REGION: auto
-      R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT }}
-      R2_BUCKET: ${{ vars.CLOUDFLARE_OBSERVABILITY_BUCKET }}
+      R2_BUCKET: cloudflare-observability
       OBJECT_PREFIX: ${{ inputs.prefix }}
       OBJECT_LIMIT: ${{ inputs.limit }}
 
@@ -33,23 +32,49 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN" || { echo "Missing secret CLOUDFLARE_BUILDS_API_TOKEN" >&2; exit 1; }
-          test -n "$R2_ENDPOINT" || { echo "Missing variable CLOUDFLARE_R2_ENDPOINT" >&2; exit 1; }
-          test -n "$R2_BUCKET" || { echo "Missing variable CLOUDFLARE_OBSERVABILITY_BUCKET" >&2; exit 1; }
           [[ "$OBJECT_LIMIT" =~ ^[1-9][0-9]{0,2}$ ]] || { echo "limit must be between 1 and 999" >&2; exit 1; }
 
-      - name: Derive R2 S3 credentials from API token
+      - name: Discover account and derive R2 credentials
         shell: bash
         run: |
           set -euo pipefail
-          response="$(curl --fail-with-body --silent --show-error \
+
+          verify_response="$(curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             https://api.cloudflare.com/client/v4/user/tokens/verify)"
-          token_id="$(jq -er '.result.id' <<<"$response")"
+          token_id="$(jq -er '.result.id' <<<"$verify_response")"
           secret_access_key="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)"
+
+          accounts_response="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts?per_page=50')"
+          mapfile -t account_ids < <(jq -er '.result[].id' <<<"$accounts_response")
+          [ "${#account_ids[@]}" -gt 0 ] || { echo "No Cloudflare account is visible to the API token" >&2; exit 1; }
+
           echo "::add-mask::$token_id"
           echo "::add-mask::$secret_access_key"
+          export AWS_ACCESS_KEY_ID="$token_id"
+          export AWS_SECRET_ACCESS_KEY="$secret_access_key"
+
+          matches=()
+          for account_id in "${account_ids[@]}"; do
+            endpoint="https://${account_id}.r2.cloudflarestorage.com"
+            if aws s3api head-bucket \
+              --endpoint-url "$endpoint" \
+              --bucket "$R2_BUCKET" >/dev/null 2>&1; then
+              matches+=("$account_id")
+            fi
+          done
+
+          [ "${#matches[@]}" -eq 1 ] || {
+            echo "Expected exactly one accessible R2 bucket named $R2_BUCKET; found ${#matches[@]}" >&2
+            exit 1
+          }
+
+          account_id="${matches[0]}"
           echo "AWS_ACCESS_KEY_ID=$token_id" >> "$GITHUB_ENV"
           echo "AWS_SECRET_ACCESS_KEY=$secret_access_key" >> "$GITHUB_ENV"
+          echo "R2_ENDPOINT=https://${account_id}.r2.cloudflarestorage.com" >> "$GITHUB_ENV"
 
       - name: Download newest log objects
         id: download
