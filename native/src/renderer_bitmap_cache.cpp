@@ -100,7 +100,7 @@ HBITMAP Renderer::NativeArtworkBitmap(const std::wstring& url, int width, int he
   std::wstring relative = url.substr(std::size(kDataHostPrefix) - 1);
   if (relative.empty() || relative.find(L"..") != std::wstring::npos) return nullptr;
   for (auto& character : relative) {
-    if (character == L'/') character = L'\';
+    if (character == L'/') character = L'\\';
   }
   return CacheNativeImageBitmap(
       key, DecodeImageFileToBitmap(dataDir_ / relative, width, height));
@@ -196,23 +196,17 @@ HBITMAP Renderer::CachedRadarBitmap(
 }
 
 void Renderer::ResetNativeBitmapCaches() noexcept {
-  for (auto& [hwnd, buffer] : nativeBackBuffers_) {
-    if (buffer.bitmap) DeleteObject(buffer.bitmap);
-  }
-  nativeBackBuffers_.clear();
-  for (auto& [section, cache] : nativeSectionBitmaps_) {
-    if (cache.bitmap) DeleteObject(cache.bitmap);
-  }
-  nativeSectionBitmaps_.clear();
-  for (auto& [key, entry] : nativeImageBitmaps_) {
-    if (entry.bitmap) DeleteObject(entry.bitmap);
-  }
-  nativeImageBitmaps_.clear();
+  const auto deleteBitmaps = [](auto& entries) {
+    for (auto& item : entries) {
+      if (item.second.bitmap) DeleteObject(item.second.bitmap);
+    }
+    entries.clear();
+  };
+  deleteBitmaps(nativeBackBuffers_);
+  deleteBitmaps(nativeSectionBitmaps_);
+  deleteBitmaps(nativeImageBitmaps_);
   nativeImageUseCounter_ = 0;
-  for (auto& [key, entry] : nativeRadarBitmaps_) {
-    if (entry.bitmap) DeleteObject(entry.bitmap);
-  }
-  nativeRadarBitmaps_.clear();
+  deleteBitmaps(nativeRadarBitmaps_);
   nativeRadarBitmapUseCounter_ = 0;
 }
 
