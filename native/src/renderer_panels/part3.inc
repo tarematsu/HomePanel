@@ -122,7 +122,15 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& card) {
   constexpr int kColumnCount = 6;
   constexpr int kRowCount = 2;
   constexpr int kSlotCount = kColumnCount * kRowCount;
-  const size_t count = std::min<size_t>(kSlotCount, hours.size());
+  static constexpr std::array<int, kSlotCount> kWeatherHourOrder{
+      22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  std::array<const WeatherHourData*, kSlotCount> slotHours{};
+  for (const auto& hour : hours) {
+    const auto slot = std::find(kWeatherHourOrder.begin(), kWeatherHourOrder.end(), hour.hour);
+    if (slot != kWeatherHourOrder.end()) {
+      slotHours[static_cast<size_t>(std::distance(kWeatherHourOrder.begin(), slot))] = &hour;
+    }
+  }
 
   HGDIOBJ previousFont = SelectObject(dc, TierFont(FontTier::Small));
   const RECT body = content;
@@ -144,9 +152,10 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& card) {
         columnIndex == kColumnCount - 1 ? body.right : left + columnWidth,
         row == kRowCount - 1 ? body.bottom : top + rowHeight,
     };
+    const WeatherHourData* hourData = slotHours[static_cast<size_t>(i)];
+    if (!hourData) continue;
     const int columnHeight = std::max(1, static_cast<int>(column.bottom - column.top));
-    const bool hasData = i < static_cast<int>(count);
-    const bool hasIcon = hasData && !hours[static_cast<size_t>(i)].icon.empty();
+    const bool hasIcon = !hourData->icon.empty();
 
     const int hourHeight = std::max(1, columnHeight * 18 / 100);
     const int iconSlotHeight = std::max(1, columnHeight * 42 / 100);
@@ -155,8 +164,7 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& card) {
     SetTextColor(dc, kWidgetMuted);
     SelectObject(dc, TierFont(FontTier::Small));
     RECT hourRect{column.left, column.top, column.right, column.top + hourHeight};
-    const std::wstring hour = hasData
-        ? std::to_wstring(hours[static_cast<size_t>(i)].hour) + L"時" : L"--";
+    const std::wstring hour = std::to_wstring(hourData->hour) + L"時";
     DrawTextInRect(dc, hour, hourRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
     RECT iconSlot{column.left, hourRect.bottom, column.right,
@@ -175,8 +183,8 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& card) {
           iconSlot.top + (static_cast<int>(iconSlot.bottom - iconSlot.top) + iconHeight) / 2,
       };
       DrawPremultipliedBitmap(dc,
-          NativeWeatherIconBitmap(hours[static_cast<size_t>(i)].icon,
-                                  IsWeatherNightHour(hours[static_cast<size_t>(i)].hour),
+          NativeWeatherIconBitmap(hourData->icon,
+                                  IsWeatherNightHour(hourData->hour),
                                   iconWidth, iconHeight),
           iconRect);
     }
@@ -186,16 +194,14 @@ void Renderer::DrawWeatherSection(HDC dc, const RECT& card) {
     RECT tempRect{column.left, iconSlot.bottom, column.right,
                   std::min(static_cast<int>(column.bottom),
                            static_cast<int>(iconSlot.bottom) + temperatureHeight)};
-    const std::wstring temp = hasData
-        ? NumberOrDash(hours[static_cast<size_t>(i)].temperature, 0) + L"℃" : L"--";
+    const std::wstring temp = NumberOrDash(hourData->temperature, 0) + L"℃";
     DrawTextInRect(dc, temp, tempRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
-    const double rainMm = hasData ? hours[static_cast<size_t>(i)].rainMm
-                                  : std::numeric_limits<double>::quiet_NaN();
+    const double rainMm = hourData->rainMm;
     SetTextColor(dc, std::isfinite(rainMm) && rainMm > 0 ? kWidgetBlueMuted : kWidgetSubtle);
     SelectObject(dc, TierFont(FontTier::Small));
     RECT rainRect{column.left, tempRect.bottom, column.right, column.bottom};
-    const std::wstring rain = hasData ? NumberOrDash(rainMm, 0) + L"mm" : L"--";
+    const std::wstring rain = NumberOrDash(rainMm, 0) + L"mm";
     DrawTextInRect(dc, rain, rainRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   }
   SelectObject(dc, previousFont);
