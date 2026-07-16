@@ -57,7 +57,8 @@ function numberOrNull(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-const TARGET_HOURS = new Set([5, 6, 7, 8, 9]);
+const EVENING_HOURS = new Set([22, 23]);
+const MORNING_HOURS = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
 function stripHtml(value: string): string {
   return value
@@ -77,21 +78,23 @@ function parseWeatherNews(html: string, now = new Date()): { forecastDate: strin
   if (bodyStart < 0) throw new Error("WeatherNews hourly table was not found");
   const body = html.slice(bodyStart);
   const jst = new Date(now.getTime() + JST_MS);
-  const targetDt = new Date(jst.getTime() + (jst.getUTCHours() >= 9 ? 86_400_000 : 0));
-  const targetDay = targetDt.getUTCDate();
-  const forecastDate = `${targetDt.getUTCMonth() + 1}/${targetDay}`;
+  const nextJst = new Date(jst.getTime() + 86_400_000);
+  const startDay = jst.getUTCDate();
+  const endDay = nextJst.getUTCDate();
+  const forecastDate = `${jst.getUTCMonth() + 1}/${startDay}〜${nextJst.getUTCMonth() + 1}/${endDay}`;
   const hourly: Record<string, unknown> = {};
   const groups = [...body.matchAll(/<div class="wTable__group">([\s\S]*?)(?=<div class="wTable__group">|$)/gi)];
 
   for (const group of groups) {
     const content = group[1] ?? "";
     const day = numberOrNull(content.match(/class="wTable__item">(\d{1,2})日/)?.[1]);
-    if (day !== targetDay) continue;
+    const targetHours = day === startDay ? EVENING_HOURS : day === endDay ? MORNING_HOURS : null;
+    if (!targetHours) continue;
     const rows = [...content.matchAll(/<div class="wTable__row">([\s\S]*?)<\/div>\s*(?=<div class="wTable__row">|<\/div>)/gi)];
     for (const rowMatch of rows) {
       const row = rowMatch[1] ?? "";
       const hour = numberOrNull(row.match(/class="wTable__item time">(\d{1,2})</)?.[1]);
-      if (hour === null || !TARGET_HOURS.has(hour)) continue;
+      if (hour === null || !targetHours.has(hour)) continue;
       const icon = row.match(/wxicon\/(\d+)\.png/i)?.[1] ?? "";
       const rainMm = numberOrNull(row.match(/class="wTable__item r">(-?\d+(?:\.\d+)?)/)?.[1]);
       const temp = numberOrNull(row.match(/class="wTable__item t">(-?\d+(?:\.\d+)?)/)?.[1]);
@@ -103,7 +106,6 @@ function parseWeatherNews(html: string, now = new Date()): { forecastDate: strin
       const pop = explicitPop ?? (rainMm !== null && rainMm > 0 ? 100 : wetIcon ? 60 : 10);
       hourly[String(hour)] = { pop: Math.max(0, Math.min(100, pop)), rainMm, temp, humidity: null, icon };
     }
-    break;
   }
 
   if (!Object.keys(hourly).length) throw new Error("WeatherNews hourly rows were not found");
