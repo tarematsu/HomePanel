@@ -5,6 +5,8 @@
 
 namespace hp {
 
+inline constexpr UINT kRendererActionMessage = WM_APP + 11;
+
 enum class UiAction {
   None,
   AppUpdate,
