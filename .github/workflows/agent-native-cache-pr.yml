@@ -33,20 +33,11 @@ jobs:
           start = source.index(marker) + len(marker)
           end = source.index("\n          PY\n", start)
           lines = source[start:end].splitlines()
-          body = '\n'.join(line[8:] if line.startswith('        ') else line for line in lines) + '\n'
+          body = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
           body = body.replace(
               "raise SystemExit(f'{path}: expected one replacement, found {count}')",
               "raise SystemExit(f'{path}: expected one replacement, found {count}: {old[:120]!r}')")
-          body = body.replace(
-              "  std::vector<SwitchBotDeviceData> switchBotDevices;\n  };''',",
-              "  std::vector<SwitchBotDeviceData> switchBotDevices;\n};''',")
-          body = body.replace(
-              "  uint64_t switchBotRevision = 0;\n  };''')",
-              "  uint64_t switchBotRevision = 0;\n};''')")
-          body = body.replace(
-              "using winrt::Windows::Data::Json::JsonValueType;\n\n  double NumberOrNaN",
-              "using winrt::Windows::Data::Json::JsonValueType;\n\ndouble NumberOrNaN")
-          Path('/tmp/apply_native_cache.py').write_text('if True:\n' + body, encoding='utf-8')
+          Path('/tmp/apply_native_cache.py').write_text(body, encoding='utf-8')
           PY
           set +e
           python3 /tmp/apply_native_cache.py > /tmp/apply-native-cache.log 2>&1
