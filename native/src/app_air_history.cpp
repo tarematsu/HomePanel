@@ -2,6 +2,19 @@
 #include <winrt/Windows.Data.Json.h>
 
 namespace hp {
+namespace {
+constexpr int64_t kAirHistoryWindowMs = 24LL * 60 * 60 * 1000;
+constexpr int64_t kAirHistoryBucketMs = 5LL * 60 * 1000;
+constexpr int64_t kAirHistoryFutureToleranceMs = kAirHistoryBucketMs;
+constexpr size_t kAirHistoryMaxSamples =
+    static_cast<size_t>(kAirHistoryWindowMs / kAirHistoryBucketMs) + 1;
+
+bool ValidAirValues(const AirHistorySample& sample) noexcept {
+  return sample.co2 >= 250 && sample.co2 <= 10000 &&
+      sample.temperature >= -40 && sample.temperature <= 85 &&
+      sample.humidity >= 0 && sample.humidity <= 100;
+}
+}  // namespace
 
 void App::LoadAirHistory() {
   const fs::path path = dataDir_ / L"air-history.json";
@@ -12,7 +25,9 @@ void App::LoadAirHistory() {
     if (text.empty()) return;
     const auto array = winrt::Windows::Data::Json::JsonArray::Parse(Utf8ToWide(text));
     std::vector<AirHistorySample> history;
-    const int64_t cutoff = UnixMillis() - 24 * 60 * 60 * 1000;
+    const int64_t now = UnixMillis();
+    const int64_t cutoff = now - kAirHistoryWindowMs;
+    const int64_t futureLimit = now + kAirHistoryFutureToleranceMs;
     for (auto value : array) {
       if (value.ValueType() != winrt::Windows::Data::Json::JsonValueType::Object) continue;
       const auto item = value.GetObject();
@@ -22,9 +37,8 @@ void App::LoadAirHistory() {
           item.GetNamedNumber(L"temperature", 0),
           item.GetNamedNumber(L"humidity", 0),
       };
-      if (sample.timestamp >= cutoff && sample.co2 >= 250 && sample.co2 <= 10000 &&
-          sample.temperature >= -40 && sample.temperature <= 85 &&
-          sample.humidity >= 0 && sample.humidity <= 100) {
+      if (sample.timestamp >= cutoff && sample.timestamp <= futureLimit &&
+          ValidAirValues(sample)) {
         history.push_back(sample);
       }
     }
@@ -32,6 +46,15 @@ void App::LoadAirHistory() {
               [](const AirHistorySample& left, const AirHistorySample& right) {
                 return left.timestamp < right.timestamp;
               });
+    history.erase(
+        std::unique(history.begin(), history.end(),
+                    [](const AirHistorySample& left, const AirHistorySample& right) {
+                      return left.timestamp == right.timestamp;
+                    }),
+        history.end());
+    if (history.size() > kAirHistoryMaxSamples) {
+      history.erase(history.begin(), history.end() - kAirHistoryMaxSamples);
+    }
     renderState_.airHistory = std::move(history);
   } catch (const std::exception& error) {
     if (logger_) logger_->Warn(L"Air history load failed: " + Utf8ToWide(error.what()));
@@ -65,38 +88,38 @@ void App::SaveAirHistory() const {
 }
 
 void App::UpdateAirHistory(const SensorSnapshot& sensors) {
-  constexpr int64_t historyWindowMs = 24 * 60 * 60 * 1000;
-  constexpr int64_t sampleBucketMs = 5 * 60 * 1000;
-  constexpr size_t maxSamples = static_cast<size_t>(historyWindowMs / sampleBucketMs) + 1;
-  if (!sensors.co2Connected || sensors.observedAt <= 0 || sensors.co2 < 250 ||
-      sensors.co2 > 10000 || sensors.temperatureCorrected < -40 ||
-      sensors.temperatureCorrected > 85 || sensors.humidityCorrected < 0 ||
-      sensors.humidityCorrected > 100) {
+  const int64_t now = UnixMillis();
+  const AirHistorySample sample{
+      sensors.observedAt / kAirHistoryBucketMs * kAirHistoryBucketMs,
+      sensors.co2,
+      sensors.temperatureCorrected,
+      sensors.humidityCorrected,
+  };
+  if (!sensors.co2Connected || sensors.observedAt <= 0 ||
+      sensors.observedAt > now + kAirHistoryFutureToleranceMs ||
+      sample.timestamp < now - kAirHistoryWindowMs || !ValidAirValues(sample)) {
     return;
   }
 
-  const int64_t bucket = sensors.observedAt / sampleBucketMs * sampleBucketMs;
   auto& history = renderState_.airHistory;
   const auto position = std::lower_bound(
-      history.begin(), history.end(), bucket,
-      [](const AirHistorySample& sample, int64_t timestamp) {
-        return sample.timestamp < timestamp;
+      history.begin(), history.end(), sample.timestamp,
+      [](const AirHistorySample& item, int64_t timestamp) {
+        return item.timestamp < timestamp;
       });
-  if (position != history.end() && position->timestamp == bucket) return;
+  if (position != history.end() && position->timestamp == sample.timestamp) return;
 
-  history.insert(position,
-                 {bucket, sensors.co2, sensors.temperatureCorrected,
-                  sensors.humidityCorrected});
-  const int64_t cutoff = UnixMillis() - historyWindowMs;
+  history.insert(position, sample);
+  const int64_t cutoff = now - kAirHistoryWindowMs;
   history.erase(
       history.begin(),
       std::lower_bound(
           history.begin(), history.end(), cutoff,
-          [](const AirHistorySample& sample, int64_t timestamp) {
-            return sample.timestamp < timestamp;
+          [](const AirHistorySample& item, int64_t timestamp) {
+            return item.timestamp < timestamp;
           }));
-  if (history.size() > maxSamples) {
-    history.erase(history.begin(), history.end() - maxSamples);
+  if (history.size() > kAirHistoryMaxSamples) {
+    history.erase(history.begin(), history.end() - kAirHistoryMaxSamples);
   }
   SaveAirHistory();
   MarkRenderStateDirty();
