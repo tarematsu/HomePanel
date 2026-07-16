@@ -70,6 +70,140 @@ JsonObject FirstObject(const JsonObject& object,
   return JsonObject{};
 }
 
+std::optional<bool> FirstBoolean(
+    const JsonObject& object, std::initializer_list<const wchar_t*> names) {
+  for (const wchar_t* name : names) {
+    try {
+      if (object.HasKey(name) &&
+          object.GetNamedValue(name).ValueType() == JsonValueType::Boolean) {
+        return object.GetNamedBoolean(name);
+      }
+    } catch (...) {
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<bool> FirstBooleanAcross(
+    const JsonObject& first, const JsonObject& second, const JsonObject& third,
+    std::initializer_list<const wchar_t*> names) {
+  if (const auto value = FirstBoolean(first, names)) return value;
+  if (const auto value = FirstBoolean(second, names)) return value;
+  return FirstBoolean(third, names);
+}
+
+std::optional<int> FirstInteger(
+    const JsonObject& object, std::initializer_list<const wchar_t*> names) {
+  for (const wchar_t* name : names) {
+    try {
+      if (!object.HasKey(name) ||
+          object.GetNamedValue(name).ValueType() != JsonValueType::Number) {
+        continue;
+      }
+      const double value = object.GetNamedNumber(name);
+      if (!std::isfinite(value) ||
+          value < static_cast<double>(std::numeric_limits<int>::min()) ||
+          value > static_cast<double>(std::numeric_limits<int>::max())) {
+        continue;
+      }
+      return static_cast<int>(std::trunc(value));
+    } catch (...) {
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<int> FirstIntegerAcross(
+    const JsonObject& first, const JsonObject& second, const JsonObject& third,
+    std::initializer_list<const wchar_t*> names) {
+  if (const auto value = FirstInteger(first, names)) return value;
+  if (const auto value = FirstInteger(second, names)) return value;
+  return FirstInteger(third, names);
+}
+
+struct PlaybackContractState {
+  bool queuePlayingPresent = false;
+  bool queuePlaying = false;
+  bool topLevelPlayingPresent = false;
+  bool topLevelPlaying = false;
+  bool broadcasting = false;
+  bool paused = false;
+  bool ended = false;
+  bool stale = false;
+  bool setupRequired = false;
+  bool currentIndexPresent = false;
+  int currentIndex = -1;
+  int currentMarkerIndex = -1;
+  int queueSize = 0;
+};
+
+constexpr int ResolveContractCurrentIndex(const PlaybackContractState& state) {
+  if (state.queueSize <= 0 || state.ended || state.setupRequired) return -1;
+  if (state.currentIndexPresent) {
+    return state.currentIndex >= 0 && state.currentIndex < state.queueSize
+        ? state.currentIndex
+        : -1;
+  }
+  if (state.currentMarkerIndex >= 0 && state.currentMarkerIndex < state.queueSize) {
+    return state.currentMarkerIndex;
+  }
+  const bool legacyPlaying = state.queuePlayingPresent
+      ? state.queuePlaying
+      : (state.topLevelPlayingPresent ? state.topLevelPlaying : state.broadcasting);
+  return legacyPlaying ? 0 : -1;
+}
+
+constexpr bool ResolveContractPlaying(const PlaybackContractState& state,
+                                      int currentIndex) {
+  if (currentIndex < 0 || state.paused || state.ended || state.stale ||
+      state.setupRequired) {
+    return false;
+  }
+  if (state.queuePlayingPresent) return state.queuePlaying;
+  if (state.topLevelPlayingPresent) return state.topLevelPlaying;
+  return state.broadcasting;
+}
+
+constexpr PlaybackContractState EndedQueueContractSample() {
+  PlaybackContractState state;
+  state.queuePlayingPresent = true;
+  state.queuePlaying = false;
+  state.topLevelPlayingPresent = true;
+  state.topLevelPlaying = false;
+  state.broadcasting = true;
+  state.ended = true;
+  state.stale = true;
+  state.currentIndexPresent = true;
+  state.currentIndex = -1;
+  state.queueSize = 60;
+  return state;
+}
+
+constexpr PlaybackContractState ExplicitNoCurrentContractSample() {
+  PlaybackContractState state;
+  state.topLevelPlayingPresent = true;
+  state.topLevelPlaying = true;
+  state.broadcasting = true;
+  state.currentIndexPresent = true;
+  state.currentIndex = -1;
+  state.queueSize = 3;
+  return state;
+}
+
+constexpr PlaybackContractState LegacyBroadcastContractSample() {
+  PlaybackContractState state;
+  state.broadcasting = true;
+  state.queueSize = 3;
+  return state;
+}
+
+static_assert(ResolveContractCurrentIndex(EndedQueueContractSample()) == -1);
+static_assert(!ResolveContractPlaying(EndedQueueContractSample(), -1));
+static_assert(ResolveContractCurrentIndex(ExplicitNoCurrentContractSample()) == -1);
+static_assert(!ResolveContractPlaying(ExplicitNoCurrentContractSample(), -1));
+static_assert(ResolveContractCurrentIndex(LegacyBroadcastContractSample()) == 0);
+static_assert(ResolveContractPlaying(LegacyBroadcastContractSample(), 0));
+
 int64_t EpochMilliseconds(double value) {
   if (!std::isfinite(value) || value <= 0) return 0;
 
@@ -226,79 +360,82 @@ NativePlaybackProjection ParsePlaybackProjection(const fs::path& dataDir,
     const JsonObject queueOwner = queueSource.owner;
     const JsonArray queue = queueSource.queue;
     const JsonObject queueStatus = LocateQueueStatus(value, queueOwner);
+    const JsonObject itemSource = LocateCurrentItem(value, queueOwner);
 
-    const bool valuePlaying = json::Boolean(
-        queueOwner, L"playing", json::Boolean(value, L"playing"));
-    const bool statusPlaying = json::Boolean(queueStatus, L"playing", valuePlaying);
-    const bool statusPaused = json::Boolean(
-        queueStatus, L"is_paused",
-        json::Boolean(queueOwner, L"is_paused", json::Boolean(value, L"is_paused")));
-    const bool broadcasting = json::Boolean(
-        queueOwner, L"is_broadcasting", json::Boolean(value, L"is_broadcasting"));
-    const bool playing = (statusPlaying || broadcasting) && !statusPaused;
+    const std::optional<bool> queuePlaying = FirstBoolean(queueStatus, {L"playing"});
+    std::optional<bool> topLevelPlaying = FirstBoolean(value, {L"playing"});
+    if (!topLevelPlaying) topLevelPlaying = FirstBoolean(queueOwner, {L"playing"});
+    const bool statusPaused = FirstBooleanAcross(
+        queueStatus, queueOwner, value, {L"is_paused", L"isPaused"}).value_or(false);
+    const bool broadcasting = FirstBooleanAcross(
+        value, queueOwner, queueStatus,
+        {L"is_broadcasting", L"isBroadcasting"}).value_or(false);
+    const bool ended = FirstBooleanAcross(
+        queueStatus, queueOwner, value, {L"ended"}).value_or(false);
+    const bool stale = FirstBooleanAcross(
+        value, queueOwner, queueStatus, {L"stale"}).value_or(false);
+    const bool setupRequired = FirstBooleanAcross(
+        value, queueOwner, queueStatus,
+        {L"setup_required", L"setupRequired"}).value_or(false);
+
+    std::optional<int> explicitCurrentIndex = FirstIntegerAcross(
+        queueStatus, queueOwner, value, {L"current_index", L"currentIndex"});
+    int currentMarkerIndex = -1;
+    for (uint32_t queueIndex = 0; queueIndex < queue.Size(); ++queueIndex) {
+      try {
+        if (queue.GetAt(queueIndex).ValueType() == JsonValueType::Object &&
+            json::Boolean(queue.GetAt(queueIndex).GetObject(), L"is_current")) {
+          currentMarkerIndex = static_cast<int>(queueIndex);
+          break;
+        }
+      } catch (...) {
+      }
+    }
+    if (queue.Size() == 0 && itemSource.Size() != 0) currentMarkerIndex = 0;
+
+    const int contractQueueSize = queue.Size() > 0
+        ? static_cast<int>(std::min<uint32_t>(
+              queue.Size(), static_cast<uint32_t>(std::numeric_limits<int>::max())))
+        : (itemSource.Size() != 0 ? 1 : 0);
+    PlaybackContractState contract;
+    contract.queuePlayingPresent = queuePlaying.has_value();
+    contract.queuePlaying = queuePlaying.value_or(false);
+    contract.topLevelPlayingPresent = topLevelPlaying.has_value();
+    contract.topLevelPlaying = topLevelPlaying.value_or(false);
+    contract.broadcasting = broadcasting;
+    contract.paused = statusPaused;
+    contract.ended = ended;
+    contract.stale = stale;
+    contract.setupRequired = setupRequired;
+    contract.currentIndexPresent = explicitCurrentIndex.has_value();
+    contract.currentIndex = explicitCurrentIndex.value_or(-1);
+    contract.currentMarkerIndex = currentMarkerIndex;
+    contract.queueSize = contractQueueSize;
+
+    const int currentIndex = ResolveContractCurrentIndex(contract);
+    const bool playing = ResolveContractPlaying(contract, currentIndex);
 
     const int64_t sampledAt = EpochMilliseconds(FirstNumberAcross(
         value, queueOwner, queueStatus,
-        {L"sampledAt", L"monitorSampledAt", L"updatedAt", L"generated_at",
-         L"latest_observed_at", L"queue_observed_at"}));
+        {L"generated_at", L"queue_observed_at", L"latest_observed_at",
+         L"sampledAt", L"monitorSampledAt", L"updatedAt"}));
     const int64_t serverReferenceAt = EpochMilliseconds(FirstNumberAcross(
         value, queueOwner, queueStatus,
-        {L"generated_at", L"latest_observed_at", L"queue_observed_at", L"sampledAt",
-         L"monitorSampledAt", L"updatedAt"}));
+        {L"generated_at", L"queue_observed_at", L"latest_observed_at",
+         L"sampledAt", L"monitorSampledAt", L"updatedAt"}));
     const int64_t anchorAt = EpochMilliseconds(FirstNumberAcross(
-        value, queueOwner, queueStatus, {L"anchorAt", L"anchor_at"}));
+        value, queueOwner, queueStatus, {L"anchor_at", L"anchorAt"}));
     const int64_t queueEndAt = EpochMilliseconds(FirstNumberAcross(
-        value, queueOwner, queueStatus, {L"queueEndAt", L"queue_end_at"}));
+        value, queueOwner, queueStatus, {L"queue_end_at", L"queueEndAt"}));
     int64_t durationMs = static_cast<int64_t>(std::max(
         0.0, FirstNumberAcross(value, queueOwner, queueStatus,
-                               {L"durationMs", L"duration_ms", L"trackDurationMs"})));
+                               {L"duration_ms", L"durationMs", L"trackDurationMs"})));
     int64_t progressMs = static_cast<int64_t>(std::max(
         0.0, FirstNumberAcross(value, queueOwner, queueStatus,
-                               {L"progressMs", L"progress_ms", L"positionMs"})));
+                               {L"progress_ms", L"progressMs", L"positionMs"})));
 
-    const JsonObject itemSource = LocateCurrentItem(value, queueOwner);
     if (queue.Size() > 0) {
-      int index = static_cast<int>(FirstNumberOr(
-          value, {L"currentIndex", L"current_index"},
-          FirstNumberOr(queueOwner, {L"currentIndex", L"current_index"},
-                        FirstNumberOr(queueStatus, {L"currentIndex", L"current_index"}, -1))));
-      if (index < 0 || index >= static_cast<int>(queue.Size())) {
-        index = 0;
-        for (uint32_t queueIndex = 0; queueIndex < queue.Size(); ++queueIndex) {
-          try {
-            if (queue.GetAt(queueIndex).ValueType() == JsonValueType::Object &&
-                json::Boolean(queue.GetAt(queueIndex).GetObject(), L"is_current")) {
-              index = static_cast<int>(queueIndex);
-              break;
-            }
-          } catch (...) {
-          }
-        }
-      }
-
-      if (progressMs <= 0 && index >= 0 && index < static_cast<int>(queue.Size())) {
-        try {
-          if (queue.GetAt(index).ValueType() == JsonValueType::Object) {
-            progressMs = static_cast<int64_t>(std::max(
-                0.0, FirstNumber(queue.GetAt(index).GetObject(),
-                                 {L"progressMs", L"progress_ms", L"positionMs"})));
-          }
-        } catch (...) {
-        }
-      }
-
-      int64_t elapsed = progressMs;
-      if (playing) {
-        if (anchorAt > 0 && serverReferenceAt > 0) {
-          elapsed = std::max<int64_t>(0, serverReferenceAt - anchorAt) +
-              std::max<int64_t>(0, fetchedAt - serverReferenceAt);
-        } else if (anchorAt > 0) {
-          elapsed = std::max<int64_t>(0, fetchedAt - anchorAt);
-        } else if (sampledAt > 0) {
-          elapsed += std::max<int64_t>(0, fetchedAt - sampledAt);
-        }
-      }
-
+      projection.queue.reserve(queue.Size());
       for (uint32_t queueIndex = 0; queueIndex < queue.Size(); ++queueIndex) {
         try {
           if (queue.GetAt(queueIndex).ValueType() == JsonValueType::Object) {
@@ -310,34 +447,68 @@ NativePlaybackProjection ParsePlaybackProjection(const fs::path& dataDir,
         }
         projection.queue.emplace_back();
       }
-      projection.currentIndex = std::clamp(index, 0, static_cast<int>(queue.Size()) - 1);
-      projection.progressMs = std::max<int64_t>(0, elapsed);
+
+      if (currentIndex >= 0 && currentIndex < static_cast<int>(queue.Size())) {
+        if (progressMs <= 0) {
+          try {
+            if (queue.GetAt(currentIndex).ValueType() == JsonValueType::Object) {
+              progressMs = static_cast<int64_t>(std::max(
+                  0.0, FirstNumber(queue.GetAt(currentIndex).GetObject(),
+                                   {L"progress_ms", L"progressMs", L"positionMs"})));
+            }
+          } catch (...) {
+          }
+        }
+        if (durationMs <= 0 && currentIndex < static_cast<int>(projection.queue.size())) {
+          durationMs = projection.queue[static_cast<size_t>(currentIndex)].durationMs;
+        }
+
+        int64_t elapsed = progressMs;
+        if (playing) {
+          if (anchorAt > 0 && serverReferenceAt > 0) {
+            elapsed = std::max<int64_t>(0, serverReferenceAt - anchorAt) +
+                std::max<int64_t>(0, fetchedAt - serverReferenceAt);
+          } else if (anchorAt > 0) {
+            elapsed = std::max<int64_t>(0, fetchedAt - anchorAt);
+          } else if (sampledAt > 0) {
+            elapsed += std::max<int64_t>(0, fetchedAt - sampledAt);
+          }
+        }
+        projection.progressMs = std::max<int64_t>(0, elapsed);
+      }
+      projection.currentIndex = currentIndex;
     } else if (itemSource.Size() != 0) {
       NativePlaybackTrack track = NormalizeTrack(dataDir, itemSource);
       if (durationMs > 0) track.durationMs = durationMs;
-      const int64_t expectedEndAt = EpochMilliseconds(FirstNumberAcross(
-          value, queueOwner, queueStatus, {L"expectedEndAt", L"expected_end_at"}));
-      if (track.durationMs > 0 && expectedEndAt > 0) {
-        progressMs = track.durationMs -
-            std::max<int64_t>(0, expectedEndAt + kPlaybackTransitionHoldMs - fetchedAt);
-      } else if (playing && sampledAt > 0) {
-        progressMs += std::max<int64_t>(0, fetchedAt - sampledAt);
+      if (currentIndex >= 0) {
+        const int64_t expectedEndAt = EpochMilliseconds(FirstNumberAcross(
+            value, queueOwner, queueStatus, {L"expected_end_at", L"expectedEndAt"}));
+        if (track.durationMs > 0 && expectedEndAt > 0) {
+          progressMs = track.durationMs -
+              std::max<int64_t>(0, expectedEndAt + kPlaybackTransitionHoldMs - fetchedAt);
+        } else if (playing && sampledAt > 0) {
+          progressMs += std::max<int64_t>(0, fetchedAt - sampledAt);
+        }
+        if (track.durationMs > 0) {
+          progressMs = std::clamp<int64_t>(progressMs, 0, track.durationMs);
+        }
+        projection.currentIndex = 0;
+        projection.progressMs = std::max<int64_t>(0, progressMs);
       }
-      if (track.durationMs > 0) {
-        progressMs = std::clamp<int64_t>(progressMs, 0, track.durationMs);
-      }
-      projection.currentIndex = 0;
-      projection.progressMs = std::max<int64_t>(0, progressMs);
       projection.queue.push_back(std::move(track));
     }
 
-    projection.available = std::any_of(
+    const bool hasTrackData = std::any_of(
         projection.queue.begin(), projection.queue.end(),
         [](const NativePlaybackTrack& track) {
           return !track.title.empty() || !track.artist.empty() ||
               !track.artwork.empty() || track.durationMs > 0;
         });
+    projection.available = hasTrackData || stale || ended || setupRequired;
     projection.playing = playing;
+    projection.stale = stale;
+    projection.ended = ended;
+    projection.setupRequired = setupRequired;
     projection.sampledAt = fetchedAt;
     projection.anchorAt = playing ? fetchedAt - projection.progressMs : 0;
     if (queueEndAt > 0 && serverReferenceAt > 0) {
