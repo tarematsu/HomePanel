@@ -98,10 +98,11 @@ void ResetCursor(ProjectionCursor& cursor,
 
 ProjectedTrackPosition ResolveProjectedTrackPosition(const NativePlaybackProjection& projection,
                                                      int64_t nowMs) {
-  const size_t startIndex = projection.currentIndex > 0 &&
-          projection.currentIndex < static_cast<int>(projection.queue.size())
+  const bool hasCurrentTrack = projection.currentIndex >= 0 &&
+      projection.currentIndex < static_cast<int>(projection.queue.size());
+  const size_t startIndex = hasCurrentTrack
       ? static_cast<size_t>(projection.currentIndex)
-      : 0;
+      : projection.queue.size();
   const int64_t elapsed = ProjectedElapsedMs(projection, nowMs);
   if (!projection.playing || projection.queue.empty()) {
     return {startIndex, elapsed};
@@ -127,11 +128,13 @@ ProjectedTrackPosition ResolveProjectedTrackPosition(const NativePlaybackProject
 }
 
 bool PlaybackEndedWithoutNextTrack(const NativePlaybackProjection& projection, int64_t nowMs) {
-  if (!projection.available || !projection.playing || projection.queue.empty()) return false;
-  const size_t startIndex = projection.currentIndex >= 0 &&
-          projection.currentIndex < static_cast<int>(projection.queue.size())
-      ? static_cast<size_t>(projection.currentIndex)
-      : 0;
+  if (!projection.available || projection.setupRequired) return false;
+  if (projection.ended) return true;
+  if (!projection.playing || projection.queue.empty() || projection.currentIndex < 0 ||
+      projection.currentIndex >= static_cast<int>(projection.queue.size())) {
+    return false;
+  }
+  const size_t startIndex = static_cast<size_t>(projection.currentIndex);
   if (!TrackHasIdentity(projection.queue[startIndex])) return false;
   if (projection.queueEndAt > 0 && nowMs >= projection.queueEndAt) return true;
 
@@ -146,9 +149,15 @@ NativePlaybackRender Renderer::ResolveNativePlaybackLocked(size_t source, int64_
   NativePlaybackRender render;
   if (source >= nativePlaybackUpdates_.size()) return render;
   const NativePlaybackProjection& projection = nativePlaybackUpdates_[source].projection;
-  if (!projection.available || projection.queue.empty()) return render;
-  render.available = true;
+  render.available = projection.available;
   render.playing = projection.playing;
+  render.stale = projection.stale;
+  render.ended = projection.ended;
+  render.setupRequired = projection.setupRequired;
+  if (!projection.available || projection.queue.empty() || projection.currentIndex < 0 ||
+      projection.currentIndex >= static_cast<int>(projection.queue.size())) {
+    return render;
+  }
   if (projection.playing && projection.queueEndAt > 0 && nowMs >= projection.queueEndAt) {
     return render;
   }
@@ -157,7 +166,7 @@ NativePlaybackRender Renderer::ResolveNativePlaybackLocked(size_t source, int64_
   if (position.index >= projection.queue.size()) return render;
 
   render.track = projection.queue[position.index];
-  render.hasTrack = !render.track.title.empty();
+  render.hasTrack = TrackHasIdentity(render.track);
   render.progressMs = std::max<int64_t>(0, position.elapsedMs);
   if (render.track.durationMs > 0) {
     render.progressMs = std::min(render.progressMs, render.track.durationMs);
@@ -181,6 +190,11 @@ NativePlaybackFeedStatus Renderer::NativePlaybackFeedStatusFor(size_t source,
   const NativePlaybackProjection& projection = update.projection;
   status.available = projection.available;
   status.playing = projection.playing;
+  if (projection.currentIndex >= 0 &&
+      projection.currentIndex < static_cast<int>(projection.queue.size())) {
+    status.hasTrack = TrackHasIdentity(
+        projection.queue[static_cast<size_t>(projection.currentIndex)]);
+  }
   status.endedWithoutNextTrack = PlaybackEndedWithoutNextTrack(projection, nowMs);
   status.contentRevision = update.contentRevision;
   return status;
@@ -195,7 +209,10 @@ Renderer::NativePlaybackTickState Renderer::NativePlaybackTickStateFor(int64_t n
   const NativePlaybackUpdate& update = nativePlaybackUpdates_[state.source];
   const NativePlaybackProjection& projection = update.projection;
   state.contentRevision = update.contentRevision;
-  if (!projection.available || projection.queue.empty()) return state;
+  if (!projection.available || projection.queue.empty() || projection.currentIndex < 0 ||
+      projection.currentIndex >= static_cast<int>(projection.queue.size())) {
+    return state;
+  }
   if (projection.playing && projection.queueEndAt > 0 && nowMs >= projection.queueEndAt) {
     return state;
   }

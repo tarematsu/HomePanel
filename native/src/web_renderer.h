@@ -52,7 +52,11 @@ struct NativePlaybackTrack {
 struct NativePlaybackProjection {
   bool available = false;
   bool playing = false;
-  int currentIndex = 0;
+  bool stale = false;
+  bool ended = false;
+  bool setupRequired = false;
+  std::wstring queueRevision;
+  int currentIndex = -1;
   int64_t progressMs = 0;
   int64_t anchorAt = 0;
   int64_t sampledAt = 0;
@@ -65,6 +69,9 @@ struct NativePlaybackRender {
   bool available = false;
   bool hasTrack = false;
   bool playing = false;
+  bool stale = false;
+  bool ended = false;
+  bool setupRequired = false;
   int64_t progressMs = 0;
   NativePlaybackTrack track;
 };

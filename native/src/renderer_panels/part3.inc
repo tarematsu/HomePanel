@@ -353,9 +353,16 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
       : nativeStationhead_.audioPlaying ? L"再生中"
       : nativeStationhead_.created ? L"接続中"
       : L"起動待ち";
-  const std::wstring& rowDetail = sharedPlayback.available && !sharedPlayback.hasTrack
-      ? L"次の曲を待機中"
-      : detail;
+  std::wstring rowDetail = detail;
+  if (sharedPlayback.setupRequired) {
+    rowDetail = L"再生設定待ち";
+  } else if (sharedPlayback.ended) {
+    rowDetail = sharedPlayback.stale ? L"キュー終了・情報遅延" : L"キュー終了";
+  } else if (sharedPlayback.stale) {
+    rowDetail = L"再生情報を更新待ち";
+  } else if (sharedPlayback.available && !sharedPlayback.hasTrack) {
+    rowDetail = L"次の曲を待機中";
+  }
 
   SetTextColor(dc, kWidgetText);
   SelectObject(dc, TierFont(FontTier::Medium));
