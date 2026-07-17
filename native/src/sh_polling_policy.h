@@ -251,6 +251,8 @@ inline std::wstring StationheadAutoplayScript(const wchar_t* globalName,
                                                const wchar_t* messagePrefix) {
   std::wstring script = StationheadAudioOnlyUiScript();
   script.push_back(L'\n');
+  script.append(StationheadBlankPageRecoveryScript());
+  script.push_back(L'\n');
   script.append(StationheadAutoplayScriptBase(globalName, messagePrefix));
   return script;
 }
