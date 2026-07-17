@@ -9,6 +9,7 @@ on:
     paths:
       - ".github/workflows/radar-frames.yml"
       - ".github/scripts/build-radar-frames.py"
+      - ".github/scripts/test_build_radar_frames.py"
 
 permissions:
   contents: read
@@ -57,6 +58,9 @@ jobs:
           python -m pip install --disable-pip-version-check "Pillow==11.3.0"
           npm ci --no-audit --no-fund
         working-directory: cloud
+
+      - name: Test radar frame builder
+        run: python .github/scripts/test_build_radar_frames.py
 
       - name: Resolve Cloudflare settings
         id: resolve

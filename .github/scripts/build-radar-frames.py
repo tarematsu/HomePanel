@@ -28,6 +28,7 @@ JMA_TILE_URL = (
     "{base_time}/none/{valid_time}/surf/hrpns/{zoom}/{x}/{y}.png"
 )
 USER_AGENT = "HomePanel-Radar-GitHub-Actions/1.0"
+TILE_SIZE = 256
 SOURCE_WIDTH = 480
 SOURCE_HEIGHT = 320
 OUTPUT_WIDTH = 1920
@@ -68,14 +69,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def fetch_bytes(url: str, *, attempts: int = 3) -> bytes:
+def fetch_bytes(url: str, *, attempts: int = 3, missing_ok: bool = False) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 return response.read()
-        except (OSError, urllib.error.URLError, urllib.error.HTTPError) as error:
+        except urllib.error.HTTPError as error:
+            if missing_ok and error.code == 404:
+                return b""
+            last_error = error
+            if attempt + 1 < attempts:
+                time.sleep(1.5 * (attempt + 1))
+        except (OSError, urllib.error.URLError) as error:
             last_error = error
             if attempt + 1 < attempts:
                 time.sleep(1.5 * (attempt + 1))
@@ -160,17 +167,22 @@ def load_entries() -> list[TimeEntry]:
 
 def tile_layout(lat: float, lon: float, zoom: int) -> list[Tile]:
     scale = 2**zoom
-    world_x = (lon + 180.0) / 360.0 * scale * 256.0
+    world_x = (lon + 180.0) / 360.0 * scale * TILE_SIZE
     latitude = max(-85.05112878, min(85.05112878, lat)) * math.pi / 180.0
-    world_y = (1.0 - math.asinh(math.tan(latitude)) / math.pi) / 2.0 * scale * 256.0
+    world_y = (1.0 - math.asinh(math.tan(latitude)) / math.pi) / 2.0 * scale * TILE_SIZE
     left = world_x - SOURCE_WIDTH / 2.0
     top = world_y - SOURCE_HEIGHT / 2.0
-    min_x = math.floor(left / 256.0)
-    max_x = math.floor((left + SOURCE_WIDTH - 1) / 256.0)
-    min_y = math.floor(top / 256.0)
-    max_y = math.floor((top + SOURCE_HEIGHT - 1) / 256.0)
+    min_x = math.floor(left / TILE_SIZE)
+    max_x = math.floor((left + SOURCE_WIDTH - 1) / TILE_SIZE)
+    min_y = math.floor(top / TILE_SIZE)
+    max_y = math.floor((top + SOURCE_HEIGHT - 1) / TILE_SIZE)
     return [
-        Tile(x=x, y=y, dest_x=round(x * 256 - left), dest_y=round(y * 256 - top))
+        Tile(
+            x=x,
+            y=y,
+            dest_x=round(x * TILE_SIZE - left),
+            dest_y=round(y * TILE_SIZE - top),
+        )
         for y in range(min_y, max_y + 1)
         for x in range(min_x, max_x + 1)
     ]
@@ -181,9 +193,16 @@ def decode_png(data: bytes) -> Image.Image:
         return image.convert("RGBA")
 
 
+def fetch_radar_tile(url: str) -> Image.Image:
+    data = fetch_bytes(url, missing_ok=True)
+    if not data:
+        return Image.new("RGBA", (TILE_SIZE, TILE_SIZE), (0, 0, 0, 0))
+    return decode_png(data)
+
+
 def fetch_tiles(urls: list[str]) -> list[Image.Image]:
     with ThreadPoolExecutor(max_workers=min(8, len(urls))) as executor:
-        return list(executor.map(lambda url: decode_png(fetch_bytes(url)), urls))
+        return list(executor.map(fetch_radar_tile, urls))
 
 
 def load_layer(path: Path) -> Image.Image:
@@ -247,8 +266,8 @@ def render_frame(
     radar_tiles = fetch_tiles(radar_urls)
     scale_x = OUTPUT_WIDTH / SOURCE_WIDTH
     scale_y = OUTPUT_HEIGHT / SOURCE_HEIGHT
-    tile_width = math.ceil(256 * scale_x)
-    tile_height = math.ceil(256 * scale_y)
+    tile_width = math.ceil(TILE_SIZE * scale_x)
+    tile_height = math.ceil(TILE_SIZE * scale_y)
     for tile, image in zip(layout, radar_tiles, strict=True):
         resized = image.resize((tile_width, tile_height), Image.Resampling.LANCZOS)
         alpha_composite_at(
