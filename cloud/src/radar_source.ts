@@ -5,15 +5,17 @@ import type { Env, SourceResult } from "./sources";
 const DEFAULT_RADAR_CENTER = { lat: 35.8923181, lon: 139.4858691 };
 const DEFAULT_RADAR_ZOOM = 10;
 const RADAR_TILE_URL_LIFETIME_SECONDS = 30 * 60;
-const RADAR_HISTORY_WINDOW_MS = 60 * 60 * 1000;
+const RADAR_FORECAST_WINDOW_MS = 60 * 60 * 1000;
 const RADAR_FRAME_INTERVAL_MS = 5 * 1000;
 const RADAR_FRAME_PREFIX = "radar/frames/";
 const RADAR_MANIFEST_KEY = "radar/manifest.json";
 const RADAR_MANIFEST_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const RADAR_OUTPUT_WIDTH = 1920;
 const RADAR_OUTPUT_HEIGHT = 1280;
+const JMA_OBSERVED_TIMES_URL = "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N1.json";
+const JMA_FORECAST_TIMES_URL = "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N2.json";
 
-type TimeEntry = { basetime: string; validtime: string; elements?: string[] };
+export type RadarTimeEntry = { basetime: string; validtime: string; elements?: string[] };
 type RadarTileLayout = { x: number; y: number; destX: number; destY: number };
 type RadarManifestFrame = {
   baseTime: string;
@@ -29,6 +31,37 @@ function jmaTimestampToMillis(value: string): number {
     Number(value.slice(0, 4)), Number(value.slice(4, 6)) - 1, Number(value.slice(6, 8)),
     Number(value.slice(8, 10)), Number(value.slice(10, 12)), Number(value.slice(12, 14)),
   );
+}
+
+export function selectRadarForecastEntries(
+  observed: RadarTimeEntry[],
+  forecast: RadarTimeEntry[],
+): RadarTimeEntry[] {
+  const observedAvailable = observed
+    .filter(entry => entry.elements?.includes("hrpns") && jmaTimestampToMillis(entry.validtime) > 0)
+    .sort((a, b) => a.validtime.localeCompare(b.validtime));
+  const forecastAvailable = forecast
+    .filter(entry => entry.elements?.includes("hrpns") && jmaTimestampToMillis(entry.validtime) > 0);
+  const forecastBaseTimes = new Set(forecastAvailable.map(entry => entry.basetime));
+  const current = observedAvailable
+    .slice()
+    .reverse()
+    .find(entry => entry.basetime === entry.validtime && forecastBaseTimes.has(entry.basetime));
+  if (!current) return [];
+
+  const currentAt = jmaTimestampToMillis(current.validtime);
+  const forecastEnd = currentAt + RADAR_FORECAST_WINDOW_MS;
+  const futureByValidTime = new Map<string, RadarTimeEntry>();
+  for (const entry of forecastAvailable) {
+    if (entry.basetime !== current.basetime) continue;
+    const validAt = jmaTimestampToMillis(entry.validtime);
+    if (validAt > currentAt && validAt <= forecastEnd) {
+      futureByValidTime.set(entry.validtime, entry);
+    }
+  }
+  const future = [...futureByValidTime.values()]
+    .sort((a, b) => a.validtime.localeCompare(b.validtime));
+  return future.length ? [current, ...future] : [];
 }
 
 function radarTileLayout(lat: number, lon: number, zoom: number, width: number, height: number): RadarTileLayout[] {
@@ -108,10 +141,14 @@ async function radarFromManifest(env: Env): Promise<SourceResult | null> {
   if (!value || typeof value !== "object") return null;
   const root = value as Record<string, unknown>;
   const generatedAt = typeof root.generatedAt === "string" ? Date.parse(root.generatedAt) : Number.NaN;
+  const currentAt = typeof root.currentAt === "number" ? root.currentAt : Number.NaN;
   const now = Date.now();
   if (!Number.isFinite(generatedAt)
+      || !Number.isFinite(currentAt)
       || generatedAt > now + 5 * 60 * 1000
-      || now - generatedAt > RADAR_MANIFEST_MAX_AGE_MS) {
+      || currentAt > now + 5 * 60 * 1000
+      || now - generatedAt > RADAR_MANIFEST_MAX_AGE_MS
+      || now - currentAt > RADAR_MANIFEST_MAX_AGE_MS) {
     return null;
   }
 
@@ -120,10 +157,14 @@ async function radarFromManifest(env: Env): Promise<SourceResult | null> {
     .map(manifestFrame)
     .filter((frame): frame is RadarManifestFrame => frame !== null)
     .sort((a, b) => a.validAt - b.validAt);
-  const latest = parsedFrames.at(-1);
-  if (!latest || now - latest.validAt > RADAR_MANIFEST_MAX_AGE_MS) return null;
-  const frames = parsedFrames.filter(frame => frame.validAt >= latest.validAt - RADAR_HISTORY_WINDOW_MS);
-  if (!frames.length) return null;
+  const currentFrame = parsedFrames.find(frame => frame.validAt === currentAt && frame.baseTime === frame.validTime);
+  if (!currentFrame) return null;
+  const frames = parsedFrames.filter(frame => (
+    frame.baseTime === currentFrame.baseTime
+      && frame.validAt >= currentAt
+      && frame.validAt <= currentAt + RADAR_FORECAST_WINDOW_MS
+  ));
+  if (frames.length < 2) return null;
 
   const centerValue = root.center;
   const centerRoot = centerValue && typeof centerValue === "object"
@@ -136,7 +177,7 @@ async function radarFromManifest(env: Env): Promise<SourceResult | null> {
   const zoom = Math.trunc(manifestNumber(root, "zoom", DEFAULT_RADAR_ZOOM, 4, 14));
   const provider = typeof root.provider === "string" && root.provider.trim()
     ? root.provider.trim()
-    : "JMA radar rendered by GitHub Actions and cached in Cloudflare R2";
+    : "JMA current radar and one-hour forecast rendered by GitHub Actions and cached in Cloudflare R2";
 
   return {
     source: "radar",
@@ -148,7 +189,7 @@ async function radarFromManifest(env: Env): Promise<SourceResult | null> {
       outputHeight: RADAR_OUTPUT_HEIGHT,
       center,
       zoom,
-      historyWindowMs: RADAR_HISTORY_WINDOW_MS,
+      forecastWindowMs: RADAR_FORECAST_WINDOW_MS,
       frameIntervalMs: RADAR_FRAME_INTERVAL_MS,
       playbackRate: 1,
       frames: frames.map(frame => ({
@@ -159,21 +200,18 @@ async function radarFromManifest(env: Env): Promise<SourceResult | null> {
       })),
       legend: [0, 1, 2, 4, 8, 16, 32, 64],
     },
-    observedAt: generatedAt,
+    observedAt: currentAt,
   };
 }
 
 async function radarFromJmaTiles(env: Env): Promise<SourceResult> {
-  const observed = await fetchJson<TimeEntry[]>(
-    "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N1.json",
-  );
-  const available = observed
-    .filter(entry => entry.elements?.includes("hrpns"))
-    .sort((a, b) => a.validtime.localeCompare(b.validtime));
-  const current = available.at(-1);
-  if (!current) throw new Error("JMA nowcast current frame is unavailable");
-  const currentAt = jmaTimestampToMillis(current.validtime);
-  const historyStart = currentAt - RADAR_HISTORY_WINDOW_MS;
+  const [observed, forecast] = await Promise.all([
+    fetchJson<RadarTimeEntry[]>(JMA_OBSERVED_TIMES_URL),
+    fetchJson<RadarTimeEntry[]>(JMA_FORECAST_TIMES_URL),
+  ]);
+  const entries = selectRadarForecastEntries(observed, forecast);
+  if (entries.length < 2) throw new Error("JMA current-to-one-hour forecast frames are unavailable");
+  const currentAt = jmaTimestampToMillis(entries[0]!.validtime);
   const width = 480, height = 320;
   const zoom = Math.trunc(envNumber(env.RADAR_ZOOM, DEFAULT_RADAR_ZOOM, 4, 14));
   const center = {
@@ -181,10 +219,6 @@ async function radarFromJmaTiles(env: Env): Promise<SourceResult> {
     lon: envNumber(env.RADAR_CENTER_LON, DEFAULT_RADAR_CENTER.lon, -180, 180),
   };
   const layout = radarTileLayout(center.lat, center.lon, zoom, width, height);
-  const entries = available.filter(entry => {
-    const validAt = jmaTimestampToMillis(entry.validtime);
-    return validAt >= historyStart && validAt <= currentAt;
-  });
   const expires = Math.floor(Date.now() / 1000) + RADAR_TILE_URL_LIFETIME_SECONDS;
   const frames = await Promise.all(entries.map(async entry => ({
     baseTime: entry.basetime,
@@ -198,18 +232,18 @@ async function radarFromJmaTiles(env: Env): Promise<SourceResult> {
   return {
     source: "radar",
     payload: {
-      provider: "JMA High-resolution Precipitation Nowcast via Cloudflare Cache",
+      provider: "JMA current radar and one-hour forecast via Cloudflare Cache",
       width,
       height,
       center,
       zoom,
-      historyWindowMs: RADAR_HISTORY_WINDOW_MS,
+      forecastWindowMs: RADAR_FORECAST_WINDOW_MS,
       frameIntervalMs: RADAR_FRAME_INTERVAL_MS,
       playbackRate: 1,
       frames,
       legend: [0, 1, 2, 4, 8, 16, 32, 64],
     },
-    observedAt: Date.now(),
+    observedAt: currentAt,
   };
 }
 
