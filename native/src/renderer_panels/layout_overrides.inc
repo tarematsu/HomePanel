@@ -40,7 +40,7 @@ MainSections SplitRearrangedMainSections(const RECT& client) {
 
 RECT ClockControlsContent(const RECT& card) {
   const RECT content = CardContentRect(card);
-  RECT controls{content.left, content.top + SpanY(content, 58), content.right, content.bottom};
+  RECT controls{content.left, content.top + SpanY(content, 580), content.right, content.bottom};
   if (controls.bottom <= controls.top) controls.bottom = controls.top + 1;
   return controls;
 }
@@ -53,8 +53,8 @@ ControlsRects RearrangedControlsFromContent(const RECT&) {
   DrawSectionCard((dc), (card)); \
   const RECT hpClockContent = CardContentRect((card)); \
   SYSTEMTIME hpNow{}; GetLocalTime(&hpNow); \
-  RECT hpDateRect{hpClockContent.left, hpClockContent.top, hpClockContent.right, hpClockContent.top + SpanY(hpClockContent, 18)}; \
-  RECT hpTimeRect{hpClockContent.left, hpDateRect.bottom, hpClockContent.right, hpClockContent.top + SpanY(hpClockContent, 55)}; \
+  RECT hpDateRect{hpClockContent.left, hpClockContent.top, hpClockContent.right, hpClockContent.top + SpanY(hpClockContent, 180)}; \
+  RECT hpTimeRect{hpClockContent.left, hpDateRect.bottom, hpClockContent.right, hpClockContent.top + SpanY(hpClockContent, 550)}; \
   HGDIOBJ hpPreviousFont = SelectObject((dc), TierFont(FontTier::Medium)); \
   SetTextColor((dc), kWidgetMuted); \
   DrawTextInRect((dc), DateText(hpNow), hpDateRect, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER); \
