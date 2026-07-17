@@ -18,7 +18,9 @@ async function clearRadarObjects(): Promise<void> {
   const bucket = (env as unknown as Env).UPDATE_BUCKET!;
   let cursor: string | undefined;
   do {
-    const listed = await bucket.list({ prefix: "radar/", cursor });
+    const listed = cursor
+      ? await bucket.list({ prefix: "radar/", cursor })
+      : await bucket.list({ prefix: "radar/" });
     const keys = listed.objects.map(object => object.key);
     if (keys.length) await bucket.delete(keys);
     cursor = listed.truncated ? listed.cursor : undefined;
