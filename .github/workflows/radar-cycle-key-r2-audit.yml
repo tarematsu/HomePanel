@@ -1,0 +1,142 @@
+name: Temporary radar cycle-key R2 audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/radar-cycle-key-r2-audit.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_BUILDS_ACCOUNT_ID }}
+      EXPECTED_MAIN_SHA: c42b899b7ca61e59670c7d08693d03eee5b6e0e8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Worker dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: cloud
+
+      - name: Resolve Cloudflare settings
+        id: resolve
+        run: node .github/scripts/resolve-cloudflare-config.mjs
+
+      - name: Wait for successful production radar run
+        id: run
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p report
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          run_id=""
+          for attempt in $(seq 1 90); do
+            curl --fail-with-body --silent --show-error "${auth[@]}" \
+              "$api/actions/workflows/radar-frames.yml/runs?event=push&branch=main&per_page=30" \
+              > report/runs.json
+            run_id="$(jq -r --arg sha "$EXPECTED_MAIN_SHA" '.workflow_runs | map(select(.head_sha == $sha)) | .[0].id // empty' report/runs.json)"
+            if [[ -n "$run_id" ]]; then
+              curl --fail-with-body --silent --show-error "${auth[@]}" "$api/actions/runs/$run_id" > report/run.json
+              status="$(jq -r '.status' report/run.json)"
+              conclusion="$(jq -r '.conclusion // empty' report/run.json)"
+              echo "run=$run_id status=$status conclusion=${conclusion:-pending}"
+              if [[ "$status" == completed ]]; then
+                test "$conclusion" = success
+                break
+              fi
+            fi
+            sleep 10
+          done
+          test -n "$run_id"
+          test "$(jq -r '.status' report/run.json)" = completed
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Verify production workflow steps
+        env:
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          curl --fail-with-body --silent --show-error "${auth[@]}" \
+            "$api/actions/runs/$RUN_ID/jobs?per_page=20" > report/jobs.json
+          for step in "Test radar frame builder" "Build radar WebP frames" "Publish radar frames to R2"; do
+            result="$(jq -r --arg step "$step" '[.jobs[].steps[]? | select(.name == $step)][0].conclusion // empty' report/jobs.json)"
+            echo "$step=$result"
+            test "$result" = success
+          done
+
+      - name: Verify gha-v4 R2 manifest and frames
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/radar-frames"
+          for attempt in $(seq 1 30); do
+            npx wrangler r2 object get homepanel-updates/radar/manifest.json \
+              --file="$GITHUB_WORKSPACE/report/manifest.json" --remote >/dev/null
+            if jq -e '.renderVersion == "gha-v4" and (.frames | length) == 13' "$GITHUB_WORKSPACE/report/manifest.json" >/dev/null; then
+              break
+            fi
+            sleep 10
+          done
+          test "$(jq -r '.renderVersion' "$GITHUB_WORKSPACE/report/manifest.json")" = gha-v4
+          test "$(jq -r '.precomposed' "$GITHUB_WORKSPACE/report/manifest.json")" = true
+          test "$(jq -r '.frames | length' "$GITHUB_WORKSPACE/report/manifest.json")" -eq 13
+
+          base_count="$(jq -r '[.frames[].baseTime] | unique | length' "$GITHUB_WORKSPACE/report/manifest.json")"
+          variant_count="$(jq -r '[.frames[].variant] | unique | length' "$GITHUB_WORKSPACE/report/manifest.json")"
+          test "$base_count" -eq 1
+          test "$variant_count" -eq 1
+          base_time="$(jq -r '.frames[0].baseTime' "$GITHUB_WORKSPACE/report/manifest.json")"
+          variant="$(jq -r '.frames[0].variant' "$GITHUB_WORKSPACE/report/manifest.json")"
+          [[ "$variant" == gha-v4-*-$base_time ]]
+          test "$(jq -r '[.frames[].key] | unique | length' "$GITHUB_WORKSPACE/report/manifest.json")" -eq 13
+          jq -e --arg variant "$variant" 'all(.frames[]; (.key | contains("/" + $variant + "/")))' "$GITHUB_WORKSPACE/report/manifest.json" >/dev/null
+
+          count=0
+          total_bytes=0
+          while IFS= read -r key; do
+            file="$RUNNER_TEMP/radar-frames/$count.webp"
+            npx wrangler r2 object get "homepanel-updates/$key" --file="$file" --remote >/dev/null
+            test -s "$file"
+            size="$(stat -c %s "$file")"
+            count=$((count + 1))
+            total_bytes=$((total_bytes + size))
+          done < <(jq -r '.frames[].key' "$GITHUB_WORKSPACE/report/manifest.json")
+          test "$count" -eq 13
+          jq -n \
+            --arg run "${{ steps.run.outputs.run_id }}" \
+            --arg generatedAt "$(jq -r '.generatedAt' "$GITHUB_WORKSPACE/report/manifest.json")" \
+            --arg baseTime "$base_time" \
+            --arg variant "$variant" \
+            --argjson frames "$count" \
+            --argjson totalBytes "$total_bytes" \
+            '{run,generatedAt,baseTime,variant,frames,totalBytes}' \
+            | tee "$GITHUB_WORKSPACE/report/summary.json"
+        working-directory: cloud
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: radar-cycle-key-r2-${{ github.run_id }}
+          path: report/
+          if-no-files-found: warn
+          retention-days: 1
