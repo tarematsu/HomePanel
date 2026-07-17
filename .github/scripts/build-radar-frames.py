@@ -36,7 +36,7 @@ OUTPUT_HEIGHT = 1280
 FORECAST_WINDOW_MS = 60 * 60 * 1000
 OBJECT_RETENTION_MS = 3 * 60 * 60 * 1000
 FRAME_INTERVAL_MS = 5 * 1000
-RENDER_VERSION = "gha-v3"
+RENDER_VERSION = "gha-v4"
 FRAME_PREFIX = "radar/frames/"
 FRAME_KEY_PATTERN = re.compile(r"^radar/frames/[a-z0-9-]{1,96}/\d{14}\.webp$")
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -321,7 +321,7 @@ def valid_existing_objects(manifest: dict[str, Any]) -> dict[str, dict[str, Any]
     return result
 
 
-def variant_for(lat: float, lon: float, zoom: int, layers_digest: str) -> str:
+def render_variant_for(lat: float, lon: float, zoom: int, layers_digest: str) -> str:
     material = (
         f"{RENDER_VERSION}|{lat:.7f}|{lon:.7f}|{zoom}|"
         f"{SOURCE_WIDTH}x{SOURCE_HEIGHT}|{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}|{layers_digest}"
@@ -330,7 +330,17 @@ def variant_for(lat: float, lon: float, zoom: int, layers_digest: str) -> str:
     return f"{RENDER_VERSION}-{digest}"
 
 
-def frame_record(entry: TimeEntry, variant: str) -> dict[str, Any]:
+def cycle_variant_for(render_variant: str, base_time: str) -> str:
+    if jma_timestamp_ms(base_time) == 0:
+        raise RuntimeError(f"invalid radar cycle base time: {base_time}")
+    variant = f"{render_variant}-{base_time}"
+    if len(variant) > 96 or re.fullmatch(r"[a-z0-9-]+", variant) is None:
+        raise RuntimeError(f"invalid radar cycle variant: {variant}")
+    return variant
+
+
+def frame_record(entry: TimeEntry, render_variant: str) -> dict[str, Any]:
+    variant = cycle_variant_for(render_variant, entry.base_time)
     key = f"{FRAME_PREFIX}{variant}/{entry.valid_time}.webp"
     return {
         "baseTime": entry.base_time,
@@ -364,14 +374,14 @@ def main() -> int:
     current_at = entries[0].valid_at
     layout = tile_layout(args.center_lat, args.center_lon, args.zoom)
     layers_digest = layer_digest((SATELLITE_LAYER_PATH, MAP_LAYER_PATH))
-    variant = variant_for(args.center_lat, args.center_lon, args.zoom, layers_digest)
+    render_variant = render_variant_for(args.center_lat, args.center_lon, args.zoom, layers_digest)
     existing_manifest = load_existing_manifest(args.existing_manifest)
     existing_objects = valid_existing_objects(existing_manifest)
 
     satellite_layer: Image.Image | None = None
     map_layer: Image.Image | None = None
     uploads: list[tuple[str, str]] = []
-    current_records = [frame_record(entry, variant) for entry in entries]
+    current_records = [frame_record(entry, render_variant) for entry in entries]
 
     for entry, record in zip(entries, current_records, strict=True):
         key = record["key"]
@@ -402,8 +412,8 @@ def main() -> int:
         "provider": "JMA current radar and one-hour forecast precomposed with satellite and map layers by GitHub Actions",
         "precomposed": True,
         "layers": ["satellite", "radar", "map"],
-        "width": 256,
-        "height": 256,
+        "width": TILE_SIZE,
+        "height": TILE_SIZE,
         "outputWidth": OUTPUT_WIDTH,
         "outputHeight": OUTPUT_HEIGHT,
         "center": {"lat": args.center_lat, "lon": args.center_lon},
@@ -430,7 +440,7 @@ def main() -> int:
     print(
         f"radar frames={len(current_records)} uploads={len(uploads)} "
         f"deletes={len(stale_keys)} current={entries[0].valid_time} "
-        f"end={entries[-1].valid_time} variant={variant}"
+        f"end={entries[-1].valid_time} variant={current_records[0]['variant']}"
     )
     return 0
 
