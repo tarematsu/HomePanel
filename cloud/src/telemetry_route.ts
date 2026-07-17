@@ -3,12 +3,12 @@ import { json } from "./http";
 import { unauthorized } from "./response";
 import type { Env } from "./sources";
 import {
-  markTelemetryBucketAppliedStatement,
-  pendingTelemetryBucketStatement,
+  rebuildTelemetryBucketStatements,
   telemetryBucketAt,
   telemetryHeartbeatStatement,
   telemetrySampleStatement,
   type EnvironmentHistoryRow,
+  type StoredTelemetrySample,
   type TelemetrySample,
 } from "./telemetry_bucket";
 import { mergeEnvironmentRows } from "./telemetry_history";
@@ -30,8 +30,7 @@ interface HeartbeatRow {
 }
 
 const MAX_TELEMETRY_SAMPLES = 1440;
-const TELEMETRY_SAMPLES_PER_BATCH = 99;
-const TELEMETRY_BUCKETS_PER_BATCH = 49;
+const TELEMETRY_SAMPLES_PER_BATCH = 90;
 const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 
 function finiteOptional(value: unknown): number | null | undefined {
@@ -55,6 +54,31 @@ function normalizeSample(value: unknown, now: number): TelemetrySample | null {
     if (number !== null) normalized[field] = number;
   }
   return normalized;
+}
+
+function sameStoredSample(stored: StoredTelemetrySample, sample: TelemetrySample): boolean {
+  return stored.observed_at === sample.observedAt
+    && stored.co2 === (sample.co2 ?? null)
+    && stored.temperature === (sample.temperature ?? null)
+    && stored.humidity === (sample.humidity ?? null)
+    && stored.temperature_corrected === (sample.temperatureCorrected ?? null)
+    && stored.humidity_corrected === (sample.humidityCorrected ?? null);
+}
+
+async function storedSamples(
+  env: Env,
+  deviceId: string,
+  samples: readonly TelemetrySample[],
+): Promise<Map<number, StoredTelemetrySample>> {
+  if (!samples.length) return new Map();
+  const placeholders = samples.map((_, index) => `?${index + 2}`).join(",");
+  const rows = await env.DB.prepare(
+    `SELECT sequence,observed_at,co2,temperature,humidity,
+            temperature_corrected,humidity_corrected,bucket_applied
+       FROM environment_samples
+      WHERE device_id=?1 AND sequence IN (${placeholders})`,
+  ).bind(deviceId, ...samples.map(sample => sample.sequence)).all<StoredTelemetrySample>();
+  return new Map((rows.results ?? []).map(row => [Number(row.sequence), row]));
 }
 
 export async function receiveTelemetryOptimized(request: Request, env: Env): Promise<Response> {
@@ -101,33 +125,46 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
   const stationheadOk = input.stationheadOk ? 1 : 0;
   const returnedRows = new Map<number, EnvironmentHistoryRow>();
   let accepted = 0;
+  let historyChanged = false;
 
   for (let offset = 0; offset < uniqueSamples.length; offset += TELEMETRY_SAMPLES_PER_BATCH) {
     const chunk = uniqueSamples.slice(offset, offset + TELEMETRY_SAMPLES_PER_BATCH);
-    const receiptResults = await env.DB.batch(chunk.map(sample => telemetrySampleStatement(env, deviceId, sample)));
-    for (const result of receiptResults) {
-      const rows = (result.results ?? []) as Array<{ sequence: number }>;
-      for (const row of rows) acknowledged.add(Number(row.sequence));
-    }
-  }
+    const existing = await storedSamples(env, deviceId, chunk);
+    const writes: TelemetrySample[] = [];
+    const affectedBuckets = new Set<number>();
 
-  const acknowledgedSamples = uniqueSamples.filter(sample => acknowledged.has(sample.sequence));
-  const affectedBuckets = [...new Set(acknowledgedSamples.map(sample => telemetryBucketAt(sample.observedAt)))].sort((left, right) => left - right);
-  for (let offset = 0; offset < affectedBuckets.length; offset += TELEMETRY_BUCKETS_PER_BATCH) {
-    const bucketChunk = affectedBuckets.slice(offset, offset + TELEMETRY_BUCKETS_PER_BATCH);
-    const statements: D1PreparedStatement[] = [];
-    for (const bucketAt of bucketChunk) {
-      statements.push(pendingTelemetryBucketStatement(env, deviceId, bucketAt));
-      statements.push(markTelemetryBucketAppliedStatement(env, deviceId, bucketAt));
+    for (const sample of chunk) {
+      const stored = existing.get(sample.sequence);
+      const identical = stored ? sameStoredSample(stored, sample) : false;
+      if (identical && Number(stored!.bucket_applied) === 1) {
+        acknowledged.add(sample.sequence);
+        continue;
+      }
+      if (stored && sample.observedAt < Number(stored.observed_at)) continue;
+      if (stored && sample.observedAt === Number(stored.observed_at) && !identical) continue;
+
+      writes.push(sample);
+      affectedBuckets.add(telemetryBucketAt(sample.observedAt));
+      if (stored) affectedBuckets.add(telemetryBucketAt(Number(stored.observed_at)));
     }
-    const bucketResults = await env.DB.batch(statements);
-    for (let index = 0; index < bucketResults.length; index += 2) {
-      const rows = (bucketResults[index]?.results ?? []) as EnvironmentHistoryRow[];
+
+    if (!writes.length) continue;
+    const bucketAts = [...affectedBuckets].sort((left, right) => left - right);
+    const statements = writes.map(sample => telemetrySampleStatement(env, deviceId, sample));
+    const rebuildOffset = statements.length;
+    statements.push(...rebuildTelemetryBucketStatements(env, deviceId, bucketAts));
+    const results = await env.DB.batch(statements);
+
+    for (let index = 0; index < writes.length; index += 1) {
+      const rows = (results[index]?.results ?? []) as Array<{ sequence: number }>;
       for (const row of rows) {
-        accepted += Number(row.applied_count ?? 0);
-        returnedRows.set(Number(row.t), row);
+        acknowledged.add(Number(row.sequence));
+        accepted += 1;
       }
     }
+    const aggregateRows = (results[rebuildOffset + 1]?.results ?? []) as EnvironmentHistoryRow[];
+    for (const row of aggregateRows) returnedRows.set(Number(row.t), row);
+    historyChanged = true;
   }
 
   const acknowledgedSequences = [...acknowledged].sort((left, right) => left - right);
@@ -149,7 +186,7 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
     ).run();
   }
 
-  if (acknowledgedSamples.length) {
+  if (historyChanged) {
     await mergeEnvironmentRows(env, deviceId, [...returnedRows.values()], now);
   }
 
