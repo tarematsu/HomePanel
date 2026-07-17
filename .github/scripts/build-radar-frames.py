@@ -23,7 +23,6 @@ from PIL import Image
 
 OBSERVED_TARGET_TIMES_URL = "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N1.json"
 FORECAST_TARGET_TIMES_URL = "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N2.json"
-GSI_TILE_URL = "https://cyberjapandata.gsi.go.jp/xyz/pale/{zoom}/{x}/{y}.png"
 JMA_TILE_URL = (
     "https://www.jma.go.jp/bosai/jmatile/data/nowc/"
     "{base_time}/none/{valid_time}/surf/hrpns/{zoom}/{x}/{y}.png"
@@ -36,9 +35,12 @@ OUTPUT_HEIGHT = 1280
 FORECAST_WINDOW_MS = 60 * 60 * 1000
 OBJECT_RETENTION_MS = 3 * 60 * 60 * 1000
 FRAME_INTERVAL_MS = 5 * 1000
-RENDER_VERSION = "gha-v2"
+RENDER_VERSION = "gha-v3"
 FRAME_PREFIX = "radar/frames/"
 FRAME_KEY_PATTERN = re.compile(r"^radar/frames/[a-z0-9-]{1,96}/\d{14}\.webp$")
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+SATELLITE_LAYER_PATH = REPOSITORY_ROOT / "native/scripts/ui/radar-satellite.png"
+MAP_LAYER_PATH = REPOSITORY_ROOT / "native/scripts/ui/radar-map.png"
 
 
 @dataclass(frozen=True)
@@ -184,17 +186,54 @@ def fetch_tiles(urls: list[str]) -> list[Image.Image]:
         return list(executor.map(lambda url: decode_png(fetch_bytes(url)), urls))
 
 
+def load_layer(path: Path) -> Image.Image:
+    if not path.is_file():
+        raise RuntimeError(f"radar layer is missing: {path}")
+    try:
+        with Image.open(path) as image:
+            image.load()
+            layer = image.convert("RGBA")
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"failed to decode radar layer {path}: {error}") from error
+    if layer.size != (OUTPUT_WIDTH, OUTPUT_HEIGHT):
+        layer = layer.resize((OUTPUT_WIDTH, OUTPUT_HEIGHT), Image.Resampling.LANCZOS)
+    return layer
+
+
+def layer_digest(paths: tuple[Path, ...]) -> str:
+    digest = hashlib.sha256()
+    for path in paths:
+        if not path.is_file():
+            raise RuntimeError(f"radar layer is missing: {path}")
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def alpha_composite_at(canvas: Image.Image, layer: Image.Image, left: int, top: int) -> None:
+    source_left = max(0, -left)
+    source_top = max(0, -top)
+    destination_left = max(0, left)
+    destination_top = max(0, top)
+    width = min(layer.width - source_left, canvas.width - destination_left)
+    height = min(layer.height - source_top, canvas.height - destination_top)
+    if width <= 0 or height <= 0:
+        return
+    clipped = layer.crop((source_left, source_top, source_left + width, source_top + height))
+    canvas.alpha_composite(clipped, (destination_left, destination_top))
+
+
 def render_frame(
     entry: TimeEntry,
     layout: list[Tile],
-    map_tiles: list[Image.Image],
+    satellite_layer: Image.Image,
+    map_layer: Image.Image,
     zoom: int,
     output: Path,
 ) -> None:
-    canvas = Image.new("RGBA", (SOURCE_WIDTH, SOURCE_HEIGHT), (245, 245, 245, 255))
-    for tile, image in zip(layout, map_tiles, strict=True):
-        canvas.paste(image, (tile.dest_x, tile.dest_y))
-
+    canvas = satellite_layer.copy()
     radar_urls = [
         JMA_TILE_URL.format(
             base_time=entry.base_time,
@@ -206,12 +245,22 @@ def render_frame(
         for tile in layout
     ]
     radar_tiles = fetch_tiles(radar_urls)
+    scale_x = OUTPUT_WIDTH / SOURCE_WIDTH
+    scale_y = OUTPUT_HEIGHT / SOURCE_HEIGHT
+    tile_width = math.ceil(256 * scale_x)
+    tile_height = math.ceil(256 * scale_y)
     for tile, image in zip(layout, radar_tiles, strict=True):
-        canvas.alpha_composite(image, (tile.dest_x, tile.dest_y))
+        resized = image.resize((tile_width, tile_height), Image.Resampling.LANCZOS)
+        alpha_composite_at(
+            canvas,
+            resized,
+            round(tile.dest_x * scale_x),
+            round(tile.dest_y * scale_y),
+        )
+    canvas.alpha_composite(map_layer)
 
-    resized = canvas.resize((OUTPUT_WIDTH, OUTPUT_HEIGHT), Image.Resampling.LANCZOS)
     output.parent.mkdir(parents=True, exist_ok=True)
-    resized.convert("RGB").save(
+    canvas.convert("RGB").save(
         output,
         format="WEBP",
         quality=80,
@@ -253,10 +302,10 @@ def valid_existing_objects(manifest: dict[str, Any]) -> dict[str, dict[str, Any]
     return result
 
 
-def variant_for(lat: float, lon: float, zoom: int) -> str:
+def variant_for(lat: float, lon: float, zoom: int, layers_digest: str) -> str:
     material = (
         f"{RENDER_VERSION}|{lat:.7f}|{lon:.7f}|{zoom}|"
-        f"{SOURCE_WIDTH}x{SOURCE_HEIGHT}|{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}"
+        f"{SOURCE_WIDTH}x{SOURCE_HEIGHT}|{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}|{layers_digest}"
     )
     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
     return f"{RENDER_VERSION}-{digest}"
@@ -295,15 +344,13 @@ def main() -> int:
     entries = load_entries()
     current_at = entries[0].valid_at
     layout = tile_layout(args.center_lat, args.center_lon, args.zoom)
-    variant = variant_for(args.center_lat, args.center_lon, args.zoom)
+    layers_digest = layer_digest((SATELLITE_LAYER_PATH, MAP_LAYER_PATH))
+    variant = variant_for(args.center_lat, args.center_lon, args.zoom, layers_digest)
     existing_manifest = load_existing_manifest(args.existing_manifest)
     existing_objects = valid_existing_objects(existing_manifest)
 
-    map_urls = [
-        GSI_TILE_URL.format(zoom=args.zoom, x=tile.x, y=tile.y)
-        for tile in layout
-    ]
-    map_tiles: list[Image.Image] | None = None
+    satellite_layer: Image.Image | None = None
+    map_layer: Image.Image | None = None
     uploads: list[tuple[str, str]] = []
     current_records = [frame_record(entry, variant) for entry in entries]
 
@@ -311,10 +358,11 @@ def main() -> int:
         key = record["key"]
         if key in existing_objects:
             continue
-        if map_tiles is None:
-            map_tiles = fetch_tiles(map_urls)
+        if satellite_layer is None or map_layer is None:
+            satellite_layer = load_layer(SATELLITE_LAYER_PATH)
+            map_layer = load_layer(MAP_LAYER_PATH)
         local_path = frames_dir / f"{entry.valid_time}.webp"
-        render_frame(entry, layout, map_tiles, args.zoom, local_path)
+        render_frame(entry, layout, satellite_layer, map_layer, args.zoom, local_path)
         uploads.append((str(local_path), key))
 
     retention_cutoff = current_at - OBJECT_RETENTION_MS
@@ -332,7 +380,9 @@ def main() -> int:
         "renderVersion": RENDER_VERSION,
         "generatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "currentAt": current_at,
-        "provider": "JMA current radar and one-hour forecast rendered by GitHub Actions and cached in Cloudflare R2",
+        "provider": "JMA current radar and one-hour forecast precomposed with satellite and map layers by GitHub Actions",
+        "precomposed": True,
+        "layers": ["satellite", "radar", "map"],
         "width": 256,
         "height": 256,
         "outputWidth": OUTPUT_WIDTH,

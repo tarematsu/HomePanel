@@ -178,11 +178,13 @@ async function radarFromManifest(env: Env): Promise<SourceResult | null> {
   const provider = typeof root.provider === "string" && root.provider.trim()
     ? root.provider.trim()
     : "JMA current radar and one-hour forecast rendered by GitHub Actions and cached in Cloudflare R2";
+  const precomposed = root.precomposed === true;
 
   return {
     source: "radar",
     payload: {
       provider,
+      precomposed,
       width: 256,
       height: 256,
       outputWidth: RADAR_OUTPUT_WIDTH,
@@ -233,6 +235,7 @@ async function radarFromJmaTiles(env: Env): Promise<SourceResult> {
     source: "radar",
     payload: {
       provider: "JMA current radar and one-hour forecast via Cloudflare Cache",
+      precomposed: false,
       width,
       height,
       center,

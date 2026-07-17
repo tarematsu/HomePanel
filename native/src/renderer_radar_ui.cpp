@@ -152,6 +152,7 @@ void Renderer::ComposeRadarFrame() {
   int sourceWidth = 480;
   int sourceHeight = 320;
   int64_t validAt = 0;
+  bool precomposed = false;
   std::wstring signature;
   std::vector<RadarTile> tiles;
   const fs::path uiDir = rootDir_ / L"ui";
@@ -164,6 +165,7 @@ void Renderer::ComposeRadarFrame() {
       const JsonObject root = JsonObject::Parse(json);
       sourceWidth = std::max(1, static_cast<int>(json::Number(root, L"width", 480)));
       sourceHeight = std::max(1, static_cast<int>(json::Number(root, L"height", 320)));
+      precomposed = json::Boolean(root, L"precomposed");
       const int64_t frameIntervalMs = std::clamp<int64_t>(
           static_cast<int64_t>(json::Number(root, L"frameIntervalMs", kDefaultRadarFrameIntervalMs)),
           1'000, 60'000);
@@ -176,15 +178,18 @@ void Renderer::ComposeRadarFrame() {
           validAt = static_cast<int64_t>(std::max(0.0, json::Number(frame, L"validAt")));
           const JsonArray frameTiles = json::Array(frame, L"tiles");
           std::wostringstream signatureStream;
-          signatureStream << L"native-radar-v6|" << kRadarCanvasWidth << L'x' << kRadarCanvasHeight
+          signatureStream << L"native-radar-v7|" << kRadarCanvasWidth << L'x' << kRadarCanvasHeight
                           << L"|source:" << sourceWidth << L'x' << sourceHeight
+                          << L"|precomposed:" << (precomposed ? 1 : 0)
                           << L"|frame:" << selectedIndex << L'/' << frames.Size()
                           << L"|" << json::Text(frame, L"baseTime")
                           << L"|" << json::Text(frame, L"validTime")
-                          << L"|" << validAt
-                          << L"|sat:" << Utf8ToWide(satelliteStamp)
-                          << L"|map:" << Utf8ToWide(mapStamp)
-                          << L"|tiles:" << frameTiles.Size();
+                          << L"|" << validAt;
+          if (!precomposed) {
+            signatureStream << L"|sat:" << Utf8ToWide(satelliteStamp)
+                            << L"|map:" << Utf8ToWide(mapStamp);
+          }
+          signatureStream << L"|tiles:" << frameTiles.Size();
           for (uint32_t index = 0; index < frameTiles.Size(); ++index) {
             if (frameTiles.GetAt(index).ValueType() != JsonValueType::Object) continue;
             const JsonObject tile = frameTiles.GetAt(index).GetObject();
@@ -207,6 +212,7 @@ void Renderer::ComposeRadarFrame() {
       tiles.clear();
       signature.clear();
       validAt = 0;
+      precomposed = false;
     }
   }
 
@@ -241,12 +247,21 @@ void Renderer::ComposeRadarFrame() {
     }
   }
 
-  HBITMAP radarSatelliteBitmap = CachedRadarBitmap(
-      L"radar-satellite", satellitePath, satelliteStamp,
-      kRadarCanvasWidth, kRadarCanvasHeight);
-  HBITMAP radarMapBitmap = CachedRadarBitmap(
-      L"radar-map", mapPath, mapStamp, kRadarCanvasWidth, kRadarCanvasHeight);
-  if (!radarSatelliteBitmap || !radarMapBitmap) return;
+  if (precomposed &&
+      (tiles.size() != 1 || tiles.front().destination.x != 0 || tiles.front().destination.y != 0)) {
+    return;
+  }
+
+  HBITMAP radarSatelliteBitmap = nullptr;
+  HBITMAP radarMapBitmap = nullptr;
+  if (!precomposed) {
+    radarSatelliteBitmap = CachedRadarBitmap(
+        L"radar-satellite", satellitePath, satelliteStamp,
+        kRadarCanvasWidth, kRadarCanvasHeight);
+    radarMapBitmap = CachedRadarBitmap(
+        L"radar-map", mapPath, mapStamp, kRadarCanvasWidth, kRadarCanvasHeight);
+    if (!radarSatelliteBitmap || !radarMapBitmap) return;
+  }
 
   BITMAPINFO info{};
   info.bmiHeader.biSize = sizeof(info.bmiHeader);
@@ -265,7 +280,11 @@ void Renderer::ComposeRadarFrame() {
     return;
   }
   HGDIOBJ previousComposed = SelectObject(composeDc, composed);
-  BlendBitmap(composeDc, radarSatelliteBitmap, 0, 0, kRadarCanvasWidth, kRadarCanvasHeight);
+  if (precomposed) {
+    PatBlt(composeDc, 0, 0, kRadarCanvasWidth, kRadarCanvasHeight, BLACKNESS);
+  } else {
+    BlendBitmap(composeDc, radarSatelliteBitmap, 0, 0, kRadarCanvasWidth, kRadarCanvasHeight);
+  }
 
   const double scaleX = static_cast<double>(kRadarCanvasWidth) / sourceWidth;
   const double scaleY = static_cast<double>(kRadarCanvasHeight) / sourceHeight;
@@ -292,7 +311,9 @@ void Renderer::ComposeRadarFrame() {
     ++loadedTiles;
   }
 
-  BlendBitmap(composeDc, radarMapBitmap, 0, 0, kRadarCanvasWidth, kRadarCanvasHeight);
+  if (!precomposed) {
+    BlendBitmap(composeDc, radarMapBitmap, 0, 0, kRadarCanvasWidth, kRadarCanvasHeight);
+  }
   SelectObject(composeDc, previousComposed);
   DeleteDC(composeDc);
 
