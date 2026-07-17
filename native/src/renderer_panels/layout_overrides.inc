@@ -51,7 +51,32 @@ ControlsRects RearrangedControlsFromContent(const RECT&) {
 
 #define HP_DRAW_CLOCK_WITH_CONTROLS(dc, card) do { \
   DrawClockSection((dc), (card)); \
-  DrawControlsSection((dc), ClockControlsContent((card))); \
+  const ControlsRects hpControls = RearrangedControlsFromContent((card)); \
+  HGDIOBJ hpPreviousFont = SelectObject((dc), TierFont(FontTier::Small)); \
+  DrawWidgetCard((dc), hpControls.update, kWidgetSurfaceAlt, CardRadius(hpControls.update)); \
+  DrawWidgetCard((dc), hpControls.restart, kWidgetSurfaceAlt, CardRadius(hpControls.restart)); \
+  SetTextColor((dc), kWidgetText); \
+  DrawTextInRect((dc), L"更新", hpControls.update, DT_CENTER | DT_SINGLELINE | DT_VCENTER); \
+  DrawTextInRect((dc), L"再起動", hpControls.restart, DT_CENTER | DT_SINGLELINE | DT_VCENTER); \
+  if (!nativeToast_.empty()) { \
+    SetTextColor((dc), kWidgetWarning); \
+    DrawTextInRect((dc), nativeToast_, hpControls.status, DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS); \
+  } else { \
+    std::wstring hpRadarTime; \
+    bool hpHasFrame = false; \
+    { std::lock_guard hpLock(radarFrameMutex_); hpRadarTime = radarTimeText_; hpHasFrame = radarFrameBitmap_ != nullptr; } \
+    const std::wstring hpStatus = hpHasFrame ? L"レーダー更新: " + (hpRadarTime.empty() ? L"--:--" : hpRadarTime) : L"レーダーを準備中"; \
+    const int hpStatusHeight = static_cast<int>(hpControls.status.bottom - hpControls.status.top); \
+    RECT hpFirstLine = hpControls.status; hpFirstLine.bottom = hpControls.status.top + hpStatusHeight / 2; \
+    RECT hpSecondLine = hpControls.status; hpSecondLine.top = hpFirstLine.bottom; \
+    SetTextColor((dc), kWidgetMuted); \
+    DrawTextInRect((dc), hpStatus, hpFirstLine, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER); \
+    if (!nativeAppVersion_.empty()) { \
+      SetTextColor((dc), kWidgetSubtle); \
+      DrawTextInRect((dc), L"バージョン " + nativeAppVersion_, hpSecondLine, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER); \
+    } \
+  } \
+  SelectObject((dc), hpPreviousFont); \
 } while (false)
 
 }  // namespace
