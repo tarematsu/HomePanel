@@ -7,6 +7,7 @@
 namespace hp {
 namespace {
 constexpr int64_t kRadarTileFailureTtlMs = 5 * 60'000;
+constexpr int64_t kDefaultRadarFrameIntervalMs = 5'000;
 using winrt::Windows::Data::Json::JsonArray;
 using winrt::Windows::Data::Json::JsonObject;
 using winrt::Windows::Data::Json::JsonValueType;
@@ -29,7 +30,7 @@ std::wstring RadarTimeFromMillis(int64_t milliseconds) {
 }
 
 std::optional<fs::path> RadarTilePath(const fs::path& dataDir,
-                                             const std::wstring& url) {
+                                      const std::wstring& url) {
   static constexpr wchar_t kDataHostPrefix[] = L"https://data.homepanel/";
   if (url.empty() || url.rfind(kDataHostPrefix, 0) != 0) return std::nullopt;
   std::wstring relative = url.substr(std::size(kDataHostPrefix) - 1);
@@ -39,7 +40,6 @@ std::optional<fs::path> RadarTilePath(const fs::path& dataDir,
   }
   return dataDir / relative;
 }
-
 
 bool TileFailureActive(const std::map<std::wstring, int64_t>& failures,
                        const std::wstring& url, int64_t now) {
@@ -123,7 +123,7 @@ void Renderer::RadarComposeLoop() {
   while (!radarComposeStopping_.load(std::memory_order_acquire)) {
     {
       std::unique_lock waitLock(radarComposeWakeMutex_);
-      radarComposeWake_.wait(waitLock, [this] {
+      radarComposeWake_.wait_for(waitLock, std::chrono::milliseconds(kDefaultRadarFrameIntervalMs), [this] {
         return radarComposePending_ ||
                radarComposeStopping_.load(std::memory_order_acquire);
       });
@@ -154,8 +154,6 @@ void Renderer::ComposeRadarFrame() {
   int64_t validAt = 0;
   std::wstring signature;
   std::vector<RadarTile> tiles;
-  // Bundled radar layers are extracted next to the executable under "ui" by
-  // embedded_ui.cpp (executable.parent_path()/"ui"); rootDir_ is that exe dir.
   const fs::path uiDir = rootDir_ / L"ui";
   const fs::path satellitePath = uiDir / L"radar-satellite.png";
   const fs::path mapPath = uiDir / L"radar-map.png";
@@ -166,36 +164,44 @@ void Renderer::ComposeRadarFrame() {
       const JsonObject root = JsonObject::Parse(json);
       sourceWidth = std::max(1, static_cast<int>(json::Number(root, L"width", 480)));
       sourceHeight = std::max(1, static_cast<int>(json::Number(root, L"height", 320)));
+      const int64_t frameIntervalMs = std::clamp<int64_t>(
+          static_cast<int64_t>(json::Number(root, L"frameIntervalMs", kDefaultRadarFrameIntervalMs)),
+          1'000, 60'000);
       const JsonArray frames = json::Array(root, L"frames");
-      if (frames.Size() > 0 && frames.GetAt(0).ValueType() == JsonValueType::Object) {
-        const JsonObject frame = frames.GetAt(0).GetObject();
-        validAt = static_cast<int64_t>(std::max(0.0, json::Number(frame, L"validAt")));
-        const JsonArray frameTiles = json::Array(frame, L"tiles");
-        std::wostringstream signatureStream;
-        signatureStream << L"native-radar-v5|" << kRadarCanvasWidth << L'x' << kRadarCanvasHeight
-                        << L"|source:" << sourceWidth << L'x' << sourceHeight
-                        << L"|" << json::Text(frame, L"baseTime")
-                        << L"|" << json::Text(frame, L"validTime")
-                        << L"|" << validAt
-                        << L"|sat:" << Utf8ToWide(satelliteStamp)
-                        << L"|map:" << Utf8ToWide(mapStamp)
-                        << L"|tiles:" << frameTiles.Size();
-        for (uint32_t index = 0; index < frameTiles.Size(); ++index) {
-          if (frameTiles.GetAt(index).ValueType() != JsonValueType::Object) continue;
-          const JsonObject tile = frameTiles.GetAt(index).GetObject();
-          const std::wstring url = json::Text(tile, L"url");
-          const POINT destination{
-              static_cast<LONG>(json::Number(tile, L"destX")),
-              static_cast<LONG>(json::Number(tile, L"destY")),
-          };
-          const std::optional<fs::path> tilePath = RadarTilePath(dataDir_, url);
-          const std::string tileStamp = tilePath ? file::Stamp(*tilePath) : "invalid";
-          tiles.push_back(RadarTile{
-              url, destination, tilePath.value_or(fs::path{}), tileStamp});
-          signatureStream << L"|" << url << L"@" << destination.x << L"," << destination.y
-                          << L"#" << Utf8ToWide(tileStamp);
+      if (frames.Size() > 0) {
+        const uint32_t selectedIndex = static_cast<uint32_t>(
+            (UnixMillis() / frameIntervalMs) % static_cast<int64_t>(frames.Size()));
+        if (frames.GetAt(selectedIndex).ValueType() == JsonValueType::Object) {
+          const JsonObject frame = frames.GetAt(selectedIndex).GetObject();
+          validAt = static_cast<int64_t>(std::max(0.0, json::Number(frame, L"validAt")));
+          const JsonArray frameTiles = json::Array(frame, L"tiles");
+          std::wostringstream signatureStream;
+          signatureStream << L"native-radar-v6|" << kRadarCanvasWidth << L'x' << kRadarCanvasHeight
+                          << L"|source:" << sourceWidth << L'x' << sourceHeight
+                          << L"|frame:" << selectedIndex << L'/' << frames.Size()
+                          << L"|" << json::Text(frame, L"baseTime")
+                          << L"|" << json::Text(frame, L"validTime")
+                          << L"|" << validAt
+                          << L"|sat:" << Utf8ToWide(satelliteStamp)
+                          << L"|map:" << Utf8ToWide(mapStamp)
+                          << L"|tiles:" << frameTiles.Size();
+          for (uint32_t index = 0; index < frameTiles.Size(); ++index) {
+            if (frameTiles.GetAt(index).ValueType() != JsonValueType::Object) continue;
+            const JsonObject tile = frameTiles.GetAt(index).GetObject();
+            const std::wstring url = json::Text(tile, L"url");
+            const POINT destination{
+                static_cast<LONG>(json::Number(tile, L"destX")),
+                static_cast<LONG>(json::Number(tile, L"destY")),
+            };
+            const std::optional<fs::path> tilePath = RadarTilePath(dataDir_, url);
+            const std::string tileStamp = tilePath ? file::Stamp(*tilePath) : "invalid";
+            tiles.push_back(RadarTile{
+                url, destination, tilePath.value_or(fs::path{}), tileStamp});
+            signatureStream << L"|" << url << L"@" << destination.x << L"," << destination.y
+                            << L"#" << Utf8ToWide(tileStamp);
+          }
+          signature = signatureStream.str();
         }
-        signature = signatureStream.str();
       }
     } catch (...) {
       tiles.clear();
@@ -259,7 +265,6 @@ void Renderer::ComposeRadarFrame() {
     return;
   }
   HGDIOBJ previousComposed = SelectObject(composeDc, composed);
-
   BlendBitmap(composeDc, radarSatelliteBitmap, 0, 0, kRadarCanvasWidth, kRadarCanvasHeight);
 
   const double scaleX = static_cast<double>(kRadarCanvasWidth) / sourceWidth;
@@ -292,7 +297,6 @@ void Renderer::ComposeRadarFrame() {
   DeleteDC(composeDc);
 
   if (!tiles.empty() && loadedTiles == 0) {
-    // Keep the last successfully rendered frame when every tile fails.
     DeleteObject(composed);
     return;
   }
