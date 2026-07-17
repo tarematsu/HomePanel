@@ -27,6 +27,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_BUILDS_ACCOUNT_ID }}
       HOMEPANEL_D1_DATABASE_ID: ${{ secrets.HOMEPANEL_D1_DATABASE_ID }}
+      GITHUB_RADAR_DISPATCH_TOKEN: ${{ secrets.GITHUB_RADAR_DISPATCH_TOKEN }}
 
     steps:
       - name: Checkout
@@ -61,3 +62,13 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
         run: npm run deploy
+
+      - name: Sync radar dispatcher token
+        if: ${{ env.GITHUB_RADAR_DISPATCH_TOKEN != '' }}
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
+        run: printf '%s' "$GITHUB_RADAR_DISPATCH_TOKEN" | npx wrangler secret put GITHUB_RADAR_DISPATCH_TOKEN
+
+      - name: Report missing radar dispatcher token
+        if: ${{ env.GITHUB_RADAR_DISPATCH_TOKEN == '' }}
+        run: echo "::warning::GITHUB_RADAR_DISPATCH_TOKEN is not configured; automatic radar workflow dispatch remains disabled"
