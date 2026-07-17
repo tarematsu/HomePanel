@@ -76,10 +76,6 @@ export async function mergeEnvironmentRows(
   now: number,
 ): Promise<void> {
   const cutoff = now - ENVIRONMENT_HISTORY_MS;
-
-
-
-
   const stored = await env.DB.prepare(
     `SELECT bucket_at AS t,
        CASE WHEN co2_count>0 THEN co2_sum/co2_count ELSE NULL END AS co2,
@@ -89,31 +85,28 @@ export async function mergeEnvironmentRows(
       WHERE device_id=?1 AND bucket_at>=?2
       ORDER BY bucket_at`,
   ).bind(fallbackDeviceId, cutoff).all<EnvironmentHistoryRow>();
-  const rows = (stored.results?.length ? stored.results : returnedRows)
-    .filter(row => Number(row.t) >= cutoff);
-  if (!rows.length) return;
-
-  const previous = await readState(env, "environment");
-  const previousState = previousDevices(previous, cutoff);
-  const devices = previousState.devices;
-  const target = devices[fallbackDeviceId] ?? {
-    deviceId: fallbackDeviceId,
-    bucketMinutes: 5,
-    history: [],
-  };
-  const points = new Map(target.history.map(point => [point.t, point]));
-  for (const row of rows) {
-    points.set(Number(row.t), {
+  const rows = (stored.results ?? returnedRows)
+    .filter(row => Number(row.t) >= cutoff)
+    .map(row => ({
       t: Number(row.t),
       co2: row.co2 === null ? null : Math.round(Number(row.co2)),
       temperature: row.temperature === null ? null : Number(Number(row.temperature).toFixed(2)),
       humidity: row.humidity === null ? null : Number(Number(row.humidity).toFixed(2)),
-    });
-  }
-  target.history = [...points.values()]
-    .filter(point => point.t >= cutoff)
+    }))
     .sort((left, right) => left.t - right.t);
-  devices[fallbackDeviceId] = target;
+
+  const previous = await readState(env, "environment");
+  const previousState = previousDevices(previous, cutoff);
+  const devices = previousState.devices;
+  if (rows.length) {
+    devices[fallbackDeviceId] = {
+      deviceId: fallbackDeviceId,
+      bucketMinutes: 5,
+      history: rows,
+    };
+  } else {
+    delete devices[fallbackDeviceId];
+  }
 
   for (const [deviceId, device] of Object.entries(devices)) {
     if (!device.history.length) delete devices[deviceId];
