@@ -6,10 +6,11 @@ const DEFAULT_RADAR_ZOOM = 10;
 const RADAR_HISTORY_WINDOW_MS = 60 * 60 * 1000;
 const RADAR_FRAME_INTERVAL_MS = 5 * 1000;
 const RADAR_FRAME_PREFIX = "radar/frames/";
+const RADAR_RENDER_VERSION = "v2";
 const RADAR_OUTPUT_WIDTH = 1920;
 const RADAR_OUTPUT_HEIGHT = 1280;
 
-type TimeEntry = { basetime: string; validtime: string; elements?: string[] };
+ type TimeEntry = { basetime: string; validtime: string; elements?: string[] };
 type RadarTileLayout = { x: number; y: number; destX: number; destY: number };
 
 function jmaTimestampToMillis(value: string): number {
@@ -44,12 +45,20 @@ function envNumber(value: string | undefined, fallback: number, minimum: number,
   return Math.max(minimum, Math.min(maximum, parsed));
 }
 
-function frameKey(validTime: string): string {
-  return `${RADAR_FRAME_PREFIX}${validTime}.webp`;
+function coordinateKey(value: number): string {
+  return value.toFixed(6).replace("-", "m").replace(".", "p");
 }
 
-function framePath(validTime: string): string {
-  return `/v1/radar/frame/${validTime}.webp`;
+function frameVariant(center: { lat: number; lon: number }, zoom: number): string {
+  return `${RADAR_RENDER_VERSION}-z${zoom}-lat${coordinateKey(center.lat)}-lon${coordinateKey(center.lon)}`;
+}
+
+function frameKey(variant: string, validTime: string): string {
+  return `${RADAR_FRAME_PREFIX}${variant}/${validTime}.webp`;
+}
+
+function framePath(variant: string, validTime: string): string {
+  return `/v1/radar/frame/${variant}/${validTime}.webp`;
 }
 
 async function fetchImage(url: string): Promise<Response> {
@@ -66,10 +75,11 @@ async function renderFrame(
   entry: TimeEntry,
   layout: RadarTileLayout[],
   zoom: number,
+  variant: string,
 ): Promise<void> {
   const bucket = env.UPDATE_BUCKET;
   if (!bucket) throw new Error("radar R2 bucket unavailable");
-  const key = frameKey(entry.validtime);
+  const key = frameKey(variant, entry.validtime);
   if (await bucket.head(key)) return;
 
   const mapResponses = await Promise.all(layout.map(tile =>
@@ -97,12 +107,16 @@ async function renderFrame(
 
   const output = await image
     .transform({ width: RADAR_OUTPUT_WIDTH, height: RADAR_OUTPUT_HEIGHT, fit: "squeeze" })
-    .output({ format: "image/webp" });
+    .output({ format: "image/webp", quality: 80 });
   const response = output.response();
   if (!response.body) throw new Error("Cloudflare Images returned an empty radar frame");
   await bucket.put(key, response.body, {
     httpMetadata: { contentType: "image/webp", cacheControl: "public, max-age=604800, immutable" },
-    customMetadata: { baseTime: entry.basetime, validTime: entry.validtime },
+    customMetadata: {
+      baseTime: entry.basetime,
+      validTime: entry.validtime,
+      variant,
+    },
   });
 }
 
@@ -111,21 +125,37 @@ async function ensureRenderedFrames(
   entries: TimeEntry[],
   layout: RadarTileLayout[],
   zoom: number,
-): Promise<void> {
-  if (!env.UPDATE_BUCKET) throw new Error("radar R2 bucket unavailable");
+  variant: string,
+): Promise<Set<string>> {
+  const bucket = env.UPDATE_BUCKET;
+  if (!bucket) throw new Error("radar R2 bucket unavailable");
+  const ready = new Set<string>();
   const missing: TimeEntry[] = [];
   for (const entry of entries) {
-    if (!await env.UPDATE_BUCKET.head(frameKey(entry.validtime))) missing.push(entry);
+    if (await bucket.head(frameKey(variant, entry.validtime))) ready.add(entry.validtime);
+    else missing.push(entry);
   }
   for (let index = 0; index < missing.length; index += 2) {
-    await Promise.all(missing.slice(index, index + 2).map(entry => renderFrame(env, entry, layout, zoom)));
+    await Promise.all(missing.slice(index, index + 2).map(async entry => {
+      try {
+        await renderFrame(env, entry, layout, zoom, variant);
+        ready.add(entry.validtime);
+      } catch (error) {
+        console.error(
+          "radar frame render failed",
+          entry.validtime,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }));
   }
+  return ready;
 }
 
 export async function radarFrameResponse(pathname: string, env: Env): Promise<Response> {
-  const match = pathname.match(/^\/v1\/radar\/frame\/(\d{14})\.webp$/);
+  const match = pathname.match(/^\/v1\/radar\/frame\/([a-z0-9-]+)\/(\d{14})\.webp$/);
   if (!match || !env.UPDATE_BUCKET) return new Response(null, { status: 404 });
-  const object = await env.UPDATE_BUCKET.get(frameKey(match[1]!));
+  const object = await env.UPDATE_BUCKET.get(frameKey(match[1]!, match[2]!));
   if (!object?.body) return new Response(null, { status: 404 });
   const headers = new Headers();
   object.writeHttpMetadata(headers);
@@ -152,18 +182,21 @@ export async function fetchRadar(env: Env): Promise<SourceResult> {
     lat: envNumber(env.RADAR_CENTER_LAT, DEFAULT_RADAR_CENTER.lat, -85.05112878, 85.05112878),
     lon: envNumber(env.RADAR_CENTER_LON, DEFAULT_RADAR_CENTER.lon, -180, 180),
   };
+  const variant = frameVariant(center, zoom);
   const layout = radarTileLayout(center.lat, center.lon, zoom, sourceWidth, sourceHeight);
   const entries = available.filter(entry => {
     const validAt = jmaTimestampToMillis(entry.validtime);
     return validAt >= historyStart && validAt <= currentAt;
   });
-  await ensureRenderedFrames(env, entries, layout, zoom);
+  const ready = await ensureRenderedFrames(env, entries, layout, zoom, variant);
+  const renderedEntries = entries.filter(entry => ready.has(entry.validtime));
+  if (!renderedEntries.length) throw new Error("no rendered radar frames are available");
 
-  const frames = entries.map(entry => ({
+  const frames = renderedEntries.map(entry => ({
     baseTime: entry.basetime,
     validTime: entry.validtime,
     validAt: jmaTimestampToMillis(entry.validtime),
-    tiles: [{ x: 0, y: 0, destX: 0, destY: 0, url: framePath(entry.validtime) }],
+    tiles: [{ x: 0, y: 0, destX: 0, destY: 0, url: framePath(variant, entry.validtime) }],
   }));
   return {
     source: "radar",
