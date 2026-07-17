@@ -1,0 +1,184 @@
+name: Temporary radar R2 health audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/radar-r2-health-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+      AWS_DEFAULT_REGION: auto
+      R2_BUCKET: homepanel-updates
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pillow
+        run: python -m pip install --disable-pip-version-check "Pillow==11.3.0"
+
+      - name: Resolve R2 endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "Cloudflare API token is missing" >&2; exit 1; }
+          verify="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            https://api.cloudflare.com/client/v4/user/tokens/verify)"
+          token_id="$(jq -er '.result.id' <<<"$verify")"
+          secret="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)"
+          accounts="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts?per_page=50')"
+          export AWS_ACCESS_KEY_ID="$token_id" AWS_SECRET_ACCESS_KEY="$secret"
+          match=""
+          while read -r account_id; do
+            endpoint="https://${account_id}.r2.cloudflarestorage.com"
+            if aws s3api head-bucket --endpoint-url "$endpoint" --bucket "$R2_BUCKET" >/dev/null 2>&1; then
+              test -z "$match" || { echo "Multiple accounts expose $R2_BUCKET" >&2; exit 1; }
+              match="$account_id"
+            fi
+          done < <(jq -r '.result[].id' <<<"$accounts")
+          test -n "$match" || { echo "R2 bucket is not accessible: $R2_BUCKET" >&2; exit 1; }
+          echo "::add-mask::$token_id"
+          echo "::add-mask::$secret"
+          echo "AWS_ACCESS_KEY_ID=$token_id" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=$secret" >> "$GITHUB_ENV"
+          echo "R2_ENDPOINT=https://${match}.r2.cloudflarestorage.com" >> "$GITHUB_ENV"
+
+      - name: Download radar manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws s3api get-object \
+            --endpoint-url "$R2_ENDPOINT" \
+            --bucket "$R2_BUCKET" \
+            --key radar/manifest.json \
+            manifest.json >/dev/null
+
+      - name: Validate manifest and frame objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import pathlib
+
+          manifest = json.loads(pathlib.Path('manifest.json').read_text(encoding='utf-8'))
+          frames = manifest.get('frames') or []
+          generated_at = dt.datetime.fromisoformat(str(manifest.get('generatedAt', '')).replace('Z', '+00:00'))
+          now = dt.datetime.now(dt.timezone.utc)
+          generated_age = (now - generated_at).total_seconds()
+          current_at_ms = manifest.get('currentAt')
+          if not isinstance(current_at_ms, (int, float)) or isinstance(current_at_ms, bool):
+              raise SystemExit(f"invalid currentAt: {current_at_ms!r}")
+          current_at = dt.datetime.fromtimestamp(current_at_ms / 1000, tz=dt.timezone.utc)
+          current_age = (now - current_at).total_seconds()
+
+          if manifest.get('version') != 2:
+              raise SystemExit(f"unexpected manifest version: {manifest.get('version')}")
+          if manifest.get('renderVersion') != 'gha-v3':
+              raise SystemExit(f"unexpected renderVersion: {manifest.get('renderVersion')}")
+          if manifest.get('precomposed') is not True:
+              raise SystemExit('manifest is not marked precomposed')
+          if manifest.get('layers') != ['satellite', 'radar', 'map']:
+              raise SystemExit(f"unexpected layers: {manifest.get('layers')}")
+          if len(frames) != 13:
+              raise SystemExit(f"unexpected frame count: {len(frames)}")
+          if generated_age < -300 or generated_age > 900:
+              raise SystemExit(f"manifest is stale: generated age {generated_age:.1f}s")
+          if current_age < -300 or current_age > 1200:
+              raise SystemExit(f"current frame is stale: current age {current_age:.1f}s")
+
+          keys = []
+          valid_times = []
+          valid_ats = []
+          for frame in frames:
+              key = frame.get('key')
+              valid_time = frame.get('validTime')
+              valid_at = frame.get('validAt')
+              if not isinstance(key, str) or not key.startswith('radar/frames/gha-v3-') or not key.endswith('.webp'):
+                  raise SystemExit(f"invalid frame key: {key!r}")
+              if not isinstance(valid_time, str) or len(valid_time) != 14 or not valid_time.isdigit():
+                  raise SystemExit(f"invalid validTime: {valid_time!r}")
+              if not isinstance(valid_at, (int, float)) or isinstance(valid_at, bool):
+                  raise SystemExit(f"invalid validAt: {valid_at!r}")
+              keys.append(key)
+              valid_times.append(valid_time)
+              valid_ats.append(int(valid_at))
+          if valid_times != sorted(valid_times) or len(set(valid_times)) != 13:
+              raise SystemExit('frame valid times are not unique and ordered')
+          expected_step = 5 * 60 * 1000
+          if any(right - left != expected_step for left, right in zip(valid_ats, valid_ats[1:])):
+              raise SystemExit('frame interval is not exactly five minutes')
+          if valid_ats[0] != int(current_at_ms) or valid_ats[-1] - valid_ats[0] != 60 * 60 * 1000:
+              raise SystemExit('frame range is not current through plus 60 minutes')
+
+          pathlib.Path('frame-keys.txt').write_text('\n'.join(keys) + '\n', encoding='utf-8')
+          pathlib.Path('health-summary.json').write_text(json.dumps({
+              'renderVersion': manifest.get('renderVersion'),
+              'generatedAt': manifest.get('generatedAt'),
+              'generatedAgeSeconds': round(generated_age, 1),
+              'currentAtUtc': current_at.isoformat(),
+              'currentAgeSeconds': round(current_age, 1),
+              'frameCount': len(frames),
+              'firstValidTime': valid_times[0],
+              'lastValidTime': valid_times[-1],
+              'layers': manifest.get('layers'),
+          }, separators=(',', ':')), encoding='utf-8')
+          print(pathlib.Path('health-summary.json').read_text(encoding='utf-8'))
+          PY
+
+          count=0
+          total_bytes=0
+          first_key=""
+          last_key=""
+          while IFS= read -r key; do
+            test -n "$key" || continue
+            size="$(aws s3api head-object \
+              --endpoint-url "$R2_ENDPOINT" \
+              --bucket "$R2_BUCKET" \
+              --key "$key" \
+              --query ContentLength \
+              --output text)"
+            test "$size" -gt 0
+            count=$((count + 1))
+            total_bytes=$((total_bytes + size))
+            test -n "$first_key" || first_key="$key"
+            last_key="$key"
+          done < frame-keys.txt
+          test "$count" -eq 13
+
+          aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$first_key" first.webp >/dev/null
+          aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$last_key" last.webp >/dev/null
+          python - <<'PY'
+          from PIL import Image
+          for name in ('first.webp', 'last.webp'):
+              with Image.open(name) as image:
+                  if image.format != 'WEBP' or image.size != (1920, 1280):
+                      raise SystemExit(f"unexpected {name}: {image.format} {image.size}")
+                  image.verify()
+          PY
+          echo "R2_HEALTH frames=$count total_bytes=$total_bytes first_key=$first_key last_key=$last_key"
+
+      - name: Count radar objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws s3api list-objects-v2 \
+            --endpoint-url "$R2_ENDPOINT" \
+            --bucket "$R2_BUCKET" \
+            --prefix radar/ \
+            --query '{count:KeyCount,totalBytes:sum(Contents[].Size)}' \
+            --output json
