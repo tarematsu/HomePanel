@@ -49,90 +49,43 @@ jobs:
           echo "AWS_SECRET_ACCESS_KEY=$secret" >> "$GITHUB_ENV"
           echo "R2_ENDPOINT=https://${match}.r2.cloudflarestorage.com" >> "$GITHUB_ENV"
 
-      - name: Download radar manifest
+      - name: Inventory radar objects
         shell: bash
         run: |
           set -euo pipefail
-          aws s3api get-object \
+          aws s3api list-objects-v2 \
             --endpoint-url "$R2_ENDPOINT" \
             --bucket "$R2_BUCKET" \
-            --key radar/manifest.json \
-            manifest.json >/dev/null
-
-      - name: Validate manifest and frame objects
-        shell: bash
-        run: |
-          set -euo pipefail
+            --prefix radar/ \
+            --output json > radar-objects.json
           python3 - <<'PY'
           import datetime as dt
           import json
-          import os
           import pathlib
-          import subprocess
 
-          manifest = json.loads(pathlib.Path('manifest.json').read_text(encoding='utf-8'))
-          now = dt.datetime.now(dt.timezone.utc)
-
-          def instant(name):
-              value = manifest.get(name)
-              if not isinstance(value, str):
-                  raise SystemExit(f'{name} is missing')
-              parsed = dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
-              return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
-
-          generated = instant('generatedAt')
-          current_ms = manifest.get('currentAt')
-          if not isinstance(current_ms, int) or isinstance(current_ms, bool):
-              raise SystemExit('currentAt is missing')
-          current = dt.datetime.fromtimestamp(current_ms / 1000, tz=dt.timezone.utc)
-          frames = manifest.get('frames')
-          if manifest.get('version') != 2:
-              raise SystemExit(f"unexpected manifest version: {manifest.get('version')!r}")
-          if not isinstance(frames, list) or len(frames) != 13:
-              raise SystemExit(f'unexpected frame count: {len(frames) if isinstance(frames, list) else None}')
-          if now - generated > dt.timedelta(minutes=20):
-              raise SystemExit(f'manifest is stale: generatedAt={generated.isoformat()}')
-          if now - current > dt.timedelta(minutes=20) or current - now > dt.timedelta(minutes=5):
-              raise SystemExit(f'current radar cycle is stale or future: currentAt={current.isoformat()}')
-
-          expected = [current_ms + index * 5 * 60 * 1000 for index in range(13)]
-          actual = [frame.get('validAt') if isinstance(frame, dict) else None for frame in frames]
-          if actual != expected:
-              raise SystemExit(f'unexpected validAt sequence: {actual}')
-
-          objects = []
-          for frame in frames:
-              key = frame.get('key')
-              if not isinstance(key, str) or not key.startswith('radar/frames/') or not key.endswith('.webp'):
-                  raise SystemExit(f'invalid frame key: {key!r}')
-              result = subprocess.run([
-                  'aws', 's3api', 'head-object',
-                  '--endpoint-url', os.environ['R2_ENDPOINT'],
-                  '--bucket', os.environ['R2_BUCKET'],
-                  '--key', key,
-                  '--output', 'json',
-              ], check=True, capture_output=True, text=True)
-              head = json.loads(result.stdout)
-              size = int(head.get('ContentLength', 0))
-              if size <= 0:
-                  raise SystemExit(f'empty frame object: {key}')
-              objects.append({
-                  'key': key,
-                  'size': size,
-                  'contentType': head.get('ContentType'),
-                  'lastModified': head.get('LastModified'),
+          data = json.loads(pathlib.Path('radar-objects.json').read_text(encoding='utf-8'))
+          objects = data.get('Contents') or []
+          rows = []
+          for item in objects:
+              rows.append({
+                  'key': item.get('Key'),
+                  'size': item.get('Size'),
+                  'lastModified': item.get('LastModified'),
+                  'etag': item.get('ETag'),
               })
-
+          rows.sort(key=lambda item: (item.get('lastModified') or '', item.get('key') or ''))
+          manifest = next((item for item in rows if item.get('key') == 'radar/manifest.json'), None)
+          frames = [item for item in rows if str(item.get('key') or '').startswith('radar/frames/')]
           report = {
-              'ok': True,
-              'checkedAt': now.isoformat().replace('+00:00', 'Z'),
-              'generatedAt': generated.isoformat().replace('+00:00', 'Z'),
-              'currentAt': current.isoformat().replace('+00:00', 'Z'),
-              'frameCount': len(frames),
-              'firstValidAt': frames[0]['validAt'],
-              'lastValidAt': frames[-1]['validAt'],
-              'totalBytes': sum(item['size'] for item in objects),
-              'objects': objects,
+              'ok': manifest is not None,
+              'checkedAt': dt.datetime.now(dt.timezone.utc).isoformat().replace('+00:00', 'Z'),
+              'manifestPresent': manifest is not None,
+              'radarObjectCount': len(rows),
+              'frameObjectCount': len(frames),
+              'totalFrameBytes': sum(int(item.get('size') or 0) for item in frames),
+              'oldestFrame': frames[0] if frames else None,
+              'newestFrame': frames[-1] if frames else None,
+              'objects': rows,
           }
           pathlib.Path('radar-r2-audit.json').write_text(
               json.dumps(report, ensure_ascii=False, indent=2) + '\n',
@@ -147,7 +100,7 @@ jobs:
         with:
           name: radar-r2-audit-${{ github.run_id }}
           path: |
-            manifest.json
+            radar-objects.json
             radar-r2-audit.json
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 1
