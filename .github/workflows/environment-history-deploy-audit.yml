@@ -1,0 +1,76 @@
+name: Temporary environment history deploy audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/environment-history-deploy-audit.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EXPECTED_MAIN_SHA: 9e5c33b2834c892f90f46fe0252fb61375555c3d
+
+    steps:
+      - name: Wait for production deploy
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          run_id=""
+          for attempt in $(seq 1 90); do
+            curl --fail-with-body --silent --show-error "${auth[@]}" \
+              "$api/actions/workflows/cloud-deploy.yml/runs?event=push&branch=main&per_page=30" > runs.json
+            run_id="$(jq -r --arg sha "$EXPECTED_MAIN_SHA" '.workflow_runs | map(select(.head_sha == $sha)) | .[0].id // empty' runs.json)"
+            if [[ -n "$run_id" ]]; then
+              curl --fail-with-body --silent --show-error "${auth[@]}" \
+                "$api/actions/runs/$run_id" > run.json
+              status="$(jq -r '.status' run.json)"
+              conclusion="$(jq -r '.conclusion // empty' run.json)"
+              echo "deploy run=$run_id status=$status conclusion=${conclusion:-pending} attempt=$attempt/90"
+              if [[ "$status" == completed ]]; then
+                test "$conclusion" = success || { jq . run.json; exit 1; }
+                break
+              fi
+            else
+              echo "deploy run not found, attempt=$attempt/90"
+            fi
+            sleep 10
+          done
+          test -n "$run_id"
+          test "$(jq -r '.status' run.json)" = completed
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Verify deploy steps
+        env:
+          RUN_ID: ${{ steps.deploy.outputs.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          curl --fail-with-body --silent --show-error "${auth[@]}" \
+            "$api/actions/runs/$RUN_ID/jobs?per_page=20" > jobs.json
+          for step in "Type check and Worker tests" "Apply migrations and deploy the Worker"; do
+            result="$(jq -r --arg step "$step" '[.jobs[].steps[]? | select(.name == $step)][0].conclusion // empty' jobs.json)"
+            echo "$step=$result"
+            test "$result" = success
+          done
+
+      - name: Verify production health
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            https://homepanel-cloud.tarematsu.workers.dev/v1/health > health.json
+          jq -e '.ok == true and (.now | type == "string")' health.json >/dev/null
+          cat health.json
