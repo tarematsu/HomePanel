@@ -1,0 +1,88 @@
+name: Temporary radar workflow reactivation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/radar-workflow-reactivation.yml"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  reactivate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Disable and re-enable production radar workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          headers=(
+            -H "Authorization: Bearer $GH_TOKEN"
+            -H "Accept: application/vnd.github+json"
+            -H "X-GitHub-Api-Version: 2022-11-28"
+          )
+          mkdir -p report
+          curl --fail-with-body --silent --show-error "${headers[@]}" \
+            "$api/actions/workflows/radar-frames.yml" > report/before.json
+          workflow_id="$(jq -er '.id' report/before.json)"
+          test "$(jq -r '.state' report/before.json)" = active
+
+          reenable() {
+            curl --fail-with-body --silent --show-error -X PUT "${headers[@]}" \
+              "$api/actions/workflows/$workflow_id/enable" >/dev/null
+          }
+          trap reenable EXIT
+
+          curl --fail-with-body --silent --show-error -X PUT "${headers[@]}" \
+            "$api/actions/workflows/$workflow_id/disable" >/dev/null
+          disabled=""
+          for attempt in $(seq 1 20); do
+            curl --fail-with-body --silent --show-error "${headers[@]}" \
+              "$api/actions/workflows/$workflow_id" > report/disabled.json
+            disabled="$(jq -r '.state' report/disabled.json)"
+            [[ "$disabled" == disabled_manually ]] && break
+            sleep 1
+          done
+          test "$disabled" = disabled_manually
+
+          reenable
+          trap - EXIT
+          enabled=""
+          for attempt in $(seq 1 20); do
+            curl --fail-with-body --silent --show-error "${headers[@]}" \
+              "$api/actions/workflows/$workflow_id" > report/after.json
+            enabled="$(jq -r '.state' report/after.json)"
+            [[ "$enabled" == active ]] && break
+            sleep 1
+          done
+          test "$enabled" = active
+
+          jq -n \
+            --arg reactivatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --slurpfile before report/before.json \
+            --slurpfile disabled report/disabled.json \
+            --slurpfile after report/after.json \
+            '{
+              reactivatedAt: $reactivatedAt,
+              workflowId: $before[0].id,
+              beforeState: $before[0].state,
+              disabledState: $disabled[0].state,
+              afterState: $after[0].state,
+              path: $after[0].path,
+              updatedAt: $after[0].updated_at
+            }' > report/reactivation-summary.json
+          jq . report/reactivation-summary.json
+
+      - name: Upload reactivation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: radar-workflow-reactivation-${{ github.run_id }}
+          path: report/
+          if-no-files-found: warn
+          retention-days: 1
