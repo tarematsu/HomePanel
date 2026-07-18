@@ -4,42 +4,50 @@
 #include "winhttp_helpers.h"
 
 namespace hp {
+inline bool ContainsInsensitive(const std::wstring& value,
+                                const wchar_t* needle) noexcept {
+  return needle && StrStrIW(value.c_str(), needle) != nullptr;
+}
+
+inline const wchar_t* ArtworkExtensionFromUrl(const std::wstring& url) noexcept {
+  size_t end = url.find_first_of(L"?#");
+  if (end == std::wstring::npos) end = url.size();
+  if (end == 0) return nullptr;
+  const size_t dot = url.rfind(L'.', end - 1);
+  if (dot == std::wstring::npos) return nullptr;
+  const size_t length = end - dot;
+  const auto matches = [&](const wchar_t* extension) noexcept {
+    const size_t expected = wcslen(extension);
+    return length == expected &&
+        _wcsnicmp(url.data() + dot, extension, expected) == 0;
+  };
+  if (matches(L".png")) return L".png";
+  if (matches(L".jpg") || matches(L".jpeg")) return L".jpg";
+  if (matches(L".webp")) return L".webp";
+  if (matches(L".gif")) return L".gif";
+  if (matches(L".bmp")) return L".bmp";
+  return nullptr;
+}
+
 inline std::wstring GuessArtworkExtension(const std::wstring& contentType,
-                                          const std::wstring& url) {
-  const std::wstring loweredType = [&] {
-    std::wstring value = contentType;
-    std::transform(value.begin(), value.end(), value.begin(), towlower);
-    return value;
-  }();
-  if (loweredType.find(L"image/png") != std::wstring::npos) return L".png";
-  if (loweredType.find(L"image/webp") != std::wstring::npos) return L".webp";
-  if (loweredType.find(L"image/gif") != std::wstring::npos) return L".gif";
-  if (loweredType.find(L"image/bmp") != std::wstring::npos) return L".bmp";
-  if (loweredType.find(L"image/jpeg") != std::wstring::npos ||
-      loweredType.find(L"image/jpg") != std::wstring::npos) {
+                                           const std::wstring& url) {
+  if (ContainsInsensitive(contentType, L"image/png")) return L".png";
+  if (ContainsInsensitive(contentType, L"image/webp")) return L".webp";
+  if (ContainsInsensitive(contentType, L"image/gif")) return L".gif";
+  if (ContainsInsensitive(contentType, L"image/bmp")) return L".bmp";
+  if (ContainsInsensitive(contentType, L"image/jpeg") ||
+      ContainsInsensitive(contentType, L"image/jpg")) {
     return L".jpg";
   }
 
-  const size_t query = url.find_first_of(L"?#");
-  const std::wstring path = url.substr(0, query);
-  const size_t dot = path.find_last_of(L'.');
-  if (dot != std::wstring::npos) {
-    std::wstring extension = path.substr(dot);
-    std::transform(
-        extension.begin(), extension.end(), extension.begin(), towlower);
-    if (extension == L".png" || extension == L".jpg" ||
-        extension == L".jpeg" || extension == L".webp" ||
-        extension == L".gif" || extension == L".bmp") {
-      return extension == L".jpeg" ? L".jpg" : extension;
-    }
-  }
+  if (const wchar_t* extension = ArtworkExtensionFromUrl(url)) return extension;
   return L".img";
 }
 
 inline std::wstring CacheArtworkUrl(const fs::path& dataDir,
-                                    const std::wstring& artworkUrl,
-                                    const wchar_t* userAgent =
-                                        L"HomePanel-Artwork-Cache/1.0") {
+                                     const std::wstring& artworkUrl,
+                                     const wchar_t* userAgent =
+                                         L"HomePanel-Artwork-Cache/1.0") {
   if (artworkUrl.empty()) return {};
   if (artworkUrl.rfind(L"https://data.homepanel/", 0) == 0) return artworkUrl;
 
@@ -51,15 +59,15 @@ inline std::wstring CacheArtworkUrl(const fs::path& dataDir,
   std::error_code error;
   fs::create_directories(cacheDir, error);
 
-  for (const wchar_t* extension :
-       {L".jpg", L".png", L".webp", L".gif", L".bmp", L".img"}) {
+  std::wstring localUrl = L"https://data.homepanel/spotify-artwork-cache/";
+  localUrl += stem;
+  static constexpr const wchar_t* kExtensions[] = {
+      L".jpg", L".png", L".webp", L".gif", L".bmp", L".img"};
+  for (const wchar_t* extension : kExtensions) {
     const fs::path cached = cacheDir / (stem + extension);
-    if (fs::is_regular_file(cached, error) &&
-        fs::file_size(cached, error) > 0) {
-      return L"https://data.homepanel/spotify-artwork-cache/" +
-          cached.filename().wstring();
-    }
-    error.clear();
+    std::error_code itemError;
+    const auto size = fs::file_size(cached, itemError);
+    if (!itemError && size > 0) return localUrl + extension;
   }
 
   std::vector<uint8_t> bytes;
@@ -69,10 +77,9 @@ inline std::wstring CacheArtworkUrl(const fs::path& dataDir,
     return artworkUrl;
   }
 
-  const fs::path cached =
-      cacheDir / (stem + GuessArtworkExtension(contentType, artworkUrl));
+  const std::wstring extension = GuessArtworkExtension(contentType, artworkUrl);
+  const fs::path cached = cacheDir / (stem + extension);
   if (!AtomicWriteBytes(cached, bytes)) return artworkUrl;
-  return L"https://data.homepanel/spotify-artwork-cache/" +
-      cached.filename().wstring();
+  return localUrl + extension;
 }
-}
+}  // namespace hp
