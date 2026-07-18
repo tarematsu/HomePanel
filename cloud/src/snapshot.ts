@@ -39,6 +39,10 @@ const META_SOURCE_NAMES = [...DASHBOARD_SOURCE_NAMES, "radar"] as const;
 const META_SOURCE_PLACEHOLDERS = "?,?,?,?,?,?,?";
 const STATE_HEARTBEAT_MS = 15 * 60_000;
 
+type DashboardSourceName = typeof DASHBOARD_SOURCE_NAMES[number];
+type CachedDashboardSource = { key: string; value: unknown };
+const DASHBOARD_SOURCE_CACHE = new Map<DashboardSourceName, CachedDashboardSource>();
+
 export async function sha256Hex(value: string | ArrayBuffer): Promise<string> {
   const bytes = typeof value === "string" ? UTF8_ENCODER.encode(value) : new Uint8Array(value);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -82,29 +86,45 @@ function dashboardSourcePayload(name: string, payload: Record<string, unknown>):
   };
 }
 
+function dashboardSourceCacheKey(name: DashboardSourceName, row: StateRow): string {
+  const octopusDay = name === "octopus" ? jstDayKey(Date.now() - 86_400_000) : "";
+  return `${row.version}\u0000${row.status}\u0000${row.error ?? ""}\u0000${row.last_success_at ?? ""}\u0000${row.content_hash ?? ""}\u0000${octopusDay}`;
+}
+
+function transformedDashboardSource(name: DashboardSourceName, row: StateRow): unknown {
+  const key = dashboardSourceCacheKey(name, row);
+  const cached = DASHBOARD_SOURCE_CACHE.get(name);
+  if (cached?.key === key) return cached.value;
+
+  let value: unknown;
+  try {
+    const parsed = JSON.parse(row.payload) as Record<string, unknown>;
+    const payload = dashboardSourcePayload(name, parsed);
+    value = {
+      ...payload,
+      __status: row.status,
+      __error: row.error,
+      __lastSuccessAt: row.status === "ok" ? null : row.last_success_at,
+      __version: row.version,
+    };
+  } catch {
+    value = {
+      __status: "error",
+      __error: `${name} payload is invalid JSON`,
+      __lastSuccessAt: row.last_success_at,
+      __version: row.version,
+    };
+  }
+  DASHBOARD_SOURCE_CACHE.set(name, { key, value });
+  return value;
+}
+
 export function dashboardPayload(rows: Record<string, StateRow>): DashboardStates {
   const states: DashboardStates = {};
   for (const name of DASHBOARD_SOURCE_NAMES) {
     const row = rows[name];
     if (!row) continue;
-    try {
-      const parsed = JSON.parse(row.payload) as Record<string, unknown>;
-      const payload = dashboardSourcePayload(name, parsed);
-      states[name as keyof DashboardStates] = {
-        ...payload,
-        __status: row.status,
-        __error: row.error,
-        __lastSuccessAt: row.status === "ok" ? null : row.last_success_at,
-        __version: row.version,
-      } as never;
-    } catch {
-      states[name as keyof DashboardStates] = {
-        __status: "error",
-        __error: `${name} payload is invalid JSON`,
-        __lastSuccessAt: row.last_success_at,
-        __version: row.version,
-      } as never;
-    }
+    states[name as keyof DashboardStates] = transformedDashboardSource(name, row) as never;
   }
   return states;
 }
