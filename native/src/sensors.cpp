@@ -1,4 +1,5 @@
 #include "sensors.h"
+#include <charconv>
 #include <cmath>
 
 namespace hp {
@@ -29,6 +30,7 @@ enum class LineResult { Line, Timeout, Error, Stopped };
 
 std::string EscapeJson(const std::string& value) {
   std::string out;
+  out.reserve(value.size());
   for (char c : value) {
     if (c == '"' || c == '\\') { out.push_back('\\'); out.push_back(c); }
     else if (c == '\n') out += "\\n";
@@ -37,14 +39,41 @@ std::string EscapeJson(const std::string& value) {
   return out;
 }
 
-std::string SampleJson(const SensorHub::Sample& s) {
-  std::ostringstream out;
-  out << std::fixed << std::setprecision(2)
-      << "{\"sequence\":" << s.sequence << ",\"observedAt\":" << s.observedAt
-      << ",\"co2\":" << s.co2 << ",\"temperature\":" << s.temperature
-      << ",\"humidity\":" << s.humidity << ",\"temperatureCorrected\":" << s.temperatureCorrected
-      << ",\"humidityCorrected\":" << s.humidityCorrected << '}';
-  return out.str();
+template <typename T>
+void AppendInteger(std::string& output, T value) {
+  char buffer[32];
+  const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+  if (result.ec != std::errc{}) throw std::runtime_error("telemetry integer formatting failed");
+  output.append(buffer, result.ptr);
+}
+
+void AppendFixed(std::string& output, double value) {
+  char buffer[64];
+  const auto result = std::to_chars(
+      buffer, buffer + sizeof(buffer), value, std::chars_format::fixed, 2);
+  if (result.ec != std::errc{}) throw std::runtime_error("telemetry decimal formatting failed");
+  output.append(buffer, result.ptr);
+}
+
+std::string SampleJson(const SensorHub::Sample& sample) {
+  std::string output;
+  output.reserve(192);
+  output += "{\"sequence\":";
+  AppendInteger(output, sample.sequence);
+  output += ",\"observedAt\":";
+  AppendInteger(output, sample.observedAt);
+  output += ",\"co2\":";
+  AppendInteger(output, sample.co2);
+  output += ",\"temperature\":";
+  AppendFixed(output, sample.temperature);
+  output += ",\"humidity\":";
+  AppendFixed(output, sample.humidity);
+  output += ",\"temperatureCorrected\":";
+  AppendFixed(output, sample.temperatureCorrected);
+  output += ",\"humidityCorrected\":";
+  AppendFixed(output, sample.humidityCorrected);
+  output.push_back('}');
+  return output;
 }
 
 bool ConfigurePort(HANDLE serial) {
