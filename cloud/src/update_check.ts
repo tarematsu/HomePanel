@@ -68,6 +68,8 @@ async function performUpdateCheck(env: Env): Promise<void> {
   });
 }
 
+// Share work only when both binding objects match; separate test and deployment
+// environments must remain independent even inside the same JavaScript isolate.
 function coalescedUpdateCheck(env: Env): Promise<void> {
   const bucket = env.UPDATE_BUCKET;
   if (!bucket) return Promise.resolve();
