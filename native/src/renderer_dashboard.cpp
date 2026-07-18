@@ -8,23 +8,31 @@ bool Renderer::LoadDashboard(const fs::path& jsonPath, bool* changed) {
     std::error_code error;
     const fs::path normalizedPath = jsonPath.lexically_normal();
     const std::uintmax_t sourceSize = fs::file_size(normalizedPath, error);
-    if (error) return false;
+    if (error || sourceSize == 0 ||
+        sourceSize > static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max())) {
+      return false;
+    }
     const fs::file_time_type modifiedAt = fs::last_write_time(normalizedPath, error);
     if (error) return false;
 
-    const DashboardSourceStamp nextStamp{
-        normalizedPath, sourceSize, modifiedAt, true};
     if (dashboardSourceStamp_.valid &&
-        dashboardSourceStamp_.path == nextStamp.path &&
-        dashboardSourceStamp_.size == nextStamp.size &&
-        dashboardSourceStamp_.modifiedAt == nextStamp.modifiedAt) {
+        dashboardSourceStamp_.path == normalizedPath &&
+        dashboardSourceStamp_.size == sourceSize &&
+        dashboardSourceStamp_.modifiedAt == modifiedAt) {
       return true;
     }
 
     std::ifstream input(normalizedPath, std::ios::binary);
     if (!input) return false;
-    std::string text((std::istreambuf_iterator<char>(input)), {});
-    if (text.empty()) return false;
+    std::string text(static_cast<size_t>(sourceSize), '\0');
+    input.read(text.data(), static_cast<std::streamsize>(text.size()));
+    if (input.gcount() != static_cast<std::streamsize>(text.size()) ||
+        input.peek() != std::char_traits<char>::eof()) {
+      return false;
+    }
+
+    const DashboardSourceStamp nextStamp{
+        normalizedPath, sourceSize, modifiedAt, true};
     if (text == dashboardUtf8_) {
       dashboardSourceStamp_ = nextStamp;
       return true;
