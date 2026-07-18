@@ -12,6 +12,8 @@ const RADAR_MANIFEST_KEY = "radar/manifest.json";
 const RADAR_MANIFEST_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const RADAR_OUTPUT_WIDTH = 1920;
 const RADAR_OUTPUT_HEIGHT = 1280;
+const RADAR_LEGEND = [0, 1, 2, 4, 8, 16, 32, 64] as const;
+const RADAR_FRAME_PATH = /^\/v1\/radar\/frame\/([a-z0-9-]{1,96})\/(\d{14})\.webp$/;
 const JMA_OBSERVED_TIMES_URL = "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N1.json";
 const JMA_FORECAST_TIMES_URL = "https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N2.json";
 
@@ -26,27 +28,44 @@ type RadarManifestFrame = {
 };
 
 function jmaTimestampToMillis(value: string): number {
-  if (!/^\d{14}$/.test(value)) return 0;
-  return Date.UTC(
-    Number(value.slice(0, 4)), Number(value.slice(4, 6)) - 1, Number(value.slice(6, 8)),
-    Number(value.slice(8, 10)), Number(value.slice(10, 12)), Number(value.slice(12, 14)),
-  );
+  if (value.length !== 14) return 0;
+  const digits = new Uint8Array(14);
+  for (let index = 0; index < 14; index += 1) {
+    const digit = value.charCodeAt(index) - 48;
+    if (digit < 0 || digit > 9) return 0;
+    digits[index] = digit;
+  }
+  const pair = (at: number) => digits[at]! * 10 + digits[at + 1]!;
+  const year = digits[0]! * 1000 + digits[1]! * 100 + digits[2]! * 10 + digits[3]!;
+  return Date.UTC(year, pair(4) - 1, pair(6), pair(8), pair(10), pair(12));
+}
+
+function hasRadarElement(entry: RadarTimeEntry): boolean {
+  return entry.elements?.includes("hrpns") === true;
 }
 
 export function selectRadarForecastEntries(
   observed: RadarTimeEntry[],
   forecast: RadarTimeEntry[],
 ): RadarTimeEntry[] {
-  const observedAvailable = observed
-    .filter(entry => entry.elements?.includes("hrpns") && jmaTimestampToMillis(entry.validtime) > 0)
-    .sort((a, b) => a.validtime.localeCompare(b.validtime));
-  const forecastAvailable = forecast
-    .filter(entry => entry.elements?.includes("hrpns") && jmaTimestampToMillis(entry.validtime) > 0);
-  const forecastBaseTimes = new Set(forecastAvailable.map(entry => entry.basetime));
-  const current = observedAvailable
-    .slice()
-    .reverse()
-    .find(entry => entry.basetime === entry.validtime && forecastBaseTimes.has(entry.basetime));
+  const forecastAvailable: RadarTimeEntry[] = [];
+  const forecastBaseTimes = new Set<string>();
+  for (const entry of forecast) {
+    if (!hasRadarElement(entry) || jmaTimestampToMillis(entry.validtime) <= 0) continue;
+    forecastAvailable.push(entry);
+    forecastBaseTimes.add(entry.basetime);
+  }
+
+  let current: RadarTimeEntry | null = null;
+  for (const entry of observed) {
+    if (!hasRadarElement(entry)
+        || entry.basetime !== entry.validtime
+        || !forecastBaseTimes.has(entry.basetime)
+        || jmaTimestampToMillis(entry.validtime) <= 0) {
+      continue;
+    }
+    if (!current || entry.validtime.localeCompare(current.validtime) > 0) current = entry;
+  }
   if (!current) return [];
 
   const currentAt = jmaTimestampToMillis(current.validtime);
@@ -59,9 +78,11 @@ export function selectRadarForecastEntries(
       futureByValidTime.set(entry.validtime, entry);
     }
   }
-  const future = [...futureByValidTime.values()]
-    .sort((a, b) => a.validtime.localeCompare(b.validtime));
-  return future.length ? [current, ...future] : [];
+  const future = Array.from(futureByValidTime.values());
+  future.sort((left, right) => left.validtime.localeCompare(right.validtime));
+  if (!future.length) return [];
+  future.unshift(current);
+  return future;
 }
 
 function radarTileLayout(lat: number, lon: number, zoom: number, width: number, height: number): RadarTileLayout[] {
@@ -75,9 +96,12 @@ function radarTileLayout(lat: number, lon: number, zoom: number, width: number, 
   const maxX = Math.floor((left + width - 1) / 256);
   const minY = Math.floor(top / 256);
   const maxY = Math.floor((top + height - 1) / 256);
-  const output: RadarTileLayout[] = [];
+  const columns = maxX - minX + 1;
+  const output = new Array<RadarTileLayout>(columns * (maxY - minY + 1));
+  let index = 0;
   for (let y = minY; y <= maxY; y += 1) for (let x = minX; x <= maxX; x += 1) {
-    output.push({ x, y, destX: Math.round(x * 256 - left), destY: Math.round(y * 256 - top) });
+    output[index] = { x, y, destX: Math.round(x * 256 - left), destY: Math.round(y * 256 - top) };
+    index += 1;
   }
   return output;
 }
@@ -153,17 +177,30 @@ async function radarFromManifest(env: Env): Promise<SourceResult | null> {
   }
 
   const rawFrames = Array.isArray(root.frames) ? root.frames : [];
-  const parsedFrames = rawFrames
-    .map(manifestFrame)
-    .filter((frame): frame is RadarManifestFrame => frame !== null)
-    .sort((a, b) => a.validAt - b.validAt);
-  const currentFrame = parsedFrames.find(frame => frame.validAt === currentAt && frame.baseTime === frame.validTime);
+  const parsedFrames: RadarManifestFrame[] = [];
+  for (const rawFrame of rawFrames) {
+    const frame = manifestFrame(rawFrame);
+    if (frame) parsedFrames.push(frame);
+  }
+  parsedFrames.sort((left, right) => left.validAt - right.validAt);
+  let currentFrame: RadarManifestFrame | null = null;
+  for (const frame of parsedFrames) {
+    if (frame.validAt === currentAt && frame.baseTime === frame.validTime) {
+      currentFrame = frame;
+      break;
+    }
+  }
   if (!currentFrame) return null;
-  const frames = parsedFrames.filter(frame => (
-    frame.baseTime === currentFrame.baseTime
-      && frame.validAt >= currentAt
-      && frame.validAt <= currentAt + RADAR_FORECAST_WINDOW_MS
-  ));
+
+  const frames: RadarManifestFrame[] = [];
+  const forecastEnd = currentAt + RADAR_FORECAST_WINDOW_MS;
+  for (const frame of parsedFrames) {
+    if (frame.baseTime === currentFrame.baseTime
+        && frame.validAt >= currentAt
+        && frame.validAt <= forecastEnd) {
+      frames.push(frame);
+    }
+  }
   if (frames.length < 2) return null;
 
   const centerValue = root.center;
@@ -175,10 +212,20 @@ async function radarFromManifest(env: Env): Promise<SourceResult | null> {
     lon: manifestNumber(centerRoot, "lon", DEFAULT_RADAR_CENTER.lon, -180, 180),
   };
   const zoom = Math.trunc(manifestNumber(root, "zoom", DEFAULT_RADAR_ZOOM, 4, 14));
-  const provider = typeof root.provider === "string" && root.provider.trim()
-    ? root.provider.trim()
-    : "JMA current radar and one-hour forecast rendered by GitHub Actions and cached in Cloudflare R2";
+  const suppliedProvider = typeof root.provider === "string" ? root.provider.trim() : "";
+  const provider = suppliedProvider
+    || "JMA current radar and one-hour forecast rendered by GitHub Actions and cached in Cloudflare R2";
   const precomposed = root.precomposed === true;
+  const payloadFrames = new Array<Record<string, unknown>>(frames.length);
+  for (let index = 0; index < frames.length; index += 1) {
+    const frame = frames[index]!;
+    payloadFrames[index] = {
+      baseTime: frame.baseTime,
+      validTime: frame.validTime,
+      validAt: frame.validAt,
+      tiles: [{ x: 0, y: 0, destX: 0, destY: 0, url: frame.url }],
+    };
+  }
 
   return {
     source: "radar",
@@ -194,13 +241,8 @@ async function radarFromManifest(env: Env): Promise<SourceResult | null> {
       forecastWindowMs: RADAR_FORECAST_WINDOW_MS,
       frameIntervalMs: RADAR_FRAME_INTERVAL_MS,
       playbackRate: 1,
-      frames: frames.map(frame => ({
-        baseTime: frame.baseTime,
-        validTime: frame.validTime,
-        validAt: frame.validAt,
-        tiles: [{ x: 0, y: 0, destX: 0, destY: 0, url: frame.url }],
-      })),
-      legend: [0, 1, 2, 4, 8, 16, 32, 64],
+      frames: payloadFrames,
+      legend: RADAR_LEGEND,
     },
     observedAt: currentAt,
   };
@@ -222,15 +264,25 @@ async function radarFromJmaTiles(env: Env): Promise<SourceResult> {
   };
   const layout = radarTileLayout(center.lat, center.lon, zoom, width, height);
   const expires = Math.floor(Date.now() / 1000) + RADAR_TILE_URL_LIFETIME_SECONDS;
-  const frames = await Promise.all(entries.map(async entry => ({
-    baseTime: entry.basetime,
-    validTime: entry.validtime,
-    validAt: jmaTimestampToMillis(entry.validtime),
-    tiles: await Promise.all(layout.map(async tile => {
-      const pathname = `/v1/radar/tile/jma/${entry.basetime}/${entry.validtime}/${zoom}/${tile.x}/${tile.y}.png`;
-      return { ...tile, url: await signedRadarTilePath(env, pathname, expires) };
-    })),
-  })));
+  const framePromises = new Array<Promise<Record<string, unknown>>>(entries.length);
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+    const entry = entries[entryIndex]!;
+    framePromises[entryIndex] = (async () => {
+      const tilePromises = new Array<Promise<Record<string, unknown>>>(layout.length);
+      for (let tileIndex = 0; tileIndex < layout.length; tileIndex += 1) {
+        const tile = layout[tileIndex]!;
+        const pathname = `/v1/radar/tile/jma/${entry.basetime}/${entry.validtime}/${zoom}/${tile.x}/${tile.y}.png`;
+        tilePromises[tileIndex] = signedRadarTilePath(env, pathname, expires).then(url => ({ ...tile, url }));
+      }
+      return {
+        baseTime: entry.basetime,
+        validTime: entry.validtime,
+        validAt: jmaTimestampToMillis(entry.validtime),
+        tiles: await Promise.all(tilePromises),
+      };
+    })();
+  }
+  const frames = await Promise.all(framePromises);
   return {
     source: "radar",
     payload: {
@@ -244,14 +296,14 @@ async function radarFromJmaTiles(env: Env): Promise<SourceResult> {
       frameIntervalMs: RADAR_FRAME_INTERVAL_MS,
       playbackRate: 1,
       frames,
-      legend: [0, 1, 2, 4, 8, 16, 32, 64],
+      legend: RADAR_LEGEND,
     },
     observedAt: currentAt,
   };
 }
 
 export async function radarFrameResponse(pathname: string, env: Env): Promise<Response> {
-  const match = pathname.match(/^\/v1\/radar\/frame\/([a-z0-9-]{1,96})\/(\d{14})\.webp$/);
+  const match = pathname.match(RADAR_FRAME_PATH);
   if (!match || !env.UPDATE_BUCKET) return new Response(null, { status: 404 });
   const object = await env.UPDATE_BUCKET.get(frameKey(match[1]!, match[2]!));
   if (!object?.body) return new Response(null, { status: 404 });
