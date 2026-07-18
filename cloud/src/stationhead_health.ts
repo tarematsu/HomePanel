@@ -8,6 +8,17 @@ const MAX_STALE_MS = 24 * 60 * 60_000;
 const REQUEST_TIMEOUT_MS = 8_000;
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const DEFAULT_FROM = "HomePanel Monitor <onboarding@resend.dev>";
+const HEALTH_REQUEST_HEADERS = { Accept: "application/json", "Cache-Control": "no-cache, no-store" };
+const JST_FORMATTER = new Intl.DateTimeFormat("ja-JP", {
+  timeZone: "Asia/Tokyo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
 
 type RemoteHealth = {
   ok?: boolean;
@@ -22,6 +33,8 @@ type RemoteHealth = {
   collector_last_success_at?: number | null;
   collector_last_error_present?: boolean;
 };
+
+type AlertConfig = { enabled: boolean; apiKey: string; to: string; from: string };
 
 export type StationheadHealthSnapshot = {
   configured: boolean;
@@ -46,19 +59,14 @@ function finite(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-function firstFinite(...values: unknown[]): number | null {
-  for (const value of values) {
-    const number = finite(value);
-    if (number !== null) return number;
-  }
-  return null;
+function firstFinite(first: unknown, second: unknown): number | null {
+  const firstNumber = finite(first);
+  return firstNumber === null ? finite(second) : firstNumber;
 }
 
-function firstBoolean(...values: unknown[]): boolean | null {
-  for (const value of values) {
-    if (typeof value === "boolean") return value;
-  }
-  return null;
+function firstBoolean(first: unknown, second: unknown): boolean | null {
+  if (typeof first === "boolean") return first;
+  return typeof second === "boolean" ? second : null;
 }
 
 function positive(value: unknown, fallback: number): number {
@@ -73,6 +81,30 @@ function objectOrEmpty(value: unknown): RemoteHealth {
     : {};
 }
 
+function unavailableSnapshot(
+  configured: boolean,
+  now: number,
+  staleAfterMs: number,
+  reason: string,
+): StationheadHealthSnapshot {
+  return {
+    configured,
+    reachable: false,
+    healthy: false,
+    statusCode: null,
+    sampledAt: now,
+    lastRunAt: null,
+    lastSuccessAt: null,
+    ageMs: null,
+    staleAfterMs,
+    reason,
+    alertConfigured: false,
+    alertPending: false,
+    recoveryPending: false,
+    alertEventKey: null,
+  };
+}
+
 export function stationheadHealthUrl(env: Pick<Env, "STATIONHEAD_HEALTH_URL" | "STATIONHEAD_MONITOR_URL">): string {
   const explicit = env.STATIONHEAD_HEALTH_URL?.trim();
   if (explicit) return explicit;
@@ -80,11 +112,12 @@ export function stationheadHealthUrl(env: Pick<Env, "STATIONHEAD_HEALTH_URL" | "
   const monitor = env.STATIONHEAD_MONITOR_URL?.trim();
   if (!monitor) throw new Error("STATIONHEAD_HEALTH_URL or STATIONHEAD_MONITOR_URL is not configured");
   const url = new URL(monitor);
-  const path = url.pathname.replace(/\/+$/, "");
-  if (/\/api\/(?:playback|dashboard|health)$/.test(path)) {
-    url.pathname = path.replace(/\/api\/(?:playback|dashboard|health)$/, "/api/health");
-  } else if (/\/api\/[^/]+$/.test(path)) {
-    url.pathname = path.replace(/\/api\/[^/]+$/, "/api/health");
+  let pathEnd = url.pathname.length;
+  while (pathEnd > 0 && url.pathname.charCodeAt(pathEnd - 1) === 47) pathEnd -= 1;
+  const path = url.pathname.slice(0, pathEnd);
+  const apiAt = path.lastIndexOf("/api/");
+  if (apiAt >= 0 && path.indexOf("/", apiAt + 5) === -1) {
+    url.pathname = `${path.slice(0, apiAt + 5)}health`;
   } else {
     url.pathname = `${path}/api/health` || "/api/health";
   }
@@ -153,21 +186,19 @@ function parsePrevious(row: StateRow | null): StationheadHealthSnapshot | null {
   try {
     const value = JSON.parse(row.payload) as StationheadHealthSnapshot;
     if (typeof value?.healthy !== "boolean") return null;
-    return {
-      ...value,
-      alertConfigured: value.alertConfigured === true,
-      alertPending: value.alertPending === true,
-      recoveryPending: value.recoveryPending === true,
-      alertEventKey: typeof value.alertEventKey === "string" && value.alertEventKey
-        ? value.alertEventKey
-        : null,
-    };
+    value.alertConfigured = value.alertConfigured === true;
+    value.alertPending = value.alertPending === true;
+    value.recoveryPending = value.recoveryPending === true;
+    value.alertEventKey = typeof value.alertEventKey === "string" && value.alertEventKey
+      ? value.alertEventKey
+      : null;
+    return value;
   } catch {
     return null;
   }
 }
 
-function alertConfig(env: Env): { enabled: boolean; apiKey: string; to: string; from: string } {
+function alertConfig(env: Env): AlertConfig {
   const apiKey = env.RESEND_API_KEY?.trim() || "";
   const to = env.STATIONHEAD_ALERT_TO?.trim() || "";
   const from = env.STATIONHEAD_ALERT_FROM?.trim() || DEFAULT_FROM;
@@ -175,17 +206,7 @@ function alertConfig(env: Env): { enabled: boolean; apiKey: string; to: string; 
 }
 
 function formatJst(timestamp: number | null): string {
-  if (timestamp == null) return "不明";
-  return new Intl.DateTimeFormat("ja-JP", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(new Date(timestamp));
+  return timestamp == null ? "不明" : JST_FORMATTER.format(new Date(timestamp));
 }
 
 export function alertTransitionKey(
@@ -206,13 +227,16 @@ export function alertTransitionKey(
 }
 
 async function sendTransitionAlert(
-  env: Env,
+  config: AlertConfig,
   snapshot: StationheadHealthSnapshot,
   recovery: boolean,
   eventKey: string,
 ): Promise<void> {
-  const config = alertConfig(env);
   if (!config.enabled) return;
+  const status = snapshot.reason || (snapshot.healthy ? "正常" : "異常");
+  const text = `${recovery
+    ? "Stationhead収集が正常状態へ復帰しました。"
+    : "Stationhead収集が正常に更新されていません。"}\n\n確認時刻: ${formatJst(snapshot.sampledAt)}\n最終実行: ${formatJst(snapshot.lastRunAt)}\n最終成功: ${formatJst(snapshot.lastSuccessAt)}\n状態: ${status}`;
   const response = await fetch(RESEND_ENDPOINT, {
     method: "POST",
     headers: {
@@ -226,14 +250,7 @@ async function sendTransitionAlert(
       subject: recovery
         ? "【HomePanel】Stationhead収集が復旧しました"
         : "【HomePanel】Stationhead収集停止を検知",
-      text: [
-        recovery ? "Stationhead収集が正常状態へ復帰しました。" : "Stationhead収集が正常に更新されていません。",
-        "",
-        `確認時刻: ${formatJst(snapshot.sampledAt)}`,
-        `最終実行: ${formatJst(snapshot.lastRunAt)}`,
-        `最終成功: ${formatJst(snapshot.lastSuccessAt)}`,
-        `状態: ${snapshot.reason || (snapshot.healthy ? "正常" : "異常")}`,
-      ].join("\n"),
+      text,
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
@@ -250,27 +267,17 @@ async function fetchRemoteHealth(env: Env, now: number): Promise<StationheadHeal
   try {
     url = stationheadHealthUrl(env);
   } catch (error) {
-    return {
-      configured: false,
-      reachable: false,
-      healthy: false,
-      statusCode: null,
-      sampledAt: now,
-      lastRunAt: null,
-      lastSuccessAt: null,
-      ageMs: null,
-      staleAfterMs: staleMs,
-      reason: error instanceof Error ? error.message : String(error),
-      alertConfigured: alertConfig(env).enabled,
-      alertPending: false,
-      recoveryPending: false,
-      alertEventKey: null,
-    };
+    return unavailableSnapshot(
+      false,
+      now,
+      staleMs,
+      error instanceof Error ? error.message : String(error),
+    );
   }
 
   try {
     const response = await fetch(url, {
-      headers: { Accept: "application/json", "Cache-Control": "no-cache, no-store" },
+      headers: HEALTH_REQUEST_HEADERS,
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -282,22 +289,12 @@ async function fetchRemoteHealth(env: Env, now: number): Promise<StationheadHeal
     }
     return evaluateStationheadHealth(payload, response.ok, response.status, now, staleMs);
   } catch (error) {
-    return {
-      configured: true,
-      reachable: false,
-      healthy: false,
-      statusCode: null,
-      sampledAt: now,
-      lastRunAt: null,
-      lastSuccessAt: null,
-      ageMs: null,
-      staleAfterMs: staleMs,
-      reason: error instanceof Error ? error.message : String(error),
-      alertConfigured: alertConfig(env).enabled,
-      alertPending: false,
-      recoveryPending: false,
-      alertEventKey: null,
-    };
+    return unavailableSnapshot(
+      true,
+      now,
+      staleMs,
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
 
@@ -334,7 +331,7 @@ export async function runStationheadHealthMonitor(env: Env, now = Date.now()): P
   if (alerts.enabled && (downTransition || recoveryTransition)) {
     current.alertEventKey = alertTransitionKey(current, previous, recoveryTransition);
     try {
-      await sendTransitionAlert(env, current, recoveryTransition, current.alertEventKey);
+      await sendTransitionAlert(alerts, current, recoveryTransition, current.alertEventKey);
       current.alertEventKey = null;
     } catch (error) {
       console.error("Stationhead transition alert failed", error instanceof Error ? error.message : String(error));
@@ -358,20 +355,15 @@ export function stationheadHealthPayload(state: StateRow): Record<string, unknow
     value = {};
   }
   if (state.status !== "ok") {
-    return {
-      ...value,
-      healthy: false,
-      monitorStatus: state.status,
-      reason: state.error || value.reason || "Stationhead health monitor is unavailable",
-    };
+    value.healthy = false;
+    value.monitorStatus = state.status;
+    value.reason = state.error || value.reason || "Stationhead health monitor is unavailable";
+    return value;
   }
   if (typeof value.healthy !== "boolean") {
-    return {
-      ...value,
-      healthy: false,
-      monitorStatus: "error",
-      reason: "Stored Stationhead health payload is invalid",
-    };
+    value.healthy = false;
+    value.monitorStatus = "error";
+    value.reason = "Stored Stationhead health payload is invalid";
   }
   return value;
 }
