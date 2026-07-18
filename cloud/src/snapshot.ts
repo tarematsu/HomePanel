@@ -3,6 +3,8 @@ import { jstDayKey, type Env, type SourceResult } from "./sources";
 export const WORKER_VERSION = "2.11.0";
 
 const EMPTY_OBJECT_HASH = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+const HEX_DIGITS = "0123456789abcdef";
+const UTF8_ENCODER = new TextEncoder();
 
 export interface StateRow {
   source: string;
@@ -33,12 +35,18 @@ export const DASHBOARD_SOURCE_NAMES = [
   "stationhead",
   "environment",
 ] as const;
+const META_SOURCE_NAMES = [...DASHBOARD_SOURCE_NAMES, "radar"] as const;
+const META_SOURCE_PLACEHOLDERS = "?,?,?,?,?,?,?";
 const STATE_HEARTBEAT_MS = 15 * 60_000;
 
 export async function sha256Hex(value: string | ArrayBuffer): Promise<string> {
-  const bytes = typeof value === "string" ? new TextEncoder().encode(value) : new Uint8Array(value);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  const bytes = typeof value === "string" ? UTF8_ENCODER.encode(value) : new Uint8Array(value);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  let output = "";
+  for (const byte of digest) {
+    output += HEX_DIGITS.charAt(byte >>> 4) + HEX_DIGITS.charAt(byte & 0x0f);
+  }
+  return output;
 }
 
 export async function readState(env: Env, source: string): Promise<StateRow | null> {
@@ -50,12 +58,15 @@ export async function readState(env: Env, source: string): Promise<StateRow | nu
 
 export async function readStates(env: Env, sources: readonly string[]): Promise<Record<string, StateRow>> {
   if (!sources.length) return {};
-  const placeholders = sources.map(() => "?").join(",");
-  const rows = await env.DB.prepare(
+  let placeholders = "?";
+  for (let index = 1; index < sources.length; index += 1) placeholders += ",?";
+  const result = await env.DB.prepare(
     `SELECT source, version, payload, observed_at, fetched_at, last_success_at, status, error, content_hash
        FROM current_state WHERE source IN (${placeholders})`,
   ).bind(...sources).all<StateRow>();
-  return Object.fromEntries((rows.results ?? []).map(row => [row.source, row]));
+  const rows: Record<string, StateRow> = {};
+  for (const row of result.results ?? []) rows[row.source] = row;
+  return rows;
 }
 
 function dashboardSourcePayload(name: string, payload: Record<string, unknown>): Record<string, unknown> {
@@ -99,31 +110,47 @@ export function dashboardPayload(rows: Record<string, StateRow>): DashboardState
 }
 
 export function dashboardVersion(rows: Record<string, Pick<StateRow, "version">>): number {
-  return DASHBOARD_SOURCE_NAMES.reduce((sum, source) => sum + Number(rows[source]?.version ?? 0), 0);
+  let version = 0;
+  for (const source of DASHBOARD_SOURCE_NAMES) version += Number(rows[source]?.version ?? 0);
+  return version;
 }
 
 function dashboardStatus(rows: Record<string, Pick<StateRow, "status">>): StateRow["status"] {
-  const statuses = DASHBOARD_SOURCE_NAMES.map(source => rows[source]?.status).filter(Boolean);
-  if (statuses.includes("error")) return "error";
-  if (statuses.includes("stale")) return "stale";
-  return "ok";
+  let stale = false;
+  for (const source of DASHBOARD_SOURCE_NAMES) {
+    const status = rows[source]?.status;
+    if (status === "error") return "error";
+    if (status === "stale") stale = true;
+  }
+  return stale ? "stale" : "ok";
 }
 
 export async function dashboardSnapshotFromRows(rows: Record<string, StateRow>): Promise<StateRow> {
   const payload = JSON.stringify(dashboardPayload(rows));
-  const sourceRows = DASHBOARD_SOURCE_NAMES.map(source => rows[source]).filter((row): row is StateRow => Boolean(row));
-  const fetchedAt = Math.max(0, ...sourceRows.map(row => Number(row.fetched_at ?? 0))) || Date.now();
-  const observedAt = Math.max(0, ...sourceRows.map(row => Number(row.observed_at ?? 0))) || null;
-  const lastSuccessAt = Math.max(0, ...sourceRows.map(row => Number(row.last_success_at ?? 0))) || null;
-  const status = dashboardStatus(rows);
-  const errors = sourceRows.filter(row => row.error).map(row => `${row.source}: ${row.error}`);
+  let fetchedAt = 0;
+  let observedAt = 0;
+  let lastSuccessAt = 0;
+  let version = 0;
+  let status: StateRow["status"] = "ok";
+  const errors: string[] = [];
+  for (const source of DASHBOARD_SOURCE_NAMES) {
+    const row = rows[source];
+    if (!row) continue;
+    version += Number(row.version ?? 0);
+    fetchedAt = Math.max(fetchedAt, Number(row.fetched_at ?? 0));
+    observedAt = Math.max(observedAt, Number(row.observed_at ?? 0));
+    lastSuccessAt = Math.max(lastSuccessAt, Number(row.last_success_at ?? 0));
+    if (row.status === "error") status = "error";
+    else if (row.status === "stale" && status === "ok") status = "stale";
+    if (row.error) errors.push(`${row.source}: ${row.error}`);
+  }
   return {
     source: "dashboard",
-    version: dashboardVersion(rows),
+    version,
     payload,
-    observed_at: observedAt,
-    fetched_at: fetchedAt,
-    last_success_at: lastSuccessAt,
+    observed_at: observedAt || null,
+    fetched_at: fetchedAt || Date.now(),
+    last_success_at: lastSuccessAt || null,
     status,
     error: errors.length ? errors.join("; ").slice(0, 1000) : null,
     content_hash: await sha256Hex(payload),
@@ -238,28 +265,34 @@ export interface MetaPayload {
 type StateMetadataRow = Pick<StateRow, "source" | "version" | "fetched_at" | "status">;
 
 export async function buildMeta(env: Env): Promise<MetaPayload> {
-  const sources = [...DASHBOARD_SOURCE_NAMES, "radar"];
-  const placeholders = sources.map(() => "?").join(",");
   const result = await env.DB.prepare(
     `SELECT source, version, fetched_at, status
-       FROM current_state WHERE source IN (${placeholders})`,
-  ).bind(...sources).all<StateMetadataRow>();
+       FROM current_state WHERE source IN (${META_SOURCE_PLACEHOLDERS})`,
+  ).bind(...META_SOURCE_NAMES).all<StateMetadataRow>();
   const rows: Record<string, StateMetadataRow> = {};
   for (const row of result.results ?? []) rows[row.source] = row;
   const radar = rows.radar;
-  const version = dashboardVersion(rows);
-  const statusForDashboard = dashboardStatus(rows);
-  const missingDashboardSource = DASHBOARD_SOURCE_NAMES.some(source => !rows[source]);
+  let version = 0;
+  let dashboardFetchedAt = 0;
+  let missingDashboardSource = false;
+  let statusForDashboard: StateRow["status"] = "ok";
+  for (const source of DASHBOARD_SOURCE_NAMES) {
+    const row = rows[source];
+    if (!row) {
+      missingDashboardSource = true;
+      continue;
+    }
+    version += Number(row.version ?? 0);
+    dashboardFetchedAt = Math.max(dashboardFetchedAt, Number(row.fetched_at ?? 0));
+    if (row.status === "error") statusForDashboard = "error";
+    else if (row.status === "stale" && statusForDashboard === "ok") statusForDashboard = "stale";
+  }
   const status: MetaPayload["status"] = statusForDashboard === "error" || radar?.status === "error"
     ? "error"
     : missingDashboardSource || statusForDashboard === "stale" || !radar || radar.status === "stale"
       ? "stale"
       : "ok";
-  const dashboardFetchedAt = Math.max(
-    0,
-    ...DASHBOARD_SOURCE_NAMES.map(source => Number(rows[source]?.fetched_at ?? 0)),
-  ) || Date.now();
-  const generated = Math.max(dashboardFetchedAt, Number(radar?.fetched_at ?? 0));
+  const generated = Math.max(dashboardFetchedAt || Date.now(), Number(radar?.fetched_at ?? 0));
   return {
     version: version + Number(radar?.version ?? 0),
     dashboardVersion: version,
