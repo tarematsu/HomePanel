@@ -39,15 +39,13 @@ type MonitorPayload = {
   queue?: MonitorTrack[];
 };
 
-type QueueItem = {
+type CurrentItem = {
   spotifyId: string;
   name: string;
   artist: string;
   artwork: string;
   uri: string;
   durationMs: number;
-  position: number;
-  metadataFetchedAt: number | null;
 };
 
 function finite(value: unknown, fallback = 0): number {
@@ -82,25 +80,20 @@ async function readMonitor(env: Env): Promise<MonitorPayload | null> {
   return payload;
 }
 
-function monitorQueue(payload: MonitorPayload | null): QueueItem[] {
-  return (payload?.queue ?? []).map((track, index) => {
-    const id = String(track.spotify_id ?? "").trim();
-    const name = String(
-      track.title || track.display_title || id || "Unknown track",
-    ).trim();
-    return {
-      spotifyId: id,
-      name,
-      artist: String(track.artist ?? "").trim(),
-      artwork: String(track.thumbnail_url ?? "").trim(),
-      uri: id ? `spotify:track:${id}` : String(track.spotify_url ?? "").trim(),
-      durationMs: Math.max(0, finite(track.duration_ms)),
-      position: finite(track.position, index),
-      metadataFetchedAt: Number.isFinite(Number(track.metadata_fetched_at))
-        ? Number(track.metadata_fetched_at)
-        : null,
-    };
-  });
+function currentItem(track: MonitorTrack | undefined): CurrentItem | null {
+  if (!track) return null;
+  const id = String(track.spotify_id ?? "").trim();
+  const name = String(
+    track.title || track.display_title || id || "Unknown track",
+  ).trim();
+  return {
+    spotifyId: id,
+    name,
+    artist: String(track.artist ?? "").trim(),
+    artwork: String(track.thumbnail_url ?? "").trim(),
+    uri: id ? `spotify:track:${id}` : String(track.spotify_url ?? "").trim(),
+    durationMs: Math.max(0, finite(track.duration_ms)),
+  };
 }
 
 export function monitorCurrentIndex(payload: MonitorPayload | null): number {
@@ -131,13 +124,14 @@ export async function fetchStationhead(env: Env): Promise<SourceResult> {
     monitorError = error instanceof Error ? error.message : String(error);
   }
 
-  const queue = monitorQueue(monitor);
   const currentIndex = monitorCurrentIndex(monitor);
   const playing = Boolean(
     (monitor?.playing === true || monitor?.is_broadcasting === true) &&
     currentIndex >= 0,
   );
-  const currentItem = currentIndex >= 0 ? queue[currentIndex] ?? null : null;
+  const item = currentIndex >= 0
+    ? currentItem(monitor?.queue?.[currentIndex])
+    : null;
 
   return {
     source: "stationhead",
@@ -158,14 +152,14 @@ export async function fetchStationhead(env: Env): Promise<SourceResult> {
             broadcastStartTime: monitor.broadcast_start_time ?? null,
           }
         : null,
-      item: currentItem
+      item: item
         ? {
-            name: currentItem.name,
-            artist: currentItem.artist,
-            artwork: currentItem.artwork,
-            uri: currentItem.uri,
-            spotifyId: currentItem.spotifyId,
-            durationMs: currentItem.durationMs,
+            name: item.name,
+            artist: item.artist,
+            artwork: item.artwork,
+            uri: item.uri,
+            spotifyId: item.spotifyId,
+            durationMs: item.durationMs,
           }
         : null,
     },
