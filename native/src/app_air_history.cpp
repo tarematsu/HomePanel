@@ -14,6 +14,16 @@ bool ValidAirValues(const AirHistorySample& sample) noexcept {
       sample.temperature >= -40 && sample.temperature <= 85 &&
       sample.humidity >= 0 && sample.humidity <= 100;
 }
+
+bool AirHistoryEarlier(const AirHistorySample& left,
+                       const AirHistorySample& right) noexcept {
+  return left.timestamp < right.timestamp;
+}
+
+bool AirHistoryBeforeTimestamp(const AirHistorySample& sample,
+                               int64_t timestamp) noexcept {
+  return sample.timestamp < timestamp;
+}
 }  // namespace
 
 void App::LoadAirHistory() {
@@ -48,18 +58,10 @@ void App::LoadAirHistory() {
         normalized = true;
       }
     }
-    if (!std::is_sorted(
-            history.begin(), history.end(),
-            [](const AirHistorySample& left, const AirHistorySample& right) {
-              return left.timestamp < right.timestamp;
-            })) {
+    if (!std::is_sorted(history.begin(), history.end(), AirHistoryEarlier)) {
       normalized = true;
+      std::stable_sort(history.begin(), history.end(), AirHistoryEarlier);
     }
-    std::stable_sort(
-        history.begin(), history.end(),
-        [](const AirHistorySample& left, const AirHistorySample& right) {
-          return left.timestamp < right.timestamp;
-        });
     const auto uniqueEnd = std::unique(
         history.begin(), history.end(),
         [](const AirHistorySample& left, const AirHistorySample& right) {
@@ -121,22 +123,20 @@ void App::UpdateAirHistory(const SensorSnapshot& sensors) {
   }
 
   auto& history = renderState_.airHistory;
-  const auto position = std::lower_bound(
-      history.begin(), history.end(), sample.timestamp,
-      [](const AirHistorySample& item, int64_t timestamp) {
-        return item.timestamp < timestamp;
-      });
-  if (position != history.end() && position->timestamp == sample.timestamp) return;
+  if (!history.empty() && history.back().timestamp == sample.timestamp) return;
+  if (history.empty() || history.back().timestamp < sample.timestamp) {
+    history.push_back(sample);
+  } else {
+    const auto position = std::lower_bound(
+        history.begin(), history.end(), sample.timestamp, AirHistoryBeforeTimestamp);
+    if (position != history.end() && position->timestamp == sample.timestamp) return;
+    history.insert(position, sample);
+  }
 
-  history.insert(position, sample);
   const int64_t cutoff = now - kAirHistoryWindowMs;
-  history.erase(
-      history.begin(),
-      std::lower_bound(
-          history.begin(), history.end(), cutoff,
-          [](const AirHistorySample& item, int64_t timestamp) {
-            return item.timestamp < timestamp;
-          }));
+  const auto firstRetained = std::lower_bound(
+      history.begin(), history.end(), cutoff, AirHistoryBeforeTimestamp);
+  if (firstRetained != history.begin()) history.erase(history.begin(), firstRetained);
   if (history.size() > kAirHistoryMaxSamples) {
     history.erase(history.begin(), history.end() - kAirHistoryMaxSamples);
   }
