@@ -5,11 +5,31 @@
 
 
 #include "cloud_client.h"
+#include <limits>
 #include <set>
 #include <winrt/Windows.Data.Json.h>
 
 namespace hp {
 namespace {
+std::wstring Utf8BytesToWide(const std::vector<uint8_t>& bytes) {
+  if (bytes.empty() ||
+      bytes.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    return {};
+  }
+  const char* const input = reinterpret_cast<const char*>(bytes.data());
+  const int inputSize = static_cast<int>(bytes.size());
+  const int outputSize = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, input, inputSize, nullptr, 0);
+  if (outputSize <= 0) return {};
+  std::wstring output(static_cast<size_t>(outputSize), L'\0');
+  if (MultiByteToWideChar(
+          CP_UTF8, MB_ERR_INVALID_CHARS, input, inputSize,
+          output.data(), outputSize) != outputSize) {
+    return {};
+  }
+  return output;
+}
+
 int64_t HealthNumber(const JsonObject& root, const wchar_t* name) {
   try {
     const double value = root.GetNamedNumber(name, -1);
@@ -71,8 +91,7 @@ void CloudClient::ApplyPresenceFallback() {
   fallback.SetNamedValue(L"fallback", JsonValue::CreateBooleanValue(true));
   fallback.SetNamedValue(L"fallbackReason", JsonValue::CreateStringValue(L"external-service-unavailable"));
   const std::string text = WideToUtf8(fallback.Stringify().c_str());
-  const std::vector<uint8_t> bytes(text.begin(), text.end());
-  if (!AtomicWriteBytes(dataDir_ / L"switchbot.json", bytes)) {
+  if (!AtomicWriteText(dataDir_ / L"switchbot.json", text)) {
     log_.Warn(L"Failed to write home-presence fallback state");
     return;
   }
@@ -143,7 +162,7 @@ std::vector<uint8_t> CloudClient::LocalizeRadarTiles(const std::vector<uint8_t>&
     item.SetNamedValue(L"url", JsonValue::CreateStringValue(localUrlFor(url)));
   };
 
-  JsonObject root = JsonObject::Parse(Utf8ToWide(std::string(body.begin(), body.end())));
+  JsonObject root = JsonObject::Parse(Utf8BytesToWide(body));
   if (root.HasKey(L"frames") && root.GetNamedValue(L"frames").ValueType() == JsonValueType::Array) {
     for (auto frameValue : root.GetNamedArray(L"frames")) {
       if (frameValue.ValueType() != JsonValueType::Object) continue;
@@ -204,18 +223,21 @@ void CloudClient::Synchronize() {
     return fs::exists(path, error) ? version : -1;
   };
 
-  std::wostringstream path;
-  path << L"/v1/device/sync?deviceId=" << config_.deviceId
-       << L"&dashboardVersion=" << requestedVersion(dashboardPath, dashboardVersion_)
-       << L"&radarVersion=" << requestedVersion(radarPath, radarVersion_)
-       << L"&switchbotVersion=" << (presenceFallbackActive_ ? -1 : requestedVersion(switchbotPath, switchbotVersion_))
-       << L"&stationheadVersion=" << requestedVersion(stationheadPath, stationheadVersion_)
-       << L"&stationheadHealthVersion=" << requestedVersion(stationheadHealthPath, stationheadHealthVersion_)
-       << L"&configVersion=" << requestedVersion(deviceConfigPath, deviceConfigVersion_);
+  std::wstring path = L"/v1/device/sync?deviceId=";
+  path.reserve(256);
+  path += config_.deviceId;
+  path += L"&dashboardVersion=" + std::to_wstring(requestedVersion(dashboardPath, dashboardVersion_));
+  path += L"&radarVersion=" + std::to_wstring(requestedVersion(radarPath, radarVersion_));
+  path += L"&switchbotVersion=" + std::to_wstring(
+      presenceFallbackActive_ ? -1 : requestedVersion(switchbotPath, switchbotVersion_));
+  path += L"&stationheadVersion=" + std::to_wstring(requestedVersion(stationheadPath, stationheadVersion_));
+  path += L"&stationheadHealthVersion=" +
+      std::to_wstring(requestedVersion(stationheadHealthPath, stationheadHealthVersion_));
+  path += L"&configVersion=" + std::to_wstring(requestedVersion(deviceConfigPath, deviceConfigVersion_));
 
-  const auto response = Request(L"GET", path.str(), deviceToken_);
+  const auto response = Request(L"GET", path, deviceToken_);
   if (response.status != 200) throw std::runtime_error("device sync HTTP " + std::to_string(response.status));
-  const JsonObject root = JsonObject::Parse(Utf8ToWide(std::string(response.body.begin(), response.body.end())));
+  const JsonObject root = JsonObject::Parse(Utf8BytesToWide(response.body));
   const JsonObject versions = root.GetNamedObject(L"versions", JsonObject{});
 
   const int nextDashboard = VersionOr(versions, L"dashboard", dashboardVersion_);
@@ -270,7 +292,7 @@ void CloudClient::Synchronize() {
       envelope.SetNamedValue(L"deviceId", JsonValue::CreateStringValue(config_.deviceId));
       envelope.SetNamedValue(L"commands", commands);
       const std::string text = WideToUtf8(envelope.Stringify().c_str());
-      if (!AtomicWriteBytes(dataDir_ / L"commands.json", {text.begin(), text.end()})) {
+      if (!AtomicWriteText(dataDir_ / L"commands.json", text)) {
         throw std::runtime_error("device command cache write failed");
       }
       PostMessageW(window_, WM_HP_COMMANDS_UPDATED, 0, 0);
