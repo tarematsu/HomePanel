@@ -6,7 +6,6 @@
 
 #include "sensors.h"
 #include <limits>
-#include <set>
 #include <winrt/Windows.Data.Json.h>
 
 namespace hp {
@@ -105,15 +104,18 @@ std::string SensorHub::BuildTelemetryPayload(const std::wstring& deviceId, const
 void SensorHub::ApplyTelemetryReceipt(const std::vector<uint64_t>& acknowledgedSequences,
                                       uint64_t nextSequence) {
   std::lock_guard lock(mutex_);
-  const std::set<uint64_t> acknowledged(acknowledgedSequences.begin(), acknowledgedSequences.end());
+  std::vector<uint64_t> acknowledged = acknowledgedSequences;
+  std::sort(acknowledged.begin(), acknowledged.end());
+  acknowledged.erase(std::unique(acknowledged.begin(), acknowledged.end()), acknowledged.end());
+
   uint64_t persistedAck = acknowledgedSequence_;
-  for (const uint64_t sequence : acknowledged) persistedAck = std::max(persistedAck, sequence);
+  if (!acknowledged.empty()) persistedAck = std::max(persistedAck, acknowledged.back());
   if (nextSequence > 0) persistedAck = std::max(persistedAck, nextSequence - 1);
 
   std::deque<Sample> updated;
   size_t removed = 0;
   for (const auto& sample : outbox_) {
-    if (acknowledged.contains(sample.sequence)) {
+    if (std::binary_search(acknowledged.begin(), acknowledged.end(), sample.sequence)) {
       ++removed;
       continue;
     }
@@ -162,4 +164,4 @@ void SensorHub::ApplyTelemetryReceipt(const std::vector<uint64_t>& acknowledgedS
   }
 }
 
-}
+}  // namespace hp
