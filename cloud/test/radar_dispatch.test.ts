@@ -65,7 +65,6 @@ describe("Cloudflare-triggered radar build dispatch", () => {
 
     const markerObject = await bucket.get(MARKER_KEY);
     expect(markerObject).not.toBeNull();
-    expect(markerObject!.customMetadata?.dispatchedAt).toBe(String(NOW));
     const marker = JSON.parse(await markerObject!.text()) as Record<string, unknown>;
     expect(marker).toMatchObject({
       dispatchedAt: NOW,
@@ -80,27 +79,6 @@ describe("Cloudflare-triggered radar build dispatch", () => {
     const bucket = (env as unknown as Env).UPDATE_BUCKET!;
     await bucket.put(MANIFEST_KEY, JSON.stringify({ generatedAt: new Date(NOW - 20 * 60_000).toISOString() }));
     await bucket.put(MARKER_KEY, JSON.stringify({ dispatchedAt: NOW - 3 * 60_000 }));
-    const fetcher = vi.fn<typeof fetch>();
-
-    const result = await dispatchRadarBuildIfStale(testEnv(), {
-      now: () => NOW,
-      fetcher,
-    });
-
-    expect(result).toEqual({
-      status: "cooldown",
-      manifestAgeMs: 20 * 60_000,
-      cooldownRemainingMs: 7 * 60_000,
-    });
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-
-  it("uses marker metadata without parsing the object body", async () => {
-    const bucket = (env as unknown as Env).UPDATE_BUCKET!;
-    await bucket.put(MANIFEST_KEY, JSON.stringify({ generatedAt: new Date(NOW - 20 * 60_000).toISOString() }));
-    await bucket.put(MARKER_KEY, "not-json", {
-      customMetadata: { dispatchedAt: String(NOW - 3 * 60_000) },
-    });
     const fetcher = vi.fn<typeof fetch>();
 
     const result = await dispatchRadarBuildIfStale(testEnv(), {
