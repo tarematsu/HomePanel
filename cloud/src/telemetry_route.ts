@@ -10,6 +10,7 @@ import {
   telemetrySampleStatement,
   type EnvironmentHistoryRow,
   type TelemetrySample,
+  type TelemetrySampleReceipt,
 } from "./telemetry_bucket";
 import { mergeEnvironmentRows } from "./telemetry_history";
 
@@ -95,6 +96,7 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
   }
   const uniqueSamples = [...unique.values()].sort((left, right) => left.sequence - right.sequence);
   const acknowledged = new Set<number>();
+  const pendingSequences = new Set<number>();
   const appVersion = String(input.appVersion ?? "").slice(0, 100) || null;
   const rawOutbox = Number(input.outboxCount);
   const outboxCount = Number.isFinite(rawOutbox) ? Math.max(0, Math.trunc(rawOutbox)) : 0;
@@ -106,13 +108,19 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
     const chunk = uniqueSamples.slice(offset, offset + TELEMETRY_SAMPLES_PER_BATCH);
     const receiptResults = await env.DB.batch(chunk.map(sample => telemetrySampleStatement(env, deviceId, sample)));
     for (const result of receiptResults) {
-      const rows = (result.results ?? []) as Array<{ sequence: number }>;
-      for (const row of rows) acknowledged.add(Number(row.sequence));
+      const rows = (result.results ?? []) as TelemetrySampleReceipt[];
+      for (const row of rows) {
+        const sequence = Number(row.sequence);
+        acknowledged.add(sequence);
+        if (Number(row.bucket_applied) === 0) pendingSequences.add(sequence);
+      }
     }
   }
 
-  const acknowledgedSamples = uniqueSamples.filter(sample => acknowledged.has(sample.sequence));
-  const affectedBuckets = [...new Set(acknowledgedSamples.map(sample => telemetryBucketAt(sample.observedAt)))].sort((left, right) => left - right);
+  // Idempotent retries still need an acknowledgement, but rows whose bucket was
+  // already applied must not trigger another aggregate scan plus UPDATE pair.
+  const pendingSamples = uniqueSamples.filter(sample => pendingSequences.has(sample.sequence));
+  const affectedBuckets = [...new Set(pendingSamples.map(sample => telemetryBucketAt(sample.observedAt)))].sort((left, right) => left - right);
   for (let offset = 0; offset < affectedBuckets.length; offset += TELEMETRY_BUCKETS_PER_BATCH) {
     const bucketChunk = affectedBuckets.slice(offset, offset + TELEMETRY_BUCKETS_PER_BATCH);
     const statements: D1PreparedStatement[] = [];
@@ -149,7 +157,7 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
     ).run();
   }
 
-  if (acknowledgedSamples.length) {
+  if (pendingSamples.length) {
     await mergeEnvironmentRows(env, deviceId, [...returnedRows.values()], now);
   }
 
