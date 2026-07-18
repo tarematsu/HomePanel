@@ -74,6 +74,11 @@ HttpResponse CloudClient::Request(const std::wstring& method, const std::wstring
     if (!token.empty()) headers += L"Authorization: Bearer " + token + L"\r\n";
     if (!etag.empty()) headers += L"If-None-Match: " + etag + L"\r\n";
     if (!body.empty()) headers += std::wstring(L"Content-Type: ") + contentType + L"\r\n";
+    if (method == L"GET" && path.rfind(L"/v1/device/sync?", 0) == 0) {
+      // The existing five-minute native sync becomes the scheduler wake-up.
+      // This avoids a separate request and lets the cloud deployment remove Cron.
+      headers += L"X-HomePanel-Run-Scheduler: 1\r\n";
+    }
 
     const BOOL sent = WinHttpSendRequest(
         request, headers.c_str(), static_cast<DWORD>(headers.size()),

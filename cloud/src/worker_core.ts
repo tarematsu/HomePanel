@@ -98,7 +98,13 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     const deviceId = deviceIdFromRequest(request);
     if (!deviceId) return json({ error: "valid deviceId is required" }, { status: 400 });
     if (!authorizedDevice(request, env, deviceId)) return unauthorized();
-    return getDeviceSync(request, env);
+    const response = await getDeviceSync(request, env);
+    if (response.ok && request.headers.get("X-HomePanel-Run-Scheduler") === "1") {
+      // Return the device snapshot first, then perform due source work in the
+      // same authenticated invocation. D1 leases retain cross-device dedupe.
+      ctx.waitUntil(runScheduler(env));
+    }
+    return response;
   }
 
   if (url.pathname === "/v1/device/config") {
