@@ -51,7 +51,8 @@ const UPSERT_READING_SQL = `INSERT INTO octopus_readings(account_number,supply_p
  VALUES(?1,?2,?3,?4,?5)
  ON CONFLICT(account_number,supply_point,observed_at) DO UPDATE SET
    energy_kwh=excluded.energy_kwh,
-   updated_at=excluded.updated_at`;
+   updated_at=excluded.updated_at
+ WHERE octopus_readings.energy_kwh IS NOT excluded.energy_kwh`;
 
 export function octopusStableCutoffJst(nowMs: number): number {
   return Math.floor((nowMs - 2 * DAY_MS) / HALF_HOUR_MS) * HALF_HOUR_MS;
