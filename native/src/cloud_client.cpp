@@ -1,5 +1,7 @@
 #include "cloud_client.h"
 #include "winhttp_helpers.h"
+#include <charconv>
+#include <limits>
 #include <winrt/Windows.Data.Json.h>
 #include <iphlpapi.h>
 
@@ -25,13 +27,83 @@ std::wstring IsoLocalNow() {
   return buffer;
 }
 
+template <typename Integer>
+bool AppendInteger(std::string& output, Integer value) {
+  char buffer[32]{};
+  const auto converted = std::to_chars(std::begin(buffer), std::end(buffer), value);
+  if (converted.ec != std::errc{}) return false;
+  output.append(buffer, converted.ptr);
+  return true;
+}
+
+std::optional<std::string> ReadTextFile(const fs::path& path) {
+  std::error_code error;
+  const std::uintmax_t size = fs::file_size(path, error);
+  if (error || size > static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max())) {
+    return std::nullopt;
+  }
+  std::ifstream input(path, std::ios::binary);
+  if (!input) return std::nullopt;
+  std::string text(static_cast<size_t>(size), '\0');
+  if (!text.empty()) {
+    input.read(text.data(), static_cast<std::streamsize>(text.size()));
+    if (input.gcount() != static_cast<std::streamsize>(text.size())) return std::nullopt;
+  }
+  if (input.peek() != std::char_traits<char>::eof()) return std::nullopt;
+  return text;
+}
+
+std::wstring TelemetryUtf8BytesToWide(const std::vector<uint8_t>& bytes) {
+  if (bytes.empty() ||
+      bytes.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    return {};
+  }
+  const char* const input = reinterpret_cast<const char*>(bytes.data());
+  const int inputSize = static_cast<int>(bytes.size());
+  const int outputSize = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, input, inputSize, nullptr, 0);
+  if (outputSize <= 0) return {};
+  std::wstring output(static_cast<size_t>(outputSize), L'\0');
+  if (MultiByteToWideChar(
+          CP_UTF8, MB_ERR_INVALID_CHARS, input, inputSize,
+          output.data(), outputSize) != outputSize) {
+    return {};
+  }
+  return output;
+}
+
+std::vector<uint8_t> WideToUtf8Bytes(const wchar_t* input, size_t length) {
+  if (!input || length == 0) return {};
+  if (length > static_cast<size_t>(std::numeric_limits<int>::max())) return {};
+  const int inputSize = static_cast<int>(length);
+  const int outputSize = WideCharToMultiByte(
+      CP_UTF8, WC_ERR_INVALID_CHARS, input, inputSize,
+      nullptr, 0, nullptr, nullptr);
+  if (outputSize <= 0) return {};
+  std::vector<uint8_t> output(static_cast<size_t>(outputSize));
+  if (WideCharToMultiByte(
+          CP_UTF8, WC_ERR_INVALID_CHARS, input, inputSize,
+          reinterpret_cast<char*>(output.data()), outputSize,
+          nullptr, nullptr) != outputSize) {
+    return {};
+  }
+  return output;
+}
+
 std::string EscapeJson(const std::wstring& value) {
-  std::string input = WideToUtf8(value), output;
-  output.reserve(input.size());
+  const std::string input = WideToUtf8(value);
+  std::string output;
+  output.reserve(input.size() + 8);
   for (char c : input) {
-    if (c == '"' || c == '\\') { output.push_back('\\'); output.push_back(c); }
-    else if (c == '\n') output += "\\n";
-    else if (static_cast<unsigned char>(c) >= 0x20) output.push_back(c);
+    if (c == '"' || c == '\\') {
+      output.push_back('\\');
+      output.push_back(c);
+    } else if (c == '\n') {
+      output.push_back('\\');
+      output.push_back('n');
+    } else if (static_cast<unsigned char>(c) >= 0x20) {
+      output.push_back(c);
+    }
   }
   return output;
 }
@@ -51,22 +123,21 @@ std::wstring FriendlyCloudError(const std::string& raw) {
 std::vector<uint8_t> DashboardWithCloudError(const fs::path& path, const std::wstring& message) {
   JsonObject root;
   try {
-    std::ifstream input(path, std::ios::binary);
-    const std::string text((std::istreambuf_iterator<char>(input)), {});
-    if (!text.empty()) root = JsonObject::Parse(Utf8ToWide(text));
+    const std::optional<std::string> text = ReadTextFile(path);
+    if (text && !text->empty()) root = JsonObject::Parse(Utf8ToWide(*text));
   } catch (...) {
     root = JsonObject{};
   }
   root.SetNamedValue(L"__cloudError", JsonValue::CreateStringValue(message));
-  const std::string text = WideToUtf8(root.Stringify().c_str());
-  return {text.begin(), text.end()};
+  const winrt::hstring text = root.Stringify();
+  return WideToUtf8Bytes(text.c_str(), text.size());
 }
 
 std::optional<std::vector<uint8_t>> StringPayload(const JsonObject& root, const wchar_t* name) {
   try {
     if (!root.HasKey(name) || root.GetNamedValue(name).ValueType() != JsonValueType::String) return std::nullopt;
-    const std::string text = WideToUtf8(root.GetNamedString(name).c_str());
-    return std::vector<uint8_t>(text.begin(), text.end());
+    const winrt::hstring text = root.GetNamedString(name);
+    return WideToUtf8Bytes(text.c_str(), text.size());
   } catch (...) {
     return std::nullopt;
   }
@@ -115,9 +186,6 @@ void CloudClient::Stop() {
 }
 
 void CloudClient::StartNetworkChangeWatcher() {
-
-
-
   networkChangeStopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   if (!networkChangeStopEvent_) return;
   networkChangeThread_ = std::thread([this] {
@@ -190,10 +258,9 @@ void CloudClient::UpdateStationheadHealthText(std::wstring text) {
 
 void CloudClient::LoadCacheMetadata() {
   try {
-    std::ifstream input(dataDir_ / L"dashboard.meta.json", std::ios::binary);
-    std::string text((std::istreambuf_iterator<char>(input)), {});
-    if (!text.empty()) {
-      const JsonObject object = JsonObject::Parse(Utf8ToWide(text));
+    const std::optional<std::string> text = ReadTextFile(dataDir_ / L"dashboard.meta.json");
+    if (text && !text->empty()) {
+      const JsonObject object = JsonObject::Parse(Utf8ToWide(*text));
       dashboardVersion_ = static_cast<int>(object.GetNamedNumber(L"dashboardVersion", -1));
       radarVersion_ = static_cast<int>(object.GetNamedNumber(L"radarVersion", -1));
       switchbotVersion_ = static_cast<int>(object.GetNamedNumber(L"switchbotVersion", -1));
@@ -209,15 +276,27 @@ void CloudClient::LoadCacheMetadata() {
 }
 
 void CloudClient::SaveCacheMetadata() {
-  std::ostringstream out;
-  out << "{\"dashboardVersion\":" << dashboardVersion_
-      << ",\"radarVersion\":" << radarVersion_
-      << ",\"switchbotVersion\":" << switchbotVersion_
-      << ",\"stationheadVersion\":" << stationheadVersion_
-      << ",\"stationheadHealthVersion\":" << stationheadHealthVersion_
-      << ",\"deviceConfigVersion\":" << deviceConfigVersion_ << "}";
-  const std::string text = out.str();
-  if (AtomicWriteBytes(dataDir_ / L"dashboard.meta.json", {text.begin(), text.end()})) cacheMetadataDirty_ = false;
+  std::string text;
+  text.reserve(192);
+  text += "{\"dashboardVersion\":";
+  const bool formatted = AppendInteger(text, dashboardVersion_);
+  text += ",\"radarVersion\":";
+  const bool radarFormatted = AppendInteger(text, radarVersion_);
+  text += ",\"switchbotVersion\":";
+  const bool switchbotFormatted = AppendInteger(text, switchbotVersion_);
+  text += ",\"stationheadVersion\":";
+  const bool stationheadFormatted = AppendInteger(text, stationheadVersion_);
+  text += ",\"stationheadHealthVersion\":";
+  const bool healthFormatted = AppendInteger(text, stationheadHealthVersion_);
+  text += ",\"deviceConfigVersion\":";
+  const bool configFormatted = AppendInteger(text, deviceConfigVersion_);
+  text.push_back('}');
+  if (!formatted || !radarFormatted || !switchbotFormatted ||
+      !stationheadFormatted || !healthFormatted || !configFormatted) {
+    log_.Warn(L"Cloud cache metadata formatting failed");
+    return;
+  }
+  if (AtomicWriteText(dataDir_ / L"dashboard.meta.json", text)) cacheMetadataDirty_ = false;
   else log_.Warn(L"Cloud cache metadata write failed");
 }
 
@@ -261,8 +340,9 @@ bool CloudClient::RequestRemoteRefresh() {
 std::string CloudClient::FetchUpdateManifest() {
   const auto response = Request(L"GET", L"/v1/update/manifest", deviceToken_);
   if (response.status != 200) {
-    std::string detail(response.body.begin(), response.body.end());
-    if (detail.size() > 300) detail.resize(300);
+    const size_t detailSize = std::min<size_t>(300, response.body.size());
+    const std::string detail(
+        reinterpret_cast<const char*>(response.body.data()), detailSize);
     throw std::runtime_error("update manifest HTTP " + std::to_string(response.status) + (detail.empty() ? "" : ": " + detail));
   }
   return std::string(response.body.begin(), response.body.end());
@@ -276,7 +356,7 @@ TelemetryReceipt CloudClient::SendTelemetry(const std::string& jsonBody) {
       return {};
     }
 
-    const JsonObject object = JsonObject::Parse(Utf8ToWide(std::string(response.body.begin(), response.body.end())));
+    const JsonObject object = JsonObject::Parse(TelemetryUtf8BytesToWide(response.body));
     if (!object.HasKey(L"acknowledgedSequences") ||
         object.GetNamedValue(L"acknowledgedSequences").ValueType() != JsonValueType::Array) {
       throw std::runtime_error("telemetry response omitted acknowledgedSequences");
@@ -287,9 +367,11 @@ TelemetryReceipt CloudClient::SendTelemetry(const std::string& jsonBody) {
       throw std::runtime_error("telemetry response contained invalid nextSequence");
     }
 
+    const JsonArray acknowledgements = object.GetNamedArray(L"acknowledgedSequences");
     TelemetryReceipt receipt;
     receipt.nextSequence = static_cast<uint64_t>(nextValue);
-    for (const auto& value : object.GetNamedArray(L"acknowledgedSequences")) {
+    receipt.acknowledgedSequences.reserve(acknowledgements.Size());
+    for (const auto& value : acknowledgements) {
       if (value.ValueType() != JsonValueType::Number) {
         throw std::runtime_error("telemetry response contained a non-numeric acknowledgement");
       }
@@ -314,11 +396,16 @@ TelemetryReceipt CloudClient::SendTelemetry(const std::string& jsonBody) {
 
 bool CloudClient::AcknowledgeCommand(int64_t id, bool success, const std::wstring& result) {
   try {
-    std::ostringstream body;
-    body << "{\"id\":" << id << ",\"success\":" << (success ? "true" : "false")
-         << ",\"result\":\"" << EscapeJson(result) << "\"}";
+    const std::string escapedResult = EscapeJson(result);
+    std::string body;
+    body.reserve(48 + escapedResult.size());
+    body += "{\"id\":";
+    if (!AppendInteger(body, id)) throw std::runtime_error("command acknowledgement id formatting failed");
+    body += success ? ",\"success\":true,\"result\":\"" : ",\"success\":false,\"result\":\"";
+    body += escapedResult;
+    body += "\"}";
     const auto response = Request(L"POST", L"/v1/device/commands/ack?deviceId=" + config_.deviceId,
-                                  deviceToken_, {}, body.str());
+                                  deviceToken_, {}, body);
     if (response.status == 200) return true;
     log_.Warn(L"Command acknowledgement returned HTTP " + std::to_wstring(response.status));
   } catch (const std::exception& error) {
@@ -327,9 +414,6 @@ bool CloudClient::AcknowledgeCommand(int64_t id, bool success, const std::wstrin
   return false;
 }
 }
-
-
-
 
 #include "cloud_client_http.cpp"
 #include "cloud_client_sync.cpp"
