@@ -23,10 +23,13 @@ void App::LoadStationheadPlayHistory() {
       };
       if (sample.timestamp >= cutoff) history.push_back(sample);
     }
-    std::sort(history.begin(), history.end(),
-              [](const StationheadPlayHistorySample& left, const StationheadPlayHistorySample& right) {
-                return left.timestamp < right.timestamp;
-              });
+    const auto earlier = [](const StationheadPlayHistorySample& left,
+                            const StationheadPlayHistorySample& right) {
+      return left.timestamp < right.timestamp;
+    };
+    if (!std::is_sorted(history.begin(), history.end(), earlier)) {
+      std::sort(history.begin(), history.end(), earlier);
+    }
     renderState_.stationheadPlayHistory = std::move(history);
   } catch (const std::exception& error) {
     if (logger_) logger_->Warn(L"Stationhead play history load failed: " + Utf8ToWide(error.what()));
@@ -64,34 +67,38 @@ void App::UpdateStationheadPlayHistory(const StationheadStatus& status) {
 
   const int64_t bucket = status.dailyPlayStatsUpdatedAt / sampleBucketMs * sampleBucketMs;
   const int value = status.dailyPlayCounts.back().value;
-  auto& history = renderState_.stationheadPlayHistory;
-  if (!history.empty() && history.back().timestamp == bucket &&
-      history.back().value == value) {
-    return;
-  }
-
   const int64_t cutoff = UnixMillis() - historyWindowMs;
   if (bucket < cutoff) return;
-  const auto position = std::lower_bound(
-      history.begin(), history.end(), bucket,
+
+  auto& history = renderState_.stationheadPlayHistory;
+  if (!history.empty() && history.back().timestamp == bucket) {
+    if (history.back().value == value) return;
+    history.back().value = value;
+  } else if (history.empty() || history.back().timestamp < bucket) {
+    history.push_back({bucket, value});
+  } else {
+    const auto position = std::lower_bound(
+        history.begin(), history.end(), bucket,
+        [](const StationheadPlayHistorySample& sample, int64_t timestamp) {
+          return sample.timestamp < timestamp;
+        });
+    if (position != history.end() && position->timestamp == bucket) {
+      if (position->value == value) return;
+      position->value = value;
+    } else {
+      history.insert(position, {bucket, value});
+    }
+  }
+
+  const auto firstRetained = std::lower_bound(
+      history.begin(), history.end(), cutoff,
       [](const StationheadPlayHistorySample& sample, int64_t timestamp) {
         return sample.timestamp < timestamp;
       });
-  if (position != history.end() && position->timestamp == bucket) {
-    if (position->value == value) return;
-    position->value = value;
-  } else {
-    history.insert(position, {bucket, value});
-  }
-
-  history.erase(std::remove_if(history.begin(), history.end(),
-                               [cutoff](const StationheadPlayHistorySample& sample) {
-                                 return sample.timestamp < cutoff;
-                               }),
-                history.end());
+  if (firstRetained != history.begin()) history.erase(history.begin(), firstRetained);
   if (history.size() > maxSamples) history.erase(history.begin(), history.end() - maxSamples);
   SaveStationheadPlayHistory();
   MarkRenderStateDirty();
 }
 
-}
+}  // namespace hp
