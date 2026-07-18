@@ -1,25 +1,54 @@
 #include "common.h"
 #include "file_utils.h"
 #include "version.h"
+#include <charconv>
 
 namespace hp {
 namespace {
-std::string ReadResource(int id) {
+struct ResourceView {
+  const char* data = nullptr;
+  size_t size = 0;
+
+  explicit operator bool() const noexcept { return data && size > 0; }
+  operator std::string_view() const noexcept {
+    return data ? std::string_view(data, size) : std::string_view{};
+  }
+};
+
+ResourceView ReadResource(int id) {
   HMODULE module = GetModuleHandleW(nullptr);
   HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(id), RT_RCDATA);
   if (!resource) return {};
   HGLOBAL loaded = ::LoadResource(module, resource);
   const char* bytes = loaded ? static_cast<const char*>(LockResource(loaded)) : nullptr;
   const DWORD size = SizeofResource(module, resource);
-  if (!bytes || !size) return {};
-  return std::string(bytes, bytes + size);
+  return bytes && size ? ResourceView{bytes, size} : ResourceView{};
 }
 
+bool ContentMatches(const fs::path& path, std::string_view content) {
+  std::error_code error;
+  if (!fs::is_regular_file(path, error) ||
+      fs::file_size(path, error) != content.size()) {
+    return false;
+  }
+  std::ifstream input(path, std::ios::binary);
+  return input && std::equal(std::istreambuf_iterator<char>(input),
+                             std::istreambuf_iterator<char>(),
+                             content.begin(), content.end());
+}
 
-bool WriteContent(const fs::path& path, const std::string& content) {
-  if (content.empty()) return false;
-  if (file::MatchesText(path, content)) return true;
-  return AtomicWriteBytes(path, content.data(), static_cast<DWORD>(content.size()));
+bool WriteContent(const fs::path& path, std::string_view content) {
+  if (content.empty() || content.size() > std::numeric_limits<DWORD>::max()) return false;
+  if (ContentMatches(path, content)) return true;
+  return AtomicWriteBytes(
+      path, content.data(), static_cast<DWORD>(content.size()));
+}
+
+void AppendUnsigned(std::string& output, uint64_t value, int base = 10) {
+  char buffer[32]{};
+  const auto result = std::to_chars(buffer, buffer + std::size(buffer), value, base);
+  if (result.ec != std::errc{}) throw std::runtime_error("asset stamp formatting failed");
+  output.append(buffer, result.ptr);
 }
 
 struct RuntimeAsset {
@@ -34,22 +63,30 @@ constexpr RuntimeAsset kRuntimeAssets[] = {
     {112, L"radar-map.png"},
 };
 
+void AppendAssetStamp(std::string& stamp, const RuntimeAsset& asset) {
+  const ResourceView content = ReadResource(asset.id);
+  stamp.push_back('|');
+  AppendUnsigned(stamp, static_cast<uint64_t>(asset.id));
+  stamp.push_back(':');
+  AppendUnsigned(stamp, content.size);
+  stamp.push_back(':');
+  AppendUnsigned(stamp, Fnv1a64(static_cast<std::string_view>(content)), 16);
+}
 
 std::string ExecutableStamp(const fs::path& executable) {
   std::error_code error;
   const auto size = fs::file_size(executable, error);
-  std::ostringstream stamp;
-  stamp << WideToUtf8(kVersion) << "|native-assets-v3";
-  if (!error) stamp << '|' << size;
-  for (const RuntimeAsset& asset : kRuntimeAssets) {
-    const std::string content = ReadResource(asset.id);
-    stamp << '|' << asset.id << ':' << content.size() << ':' << std::hex << Fnv1a64(content) << std::dec;
+  std::string stamp = WideToUtf8(kVersion);
+  stamp.reserve(stamp.size() + 64 +
+                (std::size(kRuntimeAssets) + std::size(kWeatherIconAssets)) * 40);
+  stamp += "|native-assets-v3";
+  if (!error) {
+    stamp.push_back('|');
+    AppendUnsigned(stamp, size);
   }
-  for (const RuntimeAsset& asset : kWeatherIconAssets) {
-    const std::string content = ReadResource(asset.id);
-    stamp << '|' << asset.id << ':' << content.size() << ':' << std::hex << Fnv1a64(content) << std::dec;
-  }
-  return stamp.str();
+  for (const RuntimeAsset& asset : kRuntimeAssets) AppendAssetStamp(stamp, asset);
+  for (const RuntimeAsset& asset : kWeatherIconAssets) AppendAssetStamp(stamp, asset);
+  return stamp;
 }
 
 bool RuntimeAssetsReady(const fs::path& folder, const std::string& stamp) {
@@ -105,7 +142,7 @@ void RemoveObsoleteDashboardFiles(const fs::path& folder) {
   }
   fs::remove_all(folder / L"vendor", error);
 }
-}
+}  // namespace
 
 bool InstallRuntimeAssets() noexcept {
   try {
@@ -137,4 +174,4 @@ bool InstallRuntimeAssets() noexcept {
   }
 }
 
-}
+}  // namespace hp
