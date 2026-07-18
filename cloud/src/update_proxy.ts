@@ -1,5 +1,5 @@
 import type { Env } from "./sources";
-import { cachedHmacKey, constantTimeEqual } from "./crypto_cache";
+import { cachedHmacKey } from "./crypto_cache";
 
 const SIGNED_URL_LIFETIME_SECONDS = 600;
 const ALLOWED_FILES = new Set(["HomePanel.exe", "HomePanelUpdater.exe", "WebView2Loader.dll", "update-manifest.json"]);
@@ -7,6 +7,8 @@ const REQUIRED_UPDATE_FILES = ["HomePanel.exe", "HomePanelUpdater.exe", "WebView
 const RELEASE_VERSION_PATTERN = /^[0-9]{10}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
 const DEFAULT_UPDATE_PREFIX = "updates";
+const UTF8_ENCODER = new TextEncoder();
+const HEX_DIGITS = "0123456789abcdef";
 
 interface UpdateFile { name: string; sha256: string; size: number; requireAuthenticode?: boolean; url?: string }
 interface UpdateManifest { version: string; signed?: boolean; files: UpdateFile[] }
@@ -26,18 +28,42 @@ function signingSecret(env: Env): string {
   return env.UPDATE_SIGNING_SECRET?.trim() || env.HOMEPANEL_INGEST_SECRET || env.DEVICE_TOKEN || "";
 }
 
-async function signature(secret: string, version: string, name: string, expires: number): Promise<string> {
-  const digest = await crypto.subtle.sign(
+async function signatureDigest(secret: string, version: string, name: string, expires: number): Promise<ArrayBuffer> {
+  return crypto.subtle.sign(
     "HMAC",
     await cachedHmacKey(secret),
-    new TextEncoder().encode(`${version}\n${name}\n${expires}`),
+    UTF8_ENCODER.encode(`${version}\n${name}\n${expires}`),
   );
-  return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
+}
+
+function hexDigest(digest: ArrayBuffer): string {
+  let output = "";
+  for (const value of new Uint8Array(digest)) {
+    output += HEX_DIGITS.charAt(value >>> 4) + HEX_DIGITS.charAt(value & 15);
+  }
+  return output;
+}
+
+function digestMatchesHex(supplied: string, digest: ArrayBuffer): boolean {
+  const bytes = new Uint8Array(digest);
+  let diff = supplied.length ^ (bytes.length * 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    const value = bytes[index]!;
+    const offset = index * 2;
+    const high = offset < supplied.length ? supplied.charCodeAt(offset) : 0;
+    const low = offset + 1 < supplied.length ? supplied.charCodeAt(offset + 1) : 0;
+    diff |= high ^ HEX_DIGITS.charCodeAt(value >>> 4);
+    diff |= low ^ HEX_DIGITS.charCodeAt(value & 15);
+  }
+  return diff === 0;
+}
+
+async function signature(secret: string, version: string, name: string, expires: number): Promise<string> {
+  return hexDigest(await signatureDigest(secret, version, name, expires));
 }
 
 async function sha256(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  return hexDigest(await crypto.subtle.digest("SHA-256", UTF8_ENCODER.encode(value)));
 }
 
 function updatePrefix(env: Env): string {
@@ -153,8 +179,8 @@ export async function updateFileResponse(request: Request, env: Env, encodedName
     if (!Number.isSafeInteger(expires) || expires < now || expires > now + SIGNED_URL_LIFETIME_SECONDS + 60) {
       return json({ error: "update link expired" }, 403);
     }
-    const expected = await signature(secret, version, name, expires);
-    if (!constantTimeEqual(supplied, expected)) return json({ error: "invalid update signature" }, 403);
+    const digest = await signatureDigest(secret, version, name, expires);
+    if (!digestMatchesHex(supplied, digest)) return json({ error: "invalid update signature" }, 403);
 
     const downloaded = await readObject(env, updateKey(env, `releases/${version}/${name}`));
     const headers = new Headers({
