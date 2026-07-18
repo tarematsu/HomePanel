@@ -3,6 +3,8 @@ import { cachedHmacKey } from "./crypto_cache";
 import { readState, type StateRow } from "./snapshot";
 import type { DeviceState, SwitchBotEnv, SwitchBotState } from "./switchbot_types";
 
+const UTF8_ENCODER = new TextEncoder();
+
 interface ApiResponse<T> {
   statusCode: number;
   body: T;
@@ -23,7 +25,14 @@ export interface SwitchBotSnapshot {
 }
 
 export function configuredIds(value?: string): string[] {
-  return [...new Set((value ?? "").split(/[\s,;]+/).map(item => item.trim()).filter(Boolean))];
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const item of (value ?? "").split(/[\s,;]+/)) {
+    if (!item || seen.has(item)) continue;
+    seen.add(item);
+    result.push(item);
+  }
+  return result;
 }
 
 export function numberValue(value: unknown): number | null {
@@ -40,6 +49,12 @@ function booleanValue(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
+function base64Digest(digest: ArrayBuffer): string {
+  let binary = "";
+  for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 async function signedHeaders(env: SwitchBotEnv): Promise<Headers> {
   const token = env.SWITCHBOT_TOKEN?.trim();
   const secret = env.SWITCHBOT_SECRET?.trim();
@@ -47,10 +62,14 @@ async function signedHeaders(env: SwitchBotEnv): Promise<Headers> {
   const timestamp = String(Date.now());
   const nonce = crypto.randomUUID();
   const input = `${token}${timestamp}${nonce}`;
-  const signature = await crypto.subtle.sign("HMAC", await cachedHmacKey(secret), new TextEncoder().encode(input));
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    await cachedHmacKey(secret),
+    UTF8_ENCODER.encode(input),
+  );
   return new Headers({
     Authorization: token,
-    sign: btoa(String.fromCharCode(...new Uint8Array(signature))),
+    sign: base64Digest(signature),
     nonce,
     t: timestamp,
     "Content-Type": "application/json",
