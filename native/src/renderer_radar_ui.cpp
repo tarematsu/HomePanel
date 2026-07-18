@@ -57,27 +57,26 @@ bool SaveBitmapAsBmp(HBITMAP bitmap, const fs::path& path, int width, int height
   info.bmiHeader.biBitCount = 32;
   info.bmiHeader.biCompression = BI_RGB;
 
-  std::vector<uint8_t> pixels(static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
+  const size_t headerBytes = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+  const size_t pixelBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+  if (pixelBytes > static_cast<size_t>(MAXDWORD) - headerBytes) return false;
+  std::vector<uint8_t> bytes(headerBytes + pixelBytes);
+  uint8_t* const pixels = bytes.data() + headerBytes;
+
   HDC dc = GetDC(nullptr);
   if (!dc) return false;
-  const int lines = GetDIBits(dc, bitmap, 0, static_cast<UINT>(height), pixels.data(), &info, DIB_RGB_COLORS);
+  const int lines = GetDIBits(
+      dc, bitmap, 0, static_cast<UINT>(height), pixels, &info, DIB_RGB_COLORS);
   ReleaseDC(nullptr, dc);
   if (lines != height) return false;
 
   BITMAPFILEHEADER file{};
   file.bfType = 0x4d42;
-  file.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
-  file.bfSize = file.bfOffBits + static_cast<DWORD>(pixels.size());
-
-  std::vector<uint8_t> bytes(sizeof(file) + sizeof(BITMAPINFOHEADER) + pixels.size());
+  file.bfOffBits = static_cast<DWORD>(headerBytes);
+  file.bfSize = static_cast<DWORD>(bytes.size());
   std::memcpy(bytes.data(), &file, sizeof(file));
   std::memcpy(bytes.data() + sizeof(file), &info.bmiHeader, sizeof(BITMAPINFOHEADER));
-  std::memcpy(bytes.data() + sizeof(file) + sizeof(BITMAPINFOHEADER), pixels.data(), pixels.size());
   return AtomicWriteBytes(path, bytes);
-}
-
-bool AtomicWriteTextBytes(const fs::path& path, const std::string& content) {
-  return AtomicWriteBytes(path, std::vector<uint8_t>(content.begin(), content.end()));
 }
 
 void BlendBitmap(HDC dc, HBITMAP bitmap, int left, int top, int width, int height) {
@@ -326,7 +325,7 @@ void Renderer::ComposeRadarFrame() {
   if (timeText.empty()) timeText = tiles.empty() ? L"待機中" : L"--:--";
 
   if (!signature.empty() && SaveBitmapAsBmp(composed, cachedFrame, kRadarCanvasWidth, kRadarCanvasHeight)) {
-    AtomicWriteTextBytes(cachedSignature, signatureUtf8);
+    AtomicWriteText(cachedSignature, signatureUtf8);
   }
 
   HBITMAP previousFrame = nullptr;
