@@ -8,20 +8,43 @@ using winrt::Windows::Data::Json::JsonArray;
 using winrt::Windows::Data::Json::JsonObject;
 using winrt::Windows::Data::Json::JsonValueType;
 
-void AppendRevisionSource(std::string& source, const JsonObject& object) {
-  source += WideToUtf8(std::wstring(object.Stringify().c_str()));
-  source.push_back('\0');
+constexpr uint64_t kFnvOffset = 14695981039346656037ull;
+constexpr uint64_t kFnvPrime = 1099511628211ull;
+
+std::string StringifyUtf8(const JsonObject& object) {
+  const winrt::hstring text = object.Stringify();
+  if (text.empty()) return {};
+  const int inputSize = static_cast<int>(text.size());
+  const int size = WideCharToMultiByte(
+      CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), inputSize,
+      nullptr, 0, nullptr, nullptr);
+  if (size <= 0) return {};
+  std::string output(static_cast<size_t>(size), '\0');
+  WideCharToMultiByte(
+      CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), inputSize,
+      output.data(), size, nullptr, nullptr);
+  return output;
+}
+
+void AppendRevisionObject(uint64_t& hash, const JsonObject& object) {
+  const std::string text = StringifyUtf8(object);
+  for (const unsigned char byte : text) {
+    hash ^= byte;
+    hash *= kFnvPrime;
+  }
+  hash ^= 0;
+  hash *= kFnvPrime;
 }
 
 uint64_t SectionRevision(const JsonObject& object) {
-  return Fnv1a64(WideToUtf8(std::wstring(object.Stringify().c_str())));
+  return Fnv1a64(StringifyUtf8(object));
 }
 
 uint64_t SectionRevision(const JsonObject& first, const JsonObject& second) {
-  std::string source;
-  AppendRevisionSource(source, first);
-  AppendRevisionSource(source, second);
-  return Fnv1a64(source);
+  uint64_t hash = kFnvOffset;
+  AppendRevisionObject(hash, first);
+  AppendRevisionObject(hash, second);
+  return hash;
 }
 
 double NumberOrNaN(const JsonObject& object, const wchar_t* name) {
@@ -52,10 +75,23 @@ std::wstring DeviceState(const JsonObject& item) {
   }
   const double battery = NumberOrNaN(item, L"battery");
   if (std::isfinite(battery)) {
-    state += L" " + std::to_wstring(static_cast<int>(std::round(battery))) + L"%";
+    wchar_t buffer[24]{};
+    swprintf_s(buffer, L" %d%%", static_cast<int>(std::round(battery)));
+    state += buffer;
   }
   return state;
 }
+
+struct WeatherHourKey {
+  int hour;
+  const wchar_t* key;
+};
+
+constexpr std::array<WeatherHourKey, 12> kWeatherHourOrder{{
+    {22, L"22"}, {23, L"23"}, {0, L"0"}, {1, L"1"},
+    {2, L"2"}, {3, L"3"}, {4, L"4"}, {5, L"5"},
+    {6, L"6"}, {7, L"7"}, {8, L"8"}, {9, L"9"},
+}};
 }  // namespace
 
 bool ParseDashboardSnapshot(
@@ -73,18 +109,15 @@ bool ParseDashboardSnapshot(
     const JsonObject weather = json::Object(root, L"weather");
     next.revisions.weather = SectionRevision(weather);
     const JsonObject hourly = json::Object(weather, L"hourly");
-    static constexpr std::array<int, 12> kWeatherHourOrder{
-        22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-    for (const int hour : kWeatherHourOrder) {
-      const std::wstring key = std::to_wstring(hour);
+    next.weatherHours.reserve(kWeatherHourOrder.size());
+    for (const WeatherHourKey& entry : kWeatherHourOrder) {
       try {
-        if (!hourly.HasKey(key) ||
-            hourly.GetNamedValue(key).ValueType() != JsonValueType::Object) {
-          continue;
-        }
-        const JsonObject item = hourly.GetNamedObject(key);
+        if (!hourly.HasKey(entry.key)) continue;
+        const auto value = hourly.GetNamedValue(entry.key);
+        if (value.ValueType() != JsonValueType::Object) continue;
+        const JsonObject item = value.GetObject();
         next.weatherHours.push_back({
-            hour,
+            entry.hour,
             json::Text(item, L"icon"),
             NumberOrNaN(item, L"temp"),
             NumberOrNaN(item, L"rainMm"),
@@ -96,11 +129,13 @@ bool ParseDashboardSnapshot(
     const JsonObject news = json::Object(root, L"news");
     next.revisions.news = SectionRevision(news);
     const JsonArray newsItems = json::Array(news, L"items");
+    next.newsItems.reserve(10);
     for (uint32_t index = 0;
          index < newsItems.Size() && next.newsItems.size() < 10; ++index) {
       try {
-        if (newsItems.GetAt(index).ValueType() != JsonValueType::Object) continue;
-        const JsonObject item = newsItems.GetObjectAt(index);
+        const auto value = newsItems.GetAt(index);
+        if (value.ValueType() != JsonValueType::Object) continue;
+        const JsonObject item = value.GetObject();
         const std::wstring title = json::Text(item, L"title");
         if (!title.empty()) {
           next.newsItems.push_back({title, json::Text(item, L"description")});
@@ -119,11 +154,13 @@ bool ParseDashboardSnapshot(
     next.previousEnergyLabel = json::Text(comparison, L"previousLabel", L"先週");
 
     const JsonArray profile = json::Array(octopus, L"profile");
+    next.octopusProfile.reserve(7);
     for (uint32_t index = 0;
          index < profile.Size() && next.octopusProfile.size() < 7; ++index) {
       try {
-        if (profile.GetAt(index).ValueType() != JsonValueType::Object) continue;
-        const JsonObject item = profile.GetObjectAt(index);
+        const auto value = profile.GetAt(index);
+        if (value.ValueType() != JsonValueType::Object) continue;
+        const JsonObject item = value.GetObject();
         const std::wstring day = json::Text(item, L"day");
         if (day.empty()) continue;
         const bool currentComplete = json::Boolean(item, L"currentComplete");
@@ -141,10 +178,12 @@ bool ParseDashboardSnapshot(
     const JsonObject switchbot = json::Object(root, L"switchbot");
     next.revisions.energy = SectionRevision(octopus, switchbot);
     const JsonArray devices = json::Array(switchbot, L"devices");
+    next.switchBotDevices.reserve(8);
     for (uint32_t index = 0; index < devices.Size() && index < 8; ++index) {
       try {
-        if (devices.GetAt(index).ValueType() != JsonValueType::Object) continue;
-        const JsonObject item = devices.GetObjectAt(index);
+        const auto value = devices.GetAt(index);
+        if (value.ValueType() != JsonValueType::Object) continue;
+        const JsonObject item = value.GetObject();
         next.switchBotDevices.push_back({
             json::Text(item, L"deviceName",
                        json::Text(item, L"deviceId", L"SwitchBot")),
