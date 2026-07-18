@@ -98,20 +98,22 @@ inline std::wstring QuotePath(const fs::path& path) {
   return L"\"" + path.wstring() + L"\"";
 }
 inline std::wstring JsonQuote(const std::wstring& value) {
-  std::wstring output = L"\"";
+  std::wstring output;
+  output.reserve(value.size() + 2);
+  output.push_back(L'"');
   for (wchar_t c : value) {
     switch (c) {
-      case L'\\': output += L"\\\\"; break;
-      case L'\"': output += L"\\\""; break;
-      case L'\n': output += L"\\n"; break;
+      case L'\\': output.push_back(L'\\'); output.push_back(L'\\'); break;
+      case L'"': output.push_back(L'\\'); output.push_back(L'"'); break;
+      case L'\n': output.push_back(L'\\'); output.push_back(L'n'); break;
       case L'\r': break;
-      case L'\t': output += L"\\t"; break;
+      case L'\t': output.push_back(L'\\'); output.push_back(L't'); break;
       default:
         if (c >= 0x20) output.push_back(c);
         break;
     }
   }
-  output.push_back(L'\"');
+  output.push_back(L'"');
   return output;
 }
 inline uint64_t Fnv1a64(std::string_view value) noexcept {
@@ -123,9 +125,13 @@ inline uint64_t Fnv1a64(std::string_view value) noexcept {
   return hash;
 }
 inline std::wstring Hex64(uint64_t value) {
-  std::wostringstream output;
-  output << std::hex << std::setfill(L'0') << std::setw(16) << value;
-  return output.str();
+  static constexpr wchar_t kHexDigits[] = L"0123456789abcdef";
+  std::wstring output(16, L'0');
+  for (size_t index = output.size(); index > 0; --index) {
+    output[index - 1] = kHexDigits[static_cast<size_t>(value & 0x0full)];
+    value >>= 4;
+  }
+  return output;
 }
 inline int64_t UnixMillis() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
