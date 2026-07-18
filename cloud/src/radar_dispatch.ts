@@ -2,8 +2,8 @@ import type { Env } from "./sources";
 
 const RADAR_MANIFEST_KEY = "radar/manifest.json";
 const RADAR_DISPATCH_MARKER_KEY = "radar/dispatch.json";
-const RADAR_MANIFEST_MAX_AGE_MS = 8 * 60 * 1000;
-const RADAR_DISPATCH_COOLDOWN_MS = 10 * 60 * 1000;
+const RADAR_MANIFEST_MAX_AGE_MS = 4 * 60 * 1000;
+const RADAR_DISPATCH_COOLDOWN_MS = 6 * 60 * 1000;
 const GITHUB_REPOSITORY = "tarematsu/HP";
 const GITHUB_WORKFLOW = "radar-frames.yml";
 const GITHUB_REF = "main";
