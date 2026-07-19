@@ -155,6 +155,51 @@ export function telemetryBucketAggregateStatement(
   );
 }
 
+export function telemetrySequenceBucketStatement(
+  env: Env,
+  deviceId: string,
+  bucketAt: number,
+  sequences: readonly number[],
+): D1PreparedStatement {
+  if (!sequences.length) throw new Error("telemetry sequence list is empty");
+  const placeholders = sequences.map(() => "?").join(",");
+  return env.DB.prepare(
+    `INSERT INTO environment_buckets(
+       device_id,bucket_at,sample_count,co2_sum,co2_count,
+       temperature_sum,temperature_count,humidity_sum,humidity_count
+     )
+     SELECT ?,?,COUNT(*),
+       COALESCE(SUM(co2),0),COUNT(co2),
+       COALESCE(SUM(COALESCE(temperature_corrected,temperature)),0),
+       COUNT(COALESCE(temperature_corrected,temperature)),
+       COALESCE(SUM(COALESCE(humidity_corrected,humidity)),0),
+       COUNT(COALESCE(humidity_corrected,humidity))
+       FROM environment_samples
+      WHERE device_id=? AND observed_at>=? AND observed_at<?
+        AND sequence IN (${placeholders}) AND bucket_applied=0
+     HAVING COUNT(*)>0
+     ON CONFLICT(device_id,bucket_at) DO UPDATE SET
+       sample_count=environment_buckets.sample_count+excluded.sample_count,
+       co2_sum=environment_buckets.co2_sum+excluded.co2_sum,
+       co2_count=environment_buckets.co2_count+excluded.co2_count,
+       temperature_sum=environment_buckets.temperature_sum+excluded.temperature_sum,
+       temperature_count=environment_buckets.temperature_count+excluded.temperature_count,
+       humidity_sum=environment_buckets.humidity_sum+excluded.humidity_sum,
+       humidity_count=environment_buckets.humidity_count+excluded.humidity_count
+     RETURNING bucket_at AS t,
+       CASE WHEN co2_count>0 THEN co2_sum/co2_count ELSE NULL END AS co2,
+       CASE WHEN temperature_count>0 THEN temperature_sum/temperature_count ELSE NULL END AS temperature,
+       CASE WHEN humidity_count>0 THEN humidity_sum/humidity_count ELSE NULL END AS humidity`,
+  ).bind(
+    deviceId,
+    bucketAt,
+    deviceId,
+    bucketAt,
+    bucketAt + ENVIRONMENT_BUCKET_MS,
+    ...sequences,
+  );
+}
+
 export function pendingTelemetryBucketStatement(
   env: Env,
   deviceId: string,
