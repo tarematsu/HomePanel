@@ -7,7 +7,7 @@ function testEnv(): Env {
 }
 
 describe("device sync scheduler gate", () => {
-  it("coalesces concurrent runs and applies a one-minute success cooldown", async () => {
+  it("coalesces concurrent runs and applies a four-minute success cooldown", async () => {
     const env = testEnv();
     let finish!: () => void;
     const runner = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
@@ -20,9 +20,9 @@ describe("device sync scheduler gate", () => {
 
     finish();
     await first;
-    expect(runSchedulerFromDeviceSync(env, 69_999, runner)).toBeNull();
+    expect(runSchedulerFromDeviceSync(env, 249_999, runner)).toBeNull();
 
-    const afterCooldown = runSchedulerFromDeviceSync(env, 70_000, runner);
+    const afterCooldown = runSchedulerFromDeviceSync(env, 250_000, runner);
     expect(afterCooldown).not.toBeNull();
     expect(runner).toHaveBeenCalledTimes(2);
     finish();

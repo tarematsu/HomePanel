@@ -21,7 +21,7 @@ import { fetchStationhead } from "./spotify_source";
 import { stationheadHealthPayload } from "./stationhead_health";
 import { receiveTelemetryOptimized } from "./telemetry_route";
 
-const DEVICE_SYNC_SCHEDULER_COOLDOWN_MS = 60_000;
+const DEVICE_SYNC_SCHEDULER_COOLDOWN_MS = 4 * 60_000;
 
 interface DeviceSyncSchedulerState {
   lastStartedAt: number;
