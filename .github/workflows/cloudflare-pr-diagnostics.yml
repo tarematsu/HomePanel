@@ -76,10 +76,34 @@ jobs:
           retention-days: 14
 
       - name: Watch Cloudflare build and collect logs
+        id: cloudflare_build
+        continue-on-error: true
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
           CLOUDFLARE_WORKER_NAME: ${{ steps.resolve.outputs.worker_name }}
         run: node .github/scripts/cloudflare-build-diagnostics.mjs
+
+      - name: Verify Cloudflare preview outcome
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.cloudflare_build.outcome }}" == "success" ]]; then
+            exit 0
+          fi
+
+          log=.cloudflare-build-diagnostics/build.log
+          if [[ -f "$log" ]] \
+             && grep -Fq "code: 10211" "$log" \
+             && grep -Fq "Durable Object migration" "$log" \
+             && grep -Fq "versions upload" "$log"; then
+            echo "::warning::Cloudflare preview versions cannot apply a first Durable Object migration; the non-versioned production deploy will apply it."
+            exit 0
+          fi
+
+          echo "Cloudflare preview build failed for an unexpected reason."
+          [[ -f "$log" ]] && tail -n 180 "$log"
+          exit 1
 
       - name: Upload diagnostics
         if: always()

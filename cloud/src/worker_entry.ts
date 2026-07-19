@@ -8,6 +8,7 @@ import {
 import worker from "./worker_core";
 import { etagResponse, suppliedEtags, unauthorized } from "./response";
 import { radarFrameResponse } from "./radar_source";
+import { queueSchedulerEnsure, queueSchedulerWake } from "./scheduler_coordinator";
 import { WORKER_VERSION } from "./snapshot";
 import type { Env } from "./sources";
 import { receiveTelemetryOptimized } from "./telemetry_route";
@@ -19,6 +20,8 @@ import {
   spotifyStatus,
   startSpotifyAuthorization,
 } from "./spotify_oauth";
+
+export { SchedulerCoordinator } from "./scheduler_coordinator";
 
 const UPDATE_FILE_PREFIX = "/v1/update/file/";
 
@@ -98,9 +101,13 @@ export default {
       return receiveTelemetryOptimized(request, env);
     }
 
-    return worker.fetch(request, env, ctx);
-  },
-  scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    return worker.scheduled(event, env, ctx);
+    const response = await worker.fetch(request, env, ctx);
+    if (response.ok && request.method === "GET" && path === "/v1/device/sync") {
+      queueSchedulerEnsure(env, ctx);
+    }
+    if (response.status === 202 && request.method === "POST" && path === "/v1/refresh") {
+      queueSchedulerWake(env, ctx);
+    }
+    return response;
   },
 } satisfies ExportedHandler<Env>;

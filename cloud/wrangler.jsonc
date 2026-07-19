@@ -6,7 +6,20 @@
   "workers_dev": true,
   "keep_vars": true,
   "logpush": true,
-  "triggers": { "crons": ["* * * * *", "*/5 * * * *", "*/15 * * * *"] },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SCHEDULER_COORDINATOR",
+        "class_name": "SchedulerCoordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "scheduler-coordinator-v1",
+      "new_sqlite_classes": ["SchedulerCoordinator"]
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
