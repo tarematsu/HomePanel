@@ -201,72 +201,55 @@ function stablePayload(result: SourceResult): unknown {
   return copy;
 }
 
-function attachedPrevious(result: SourceResult): StateRow | null | undefined {
-  if (!Object.prototype.hasOwnProperty.call(result, "previousRow")) return undefined;
-  return (result as SourceResult & { previousRow?: StateRow | null }).previousRow ?? null;
-}
-
 export async function updateState(
   env: Env,
   result: SourceResult,
   error?: string,
-  knownPrevious?: StateRow | null,
+  _knownPrevious?: StateRow | null,
 ): Promise<void> {
   const now = Date.now();
-  const attached = attachedPrevious(result);
-  const previous = knownPrevious !== undefined
-    ? knownPrevious
-    : attached !== undefined ? attached : await readState(env, result.source);
+  const heartbeatBefore = now - STATE_HEARTBEAT_MS;
   if (error) {
-    if (previous) {
-      const nextStatus = previous.last_success_at === null ? "error" : "stale";
-      if (previous.status === nextStatus && previous.error === error && now - previous.fetched_at < STATE_HEARTBEAT_MS) return;
-      await env.DB.prepare(
-        `UPDATE current_state
-            SET fetched_at = ?1,
-                status = CASE WHEN last_success_at IS NULL THEN 'error' ELSE 'stale' END,
-                error = ?2
-          WHERE source = ?3`,
-      ).bind(now, error, result.source).run();
-    } else {
-      await env.DB.prepare(
-        `INSERT INTO current_state(source, version, payload, observed_at, fetched_at, last_success_at, status, error, content_hash)
-         VALUES(?1, 1, '{}', NULL, ?2, NULL, 'error', ?3, ?4)`,
-      ).bind(result.source, now, error, EMPTY_OBJECT_HASH).run();
-    }
+    await env.DB.prepare(
+      `INSERT INTO current_state(
+         source,version,payload,observed_at,fetched_at,last_success_at,status,error,content_hash
+       ) VALUES(?1,1,'{}',NULL,?2,NULL,'error',?3,?4)
+       ON CONFLICT(source) DO UPDATE SET
+         fetched_at=excluded.fetched_at,
+         status=CASE WHEN current_state.last_success_at IS NULL THEN 'error' ELSE 'stale' END,
+         error=excluded.error
+       WHERE current_state.status<>CASE
+               WHEN current_state.last_success_at IS NULL THEN 'error' ELSE 'stale' END
+          OR current_state.error IS NOT excluded.error
+          OR current_state.fetched_at<=?5`,
+    ).bind(result.source, now, error, EMPTY_OBJECT_HASH, heartbeatBefore).run();
     return;
   }
 
   const payload = JSON.stringify(result.payload);
   const stable = stablePayload(result);
   const hash = await sha256Hex(stable === result.payload ? payload : JSON.stringify(stable));
-  if (previous?.content_hash === hash) {
-    const heartbeatDue = now - previous.fetched_at >= STATE_HEARTBEAT_MS;
-    const recovered = previous.status !== "ok" || previous.error !== null;
-
-
-
-    if (!heartbeatDue && !recovered) return;
-    await env.DB.prepare(
-      `UPDATE current_state
-          SET payload=?1, observed_at=?2, fetched_at=?3, last_success_at=?3,
-              status='ok', error=NULL
-        WHERE source=?4`,
-    ).bind(payload, result.observedAt, now, result.source).run();
-    return;
-  }
-
   await env.DB.prepare(
-    `INSERT INTO current_state(source, version, payload, observed_at, fetched_at, last_success_at, status, error, content_hash)
-     VALUES(?1, 1, ?2, ?3, ?4, ?4, 'ok', NULL, ?5)
+    `INSERT INTO current_state(
+       source,version,payload,observed_at,fetched_at,last_success_at,status,error,content_hash
+     ) VALUES(?1,1,?2,?3,?4,?4,'ok',NULL,?5)
      ON CONFLICT(source) DO UPDATE SET
-       version = current_state.version + 1,
-       payload = excluded.payload,
-       observed_at = excluded.observed_at,
-       fetched_at = excluded.fetched_at,
-       last_success_at = excluded.last_success_at,
-       status = 'ok', error = NULL, content_hash = excluded.content_hash`,
-  ).bind(result.source, payload, result.observedAt, now, hash).run();
+       version=CASE
+         WHEN current_state.content_hash IS NOT excluded.content_hash THEN current_state.version+1
+         ELSE current_state.version
+       END,
+       payload=excluded.payload,
+       observed_at=excluded.observed_at,
+       fetched_at=excluded.fetched_at,
+       last_success_at=excluded.last_success_at,
+       status='ok',
+       error=NULL,
+       content_hash=excluded.content_hash
+     WHERE current_state.content_hash IS NOT excluded.content_hash
+        OR current_state.status<>'ok'
+        OR current_state.error IS NOT NULL
+        OR current_state.fetched_at<=?6`,
+  ).bind(result.source, payload, result.observedAt, now, hash, heartbeatBefore).run();
 }
 
 export async function ensureDashboard(env: Env): Promise<StateRow> {
