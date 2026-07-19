@@ -1,4 +1,5 @@
 #include "update_client.h"
+#include "safe_json_number.h"
 
 #include <bcrypt.h>
 #include <softpub.h>
@@ -8,6 +9,7 @@
 namespace hp {
 namespace {
 constexpr int kHttpTimeoutMs = 30'000;
+constexpr uint64_t kMaximumUpdateFileBytes = 64ull * 1024ull * 1024ull;
 
 struct InternetHandle {
   HINTERNET value = nullptr;
@@ -85,11 +87,12 @@ UpdateManifest ParseUpdateManifest(const std::string& json) {
     file.url = object.GetNamedString(L"url", L"").c_str();
     file.sha256 = object.GetNamedString(L"sha256", L"").c_str();
     std::transform(file.sha256.begin(), file.sha256.end(), file.sha256.begin(), towlower);
-    const double size = object.GetNamedNumber(L"size", 0);
-    file.size = std::isfinite(size) && size > 0 ? static_cast<uint64_t>(size) : 0;
+    const auto size = ExactJsonInteger<uint64_t>(
+        object.GetNamedNumber(L"size", 0), 1, kMaximumUpdateFileBytes);
+    file.size = size.value_or(0);
     file.requireAuthenticode = object.GetNamedBoolean(L"requireAuthenticode", false);
     if (!AllowedName(file.name) || file.url.rfind(L"https://", 0) != 0 || !IsHexSha256(file.sha256) ||
-        file.size == 0 || file.size > 64ull * 1024ull * 1024ull || seen[file.name]) {
+        file.size == 0 || seen[file.name]) {
       throw std::runtime_error("invalid update file manifest");
     }
     seen[file.name] = true;

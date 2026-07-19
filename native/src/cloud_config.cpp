@@ -1,4 +1,5 @@
 #include "cloud_config.h"
+#include "safe_json_number.h"
 #include <winrt/Windows.Data.Json.h>
 
 namespace hp {
@@ -13,8 +14,8 @@ bool HasKey(const JsonObject& object, const wchar_t* key) {
 }
 int Number(const JsonObject& object, const wchar_t* key, int fallback, int minimum, int maximum) {
   try {
-    const double value = object.GetNamedNumber(key, fallback);
-    return std::isfinite(value) ? std::clamp(static_cast<int>(value), minimum, maximum) : fallback;
+    return ClampedJsonIntOr(
+        object.GetNamedNumber(key, fallback), fallback, minimum, maximum);
   } catch (...) { return fallback; }
 }
 double Decimal(const JsonObject& object, const wchar_t* key, double fallback, double minimum, double maximum) {
@@ -83,4 +84,4 @@ bool ApplyCloudConfig(AppConfig& config, const fs::path& path) {
     return false;
   }
 }
-}
+}  // namespace hp
