@@ -122,7 +122,7 @@ static_assert(
     StationheadUtcDayOrdinal(1784419200000));
 static_assert(
     StationheadUtcDayOrdinal(1784505600000) ==
-    StationheadUtcDayOrdinal(1784505600000));
+    StationheadUtcDayOrdinal(1784419200000) + 1);
 }  // namespace stationhead_play_summary_checks
 
 }  // namespace hp
