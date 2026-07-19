@@ -4,7 +4,6 @@ import {
   cachedDashboardEtag,
   cachedMeta,
   cachedMetaEtag,
-  invalidateStateCaches,
 } from "./dashboard_cache";
 import worker from "./worker_core";
 import { etagResponse, suppliedEtags, unauthorized } from "./response";
@@ -96,20 +95,12 @@ export default {
     }
 
     if (request.method === "POST" && path === "/v1/telemetry") {
-      const response = await receiveTelemetryOptimized(request, env);
-      if (response.ok) invalidateStateCaches(env);
-      return response;
+      return receiveTelemetryOptimized(request, env);
     }
 
-    const response = await worker.fetch(request, env, ctx);
-    if (request.method !== "GET" && response.status < 500) invalidateStateCaches(env);
-    return response;
+    return worker.fetch(request, env, ctx);
   },
-  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    try {
-      await worker.scheduled(event, env, ctx);
-    } finally {
-      invalidateStateCaches(env);
-    }
+  scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    return worker.scheduled(event, env, ctx);
   },
 } satisfies ExportedHandler<Env>;

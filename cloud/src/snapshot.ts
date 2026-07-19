@@ -1,4 +1,5 @@
 import { jstDayKey, type Env, type SourceResult } from "./sources";
+import { markStateChanged } from "./state_generation";
 
 export const WORKER_VERSION = "2.11.0";
 
@@ -210,7 +211,7 @@ export async function updateState(
   const now = Date.now();
   const heartbeatBefore = now - STATE_HEARTBEAT_MS;
   if (error) {
-    await env.DB.prepare(
+    const write = await env.DB.prepare(
       `INSERT INTO current_state(
          source,version,payload,observed_at,fetched_at,last_success_at,status,error,content_hash
        ) VALUES(?1,1,'{}',NULL,?2,NULL,'error',?3,?4)
@@ -223,13 +224,14 @@ export async function updateState(
           OR current_state.error IS NOT excluded.error
           OR current_state.fetched_at<=?5`,
     ).bind(result.source, now, error, EMPTY_OBJECT_HASH, heartbeatBefore).run();
+    if (Number(write.meta.changes ?? 0) > 0) markStateChanged(env);
     return;
   }
 
   const payload = JSON.stringify(result.payload);
   const stable = stablePayload(result);
   const hash = await sha256Hex(stable === result.payload ? payload : JSON.stringify(stable));
-  await env.DB.prepare(
+  const write = await env.DB.prepare(
     `INSERT INTO current_state(
        source,version,payload,observed_at,fetched_at,last_success_at,status,error,content_hash
      ) VALUES(?1,1,?2,?3,?4,?4,'ok',NULL,?5)
@@ -250,6 +252,7 @@ export async function updateState(
         OR current_state.error IS NOT NULL
         OR current_state.fetched_at<=?6`,
   ).bind(result.source, payload, result.observedAt, now, hash, heartbeatBefore).run();
+  if (Number(write.meta.changes ?? 0) > 0) markStateChanged(env);
 }
 
 export async function ensureDashboard(env: Env): Promise<StateRow> {

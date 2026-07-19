@@ -2,6 +2,7 @@ import { authorizedDevice, bearerToken, DEVICE_ID_PATTERN } from "./auth";
 import { json } from "./http";
 import { unauthorized } from "./response";
 import type { Env } from "./sources";
+import { markStateChanged } from "./state_generation";
 import {
   markTelemetrySamplesAppliedStatement,
   telemetryBucketAt,
@@ -227,6 +228,7 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
   }
   if (rebuildEnvironment) {
     await mergeEnvironmentRows(env, deviceId, [...returnedRows.values()], now);
+    markStateChanged(env);
   }
 
   const response: Record<string, unknown> = {
