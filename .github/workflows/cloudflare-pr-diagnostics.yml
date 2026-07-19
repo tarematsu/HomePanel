@@ -41,6 +41,40 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
         run: node .github/scripts/resolve-cloudflare-config.mjs
 
+      - name: Install Wrangler for D1 insights
+        working-directory: cloud
+        run: npm ci --no-audit --no-fund
+
+      - name: Collect D1 query usage insights
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
+          D1_DATABASE_NAME: ${{ steps.resolve.outputs.database_name }}
+        run: |
+          set -eo pipefail
+          mkdir -p .cloudflare-build-diagnostics
+          cd cloud
+          npx wrangler d1 insights "$D1_DATABASE_NAME" \
+            --sort-type=sum --sort-by=reads --sort-direction=DESC \
+            --limit=100 --timePeriod=1d --json \
+            > ../.cloudflare-build-diagnostics/d1-insights-reads.json
+          npx wrangler d1 insights "$D1_DATABASE_NAME" \
+            --sort-type=sum --sort-by=writes --sort-direction=DESC \
+            --limit=100 --timePeriod=1d --json \
+            > ../.cloudflare-build-diagnostics/d1-insights-writes.json
+          test -s ../.cloudflare-build-diagnostics/d1-insights-reads.json
+          test -s ../.cloudflare-build-diagnostics/d1-insights-writes.json
+
+      - name: Upload D1 query insights
+        uses: actions/upload-artifact@v4
+        with:
+          name: d1-query-insights-${{ github.event.pull_request.head.sha }}
+          path: .cloudflare-build-diagnostics/d1-insights-*.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Watch Cloudflare build and collect logs
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
@@ -53,5 +87,6 @@ jobs:
         with:
           name: cloudflare-pr-diagnostics-${{ github.event.pull_request.head.sha }}
           path: .cloudflare-build-diagnostics/
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
