@@ -2,6 +2,7 @@
 #include "common.h"
 #include "config.h"
 #include "logger.h"
+#include "shared_immutable_vector.h"
 
 namespace hp {
 enum class StationheadTabKind {
@@ -68,7 +69,7 @@ struct StationheadStatus {
   // Recent per-day listening activity returned by the primary window's
   // authenticated Stationhead account endpoint, oldest first; the last entry
   // is today (partial, still accumulating). Empty for the secondary window.
-  std::vector<StationheadDailyPlayPoint> dailyPlayCounts;
+  SharedImmutableVector<StationheadDailyPlayPoint> dailyPlayCounts;
   int64_t dailyPlayStatsUpdatedAt = 0;
 
   bool operator==(const StationheadStatus&) const = default;
