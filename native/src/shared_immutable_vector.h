@@ -32,6 +32,7 @@ class SharedImmutableVector final {
 
   [[nodiscard]] bool empty() const noexcept { return storage_->empty(); }
   [[nodiscard]] size_t size() const noexcept { return storage_->size(); }
+  [[nodiscard]] const void* identity() const noexcept { return storage_.get(); }
   [[nodiscard]] const_iterator begin() const noexcept { return storage_->begin(); }
   [[nodiscard]] const_iterator end() const noexcept { return storage_->end(); }
   [[nodiscard]] const_reverse_iterator rbegin() const noexcept {
