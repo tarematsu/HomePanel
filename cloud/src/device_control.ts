@@ -1,5 +1,6 @@
 import type { Env } from "./sources";
 import { DEVICE_ID_PATTERN, deviceIdFromRequest as deviceIdFrom } from "./auth";
+import { claimPendingDeviceCommands } from "./device_command_delivery";
 import { json } from "./http";
 
 const ALLOWED_COMMANDS = new Set([
@@ -9,20 +10,11 @@ const ALLOWED_COMMANDS = new Set([
   "reload_dashboard",
   "check_update",
 ]);
-const COMMAND_REDELIVERY_MS = 90_000;
 
 interface DeviceConfigRow {
   version: number;
   payload: string;
   updated_at: number;
-}
-
-interface DeviceCommandRow {
-  id: number;
-  command: string;
-  payload: string | null;
-  created_at: number;
-  expires_at: number | null;
 }
 
 function configEtag(deviceId: string, version: number): string {
@@ -115,44 +107,6 @@ export async function enqueueCommandOnce(
     if (existingId > 0) return { id: existingId, deduplicated: true };
   }
   throw new Error("device command could not be queued");
-}
-
-async function pendingCommands(env: Env, deviceId: string, now: number): Promise<Array<Record<string, unknown>>> {
-  const rows = await env.DB.prepare(
-    `WITH pending AS (
-       SELECT id
-         FROM device_commands
-        WHERE device_id=?1
-          AND completed_at IS NULL
-          AND (expires_at IS NULL OR expires_at>?2)
-          AND (delivered_at IS NULL OR delivered_at<=?3)
-        ORDER BY id
-        LIMIT 10
-     )
-     UPDATE device_commands
-        SET delivered_at=?2
-      WHERE id IN (SELECT id FROM pending)
-        AND device_id=?1
-        AND completed_at IS NULL
-        AND (expires_at IS NULL OR expires_at>?2)
-        AND (delivered_at IS NULL OR delivered_at<=?3)
-     RETURNING id, command, payload, created_at, expires_at`,
-  ).bind(deviceId, now, now - COMMAND_REDELIVERY_MS).all<DeviceCommandRow>();
-  const results = rows.results ?? [];
-  results.sort((left, right) => Number(left.id) - Number(right.id));
-  const commands: Array<Record<string, unknown>> = [];
-  for (const row of results) {
-    let payload: unknown = null;
-    try { payload = row.payload ? JSON.parse(row.payload) : null; } catch { payload = null; }
-    commands.push({
-      id: row.id,
-      command: row.command,
-      payload,
-      createdAt: row.created_at,
-      expiresAt: row.expires_at,
-    });
-  }
-  return commands;
 }
 
 export async function getDeviceConfig(request: Request, env: Env): Promise<Response> {
@@ -270,7 +224,7 @@ export async function putDeviceConfig(request: Request, env: Env): Promise<Respo
 export async function getDeviceCommands(request: Request, env: Env): Promise<Response> {
   const deviceId = deviceIdFrom(request);
   if (!deviceId) return json({ error: "valid deviceId is required" }, { status: 400 });
-  return json({ deviceId, commands: await pendingCommands(env, deviceId, Date.now()) });
+  return json({ deviceId, commands: await claimPendingDeviceCommands(env, deviceId) });
 }
 
 export async function createDeviceCommand(request: Request, env: Env): Promise<Response> {
