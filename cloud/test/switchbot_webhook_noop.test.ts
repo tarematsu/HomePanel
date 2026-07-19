@@ -34,7 +34,8 @@ describe("SwitchBot exact webhook no-op", () => {
 
     await expect(switchBotWebhookStateStillCurrent(env, row, row.payload, now)).resolves.toBe(true);
     expect(prepare).toHaveBeenCalledTimes(1);
-    expect(String(prepare.mock.calls[0]?.[0])).toContain("source='switchbot' AND version=?1");
+    expect(String((prepare.mock.calls as unknown[][])[0]?.[0] ?? ""))
+      .toContain("source='switchbot' AND version=?1");
     expect(bind).toHaveBeenCalledWith(row.version, now - 15 * 60_000);
     expect(first).toHaveBeenCalledTimes(1);
   });
