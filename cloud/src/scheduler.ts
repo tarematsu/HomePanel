@@ -21,7 +21,7 @@ export interface JobRow {
 const LEASE_SECONDS = 120;
 const MAX_PARALLEL = 3;
 const MAX_SCHEDULER_BATCHES = 10;
-const SUCCESS_RUN_LOG_INTERVAL_SECONDS = 6 * 60 * 60;
+const SUCCESS_CHECKPOINT_INTERVAL_SECONDS = 6 * 60 * 60;
 const OCTOPUS_INTERVAL_SECONDS = 60 * 60 * 6;
 const RADAR_DISPATCH_INTERVAL_SECONDS = 5 * 60;
 const SYSTEM_JOBS_CACHE_MS = 15 * 60_000;
@@ -131,7 +131,10 @@ export async function acquireDueJobs(env: Env, nowSeconds: number): Promise<JobR
      )
      UPDATE jobs SET
        lease_until = ?3,
-       next_run_at = CASE WHEN next_run_at=0 THEN -1 ELSE next_run_at END
+       next_run_at = CASE
+         WHEN next_run_at=0 THEN -(?1 + interval_seconds)
+         ELSE ?1 + interval_seconds
+       END
       WHERE name IN (SELECT name FROM due)
         AND next_run_at <= ?1 AND (lease_until IS NULL OR lease_until < ?1)
      RETURNING name, interval_seconds, next_run_at, lease_until, last_success_at, consecutive_failures`,
@@ -139,39 +142,57 @@ export async function acquireDueJobs(env: Env, nowSeconds: number): Promise<JobR
   return result.results ?? [];
 }
 
-export async function finishJob(env: Env, job: JobRow, startedAt: number, success: boolean, error?: string): Promise<boolean> {
-  const now = Math.floor(Date.now() / 1000);
+export async function finishJob(
+  env: Env,
+  job: JobRow,
+  startedAt: number,
+  success: boolean,
+  error?: string,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): Promise<boolean> {
   const failures = success ? 0 : job.consecutive_failures + 1;
   const retrySeconds = success
     ? job.interval_seconds
     : Math.min(job.interval_seconds, Math.max(60, 60 * 2 ** Math.min(4, failures - 1)));
-  const preserveQueuedRefresh = job.next_run_at !== 0 ? 1 : 0;
+  const checkpointSuccess = success && (
+    job.next_run_at < 0
+    || job.last_success_at === null
+    || job.consecutive_failures > 0
+    || startedAt - job.last_success_at >= SUCCESS_CHECKPOINT_INTERVAL_SECONDS
+    || Number(job.lease_until ?? 0) <= nowSeconds
+  );
+  if (success && !checkpointSuccess) return true;
+
   const update = await env.DB.prepare(
     `UPDATE jobs SET
-       next_run_at=CASE WHEN ?7=1 AND next_run_at=0 THEN 0 ELSE ?1 END,
+       next_run_at=CASE
+         WHEN next_run_at=0 THEN 0
+         WHEN ?2=1 AND next_run_at<0 THEN -next_run_at
+         WHEN ?2=1 THEN next_run_at
+         ELSE ?1
+       END,
        lease_until=NULL,
        last_success_at=CASE WHEN ?2=1 THEN ?3 ELSE last_success_at END,
        last_error=?4,
        consecutive_failures=?5
-     WHERE name=?6 AND lease_until=?8`,
+     WHERE name=?6 AND lease_until=?7`,
   ).bind(
-    now + retrySeconds,
+    nowSeconds + retrySeconds,
     success ? 1 : 0,
-    now,
+    nowSeconds,
     success ? null : error ?? "unknown error",
     failures,
     job.name,
-    preserveQueuedRefresh,
     job.lease_until,
   ).run();
   if (Number(update.meta.changes ?? 0) !== 1) return false;
 
   const shouldLogRun = !success || job.last_success_at === null
-    || startedAt - job.last_success_at >= SUCCESS_RUN_LOG_INTERVAL_SECONDS;
+    || startedAt - job.last_success_at >= SUCCESS_CHECKPOINT_INTERVAL_SECONDS;
   if (shouldLogRun) {
     await env.DB.prepare(
       "INSERT INTO job_runs(job_name,started_at,finished_at,success,detail) VALUES(?1,?2,?3,?4,?5)",
-    ).bind(job.name, startedAt, now, success ? 1 : 0, error ?? null).run();
+    ).bind(job.name, startedAt, nowSeconds, success ? 1 : 0, error ?? null).run();
   }
   return true;
 }
@@ -262,6 +283,7 @@ export async function runScheduler(env: Env): Promise<void> {
     results.forEach((result, index) => {
       if (result.status === "rejected") console.error(`Scheduled job ${jobs[index]?.name ?? index} failed to finalize`, result.reason);
     });
+    if (jobs.length < MAX_PARALLEL) return;
   }
   console.error("Scheduler stopped after the safety batch limit with due work possibly remaining");
 }
