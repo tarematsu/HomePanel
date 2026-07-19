@@ -13,7 +13,14 @@ interface StoredEnvironmentRow extends EnvironmentHistoryRow {
   device_id: string;
 }
 
+interface ParsedEnvironmentState {
+  selectedDeviceId: string;
+  firstDeviceId: string;
+  devices: Record<string, EnvironmentDeviceHistory>;
+}
+
 const ENVIRONMENT_HISTORY_MS = 24 * 60 * 60 * 1000;
+const FAST_MERGE_ATTEMPTS = 2;
 
 type FastMergeResult = "updated" | "not_applicable" | "conflict";
 
@@ -51,33 +58,48 @@ function objectValue(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function singleDeviceHistory(
-  previous: StateRow,
-  deviceId: string,
-  cutoff: number,
-): EnvironmentHistoryRow[] | null {
+function normalizedStoredHistory(value: unknown, cutoff: number): EnvironmentHistoryRow[] | null {
+  const device = objectValue(value);
+  if (!device || Number(device.bucketMinutes ?? 5) !== 5 || !Array.isArray(device.history)) return null;
+
+  const history: EnvironmentHistoryRow[] = [];
+  let previousTime = Number.NEGATIVE_INFINITY;
+  for (const raw of device.history) {
+    const row = objectValue(raw);
+    if (!row) return null;
+    const t = Number(row.t);
+    if (!Number.isSafeInteger(t)) return null;
+    if (t < cutoff) continue;
+    if (t <= previousTime) return null;
+    history.push(normalizedPoint(row as unknown as EnvironmentHistoryRow, t));
+    previousTime = t;
+  }
+  return history;
+}
+
+function parseEnvironmentState(previous: StateRow, cutoff: number): ParsedEnvironmentState | null {
   try {
     const payload = objectValue(JSON.parse(previous.payload));
-    const devices = objectValue(payload?.devices);
-    if (!devices) return null;
-    const deviceIds = Object.keys(devices);
-    if (deviceIds.length !== 1 || deviceIds[0] !== deviceId) return null;
-    const device = objectValue(devices[deviceId]);
-    if (!device || Number(device.bucketMinutes ?? 5) !== 5 || !Array.isArray(device.history)) return null;
+    const storedDevices = objectValue(payload?.devices);
+    if (!storedDevices) return null;
 
-    const history: EnvironmentHistoryRow[] = [];
-    let previousTime = Number.NEGATIVE_INFINITY;
-    for (const value of device.history) {
-      const row = objectValue(value);
-      if (!row) return null;
-      const t = Number(row.t);
-      if (!Number.isSafeInteger(t)) return null;
-      if (t < cutoff) continue;
-      if (t <= previousTime) return null;
-      history.push(normalizedPoint(row as unknown as EnvironmentHistoryRow, t));
-      previousTime = t;
+    const devices: Record<string, EnvironmentDeviceHistory> = {};
+    let firstDeviceId = "";
+    for (const [deviceId, value] of Object.entries(storedDevices)) {
+      if (!DEVICE_ID_PATTERN.test(deviceId)) return null;
+      const history = normalizedStoredHistory(value, cutoff);
+      if (!history) return null;
+      devices[deviceId] = { deviceId, bucketMinutes: 5, history };
+      if (!firstDeviceId || deviceId < firstDeviceId) firstDeviceId = deviceId;
     }
-    return history;
+    if (!firstDeviceId) return null;
+
+    const selected = String(payload?.deviceId ?? "");
+    return {
+      selectedDeviceId: DEVICE_ID_PATTERN.test(selected) && devices[selected] ? selected : "",
+      firstDeviceId,
+      devices,
+    };
   } catch {
     return null;
   }
@@ -137,7 +159,7 @@ function mergeSortedHistory(
   return merged;
 }
 
-async function mergeSingleDeviceState(
+async function mergeDeviceState(
   env: Env,
   previous: StateRow,
   deviceId: string,
@@ -145,25 +167,33 @@ async function mergeSingleDeviceState(
   now: number,
   cutoff: number,
 ): Promise<FastMergeResult> {
-  const existing = singleDeviceHistory(previous, deviceId, cutoff);
-  if (!existing) return "not_applicable";
+  const parsed = parseEnvironmentState(previous, cutoff);
+  if (!parsed) return "not_applicable";
 
   const incoming = normalizeReturnedRows(returnedRows, cutoff);
+  const existing = parsed.devices[deviceId]?.history ?? [];
   const history = mergeSortedHistory(existing, incoming);
-  const device: EnvironmentDeviceHistory = { deviceId, bucketMinutes: 5, history };
-  const devices: Record<string, EnvironmentDeviceHistory> = { [deviceId]: device };
-  const payload = { deviceId, bucketMinutes: 5, history, devices };
+  parsed.devices[deviceId] = { deviceId, bucketMinutes: 5, history };
+  if (!parsed.firstDeviceId || deviceId < parsed.firstDeviceId) parsed.firstDeviceId = deviceId;
+
+  const preferred = env.HOMEPANEL_PRIMARY_DEVICE_ID?.trim() ?? "";
+  const selectedId = parsed.devices[preferred]
+    ? preferred
+    : parsed.devices[parsed.selectedDeviceId]
+      ? parsed.selectedDeviceId
+      : parsed.devices[deviceId]
+        ? deviceId
+        : parsed.firstDeviceId;
+  const selected = parsed.devices[selectedId] ?? { deviceId: selectedId, bucketMinutes: 5, history: [] };
+  const payload = {
+    deviceId: selected.deviceId,
+    bucketMinutes: selected.bucketMinutes,
+    history: selected.history,
+    devices: parsed.devices,
+  };
   const serialized = JSON.stringify(payload);
   const hash = await sha256Hex(serialized);
-
-  if (previous.content_hash === hash) {
-    await updateState(env, {
-      source: "environment",
-      observedAt: now,
-      payload,
-    }, undefined, previous);
-    return "updated";
-  }
+  if (previous.content_hash === hash) return "updated";
 
   const updated = await env.DB.prepare(
     `UPDATE current_state
@@ -181,10 +211,10 @@ export async function mergeEnvironmentRows(
   now: number,
 ): Promise<void> {
   const cutoff = now - ENVIRONMENT_HISTORY_MS;
-  const previous = await readState(env, "environment");
+  let previous = await readState(env, "environment");
   let fastResult: FastMergeResult = "not_applicable";
-  if (previous) {
-    fastResult = await mergeSingleDeviceState(
+  for (let attempt = 0; previous && attempt < FAST_MERGE_ATTEMPTS; attempt += 1) {
+    fastResult = await mergeDeviceState(
       env,
       previous,
       fallbackDeviceId,
@@ -193,6 +223,8 @@ export async function mergeEnvironmentRows(
       cutoff,
     );
     if (fastResult === "updated") return;
+    if (fastResult === "not_applicable") break;
+    previous = await readState(env, "environment");
   }
 
   const stored = await env.DB.prepare(
