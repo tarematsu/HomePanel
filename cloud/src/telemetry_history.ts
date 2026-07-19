@@ -243,7 +243,10 @@ export async function mergeEnvironmentRows(
   now: number,
 ): Promise<void> {
   const cutoff = now - ENVIRONMENT_HISTORY_MS;
-  let previous = await readEnvironmentState(env);
+  // An empty returned set is used when a committed retry discovers that the
+  // materialized state row is missing. Verify durable presence instead of
+  // allowing an equal cached hash to turn that recovery request into a no-op.
+  let previous = await readEnvironmentState(env, returnedRows.length === 0);
   let fastResult: FastMergeResult = "not_applicable";
   for (let attempt = 0; previous && attempt < FAST_MERGE_ATTEMPTS; attempt += 1) {
     fastResult = await mergeDeviceState(
