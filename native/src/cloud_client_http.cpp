@@ -39,7 +39,7 @@ void CloudClient::EnsureHttpHandlesLocked() {
   secure_ = true;
 
   session_ = WinHttpOpen(L"HomePanel/2.6", accessType_,
-                         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
   if (!session_) throw std::runtime_error(WinHttpErrorText("WinHttpOpen"));
   DWORD protocols = WINHTTP_PROTOCOL_FLAG_HTTP2;
   WinHttpSetOption(session_, WINHTTP_OPTION_ENABLE_HTTP_PROTOCOL, &protocols, sizeof(protocols));
@@ -51,7 +51,7 @@ void CloudClient::EnsureHttpHandlesLocked() {
 }
 
 HttpResponse CloudClient::Request(const std::wstring& method, const std::wstring& path, const std::wstring& token,
-                                  const std::wstring& etag, const std::string& body, const wchar_t* contentType) {
+                                   const std::wstring& etag, const std::string& body, const wchar_t* contentType) {
   std::lock_guard lock(httpMutex_);
   for (int attempt = 0; attempt < 2; ++attempt) {
     EnsureHttpHandlesLocked();
@@ -74,6 +74,9 @@ HttpResponse CloudClient::Request(const std::wstring& method, const std::wstring
     if (!token.empty()) headers += L"Authorization: Bearer " + token + L"\r\n";
     if (!etag.empty()) headers += L"If-None-Match: " + etag + L"\r\n";
     if (!body.empty()) headers += std::wstring(L"Content-Type: ") + contentType + L"\r\n";
+    if (method == L"GET" && path.rfind(L"/v1/device/sync?", 0) == 0) {
+      headers += L"X-HomePanel-Run-Scheduler: 1\r\n";
+    }
 
     const BOOL sent = WinHttpSendRequest(
         request, headers.c_str(), static_cast<DWORD>(headers.size()),
