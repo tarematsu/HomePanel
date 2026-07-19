@@ -92,7 +92,10 @@ async function reconcileSystemJobs(env: Env, nowMs: number, radarEnabled: boolea
       octopusDeadline,
     ).run();
   } else {
-    await statement.bind(OCTOPUS_INTERVAL_SECONDS, octopusDeadline).run();
+    await env.DB.batch([
+      statement.bind(OCTOPUS_INTERVAL_SECONDS, octopusDeadline),
+      env.DB.prepare("DELETE FROM jobs WHERE name='radar_dispatch'"),
+    ]);
   }
 }
 
@@ -168,14 +171,13 @@ export async function finishJob(
   );
   if (success && !checkpointSuccess) {
     // The regular next run was already scheduled atomically with lease acquisition.
-    // Only a refresh queued while this job was running needs a completion write so
-    // the new zero deadline can run immediately instead of waiting for lease expiry.
-    const queuedRefresh = await env.DB.prepare(
+    // Release the completed lease even when a refresh was not queued; otherwise the
+    // coordinator schedules a redundant lease-expiry alarm and a later refresh waits.
+    const released = await env.DB.prepare(
       `UPDATE jobs SET lease_until=NULL
-        WHERE name=?1 AND lease_until=?2 AND next_run_at=0`,
+        WHERE name=?1 AND lease_until=?2`,
     ).bind(job.name, job.lease_until).run();
-    if (Number(queuedRefresh.meta.changes ?? 0) === 1) return true;
-    return Number(job.lease_until ?? 0) > nowSeconds;
+    return Number(released.meta.changes ?? 0) === 1;
   }
 
   const update = await env.DB.prepare(
@@ -316,15 +318,16 @@ export async function runSchedulerTick(env: Env): Promise<void> {
   }
 }
 
-export async function requestRefresh(env: Env, names?: string[]): Promise<void> {
+export async function requestRefresh(env: Env, names?: string[]): Promise<boolean> {
+  const selected = names === undefined
+    ? [...REFRESHABLE_JOBS]
+    : [...new Set(names.filter(name => REFRESHABLE_JOB_SET.has(name)))];
+  if (!selected.length) return false;
   await ensureSystemJobs(env);
-  const selected = names?.length
-    ? [...new Set(names.filter(name => REFRESHABLE_JOB_SET.has(name)))]
-    : [...REFRESHABLE_JOBS];
-  if (!selected.length) return;
   const placeholders = selected.map(() => "?").join(",");
   await env.DB.prepare(
     `UPDATE jobs SET next_run_at=0
       WHERE name IN (${placeholders}) AND next_run_at<>0`,
   ).bind(...selected).run();
+  return true;
 }

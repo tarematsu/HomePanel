@@ -1,12 +1,13 @@
 import { applyD1Migrations, env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ensureSystemJobs } from "../src/scheduler";
+import { ensureSystemJobs, invalidateSystemJobsCache } from "../src/scheduler";
 import type { Env } from "../src/sources";
 
 type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1] };
 
 beforeEach(async () => {
   const testEnv = env as TestEnv;
+  invalidateSystemJobsCache(testEnv.DB);
   await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
   await env.DB.prepare("DELETE FROM jobs WHERE name='radar_dispatch'").run();
 });
@@ -41,5 +42,22 @@ describe("radar dispatch scheduler registration", () => {
       lease_until: null,
       consecutive_failures: 0,
     });
+  });
+
+  it("removes the dispatcher when the GitHub token is withdrawn", async () => {
+    const configuredEnv = {
+      ...(env as unknown as Env),
+      GITHUB_RADAR_DISPATCH_TOKEN: "configured-token",
+    };
+    await ensureSystemJobs(configuredEnv);
+    expect(await env.DB.prepare(
+      "SELECT name FROM jobs WHERE name='radar_dispatch'",
+    ).first<{ name: string }>()).toEqual({ name: "radar_dispatch" });
+
+    await ensureSystemJobs(env as unknown as Env);
+
+    expect(await env.DB.prepare(
+      "SELECT name FROM jobs WHERE name='radar_dispatch'",
+    ).first<{ name: string }>()).toBeNull();
   });
 });

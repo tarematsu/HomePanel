@@ -174,19 +174,26 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   if (url.pathname === "/v1/refresh") {
     if (request.method !== "POST") return methodNotAllowed(["POST"]);
     if (!authorizedAction(request, env)) return unauthorized();
-    let body: { sources?: unknown };
+    let parsed: unknown;
     try {
-      body = await request.json() as { sources?: unknown };
+      parsed = await request.json();
     } catch {
       return json({ error: "invalid json" }, { status: 400 });
     }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return json({ error: "body must be an object" }, { status: 400 });
+    }
+    const body = parsed as { sources?: unknown };
     if (body.sources !== undefined && !Array.isArray(body.sources)) {
       return json({ error: "sources must be an array" }, { status: 400 });
     }
-    const names = Array.isArray(body.sources)
-      ? body.sources.filter((value): value is string => typeof value === "string")
-      : undefined;
-    await requestRefresh(env, names);
+    if (Array.isArray(body.sources) && body.sources.some(value => typeof value !== "string")) {
+      return json({ error: "sources must contain only strings" }, { status: 400 });
+    }
+    const names = Array.isArray(body.sources) ? body.sources as string[] : undefined;
+    if (!await requestRefresh(env, names)) {
+      return json({ error: "sources must include a supported source" }, { status: 400 });
+    }
     return json({ queued: true }, { status: 202 });
   }
 
