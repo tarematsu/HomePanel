@@ -6,11 +6,13 @@ import {
   markTelemetrySamplesAppliedStatement,
   telemetryBucketAt,
   telemetryHeartbeatStatement,
+  telemetrySampleReadbackStatement,
   telemetrySampleStatement,
   telemetrySequenceBucketStatement,
   type EnvironmentHistoryRow,
   type TelemetrySample,
   type TelemetrySampleReceipt,
+  type TelemetryStoredSampleReceipt,
 } from "./telemetry_bucket";
 import { mergeEnvironmentRows } from "./telemetry_history";
 
@@ -64,6 +66,19 @@ function normalizeSample(value: unknown, now: number): TelemetrySample | null {
   return normalized;
 }
 
+function storedNumber(value: number | null): number | null {
+  return value === null ? null : Number(value);
+}
+
+function storedSampleMatches(sample: TelemetrySample, row: TelemetryStoredSampleReceipt): boolean {
+  return Number(row.observed_at) === sample.observedAt
+    && storedNumber(row.co2) === (sample.co2 ?? null)
+    && storedNumber(row.temperature) === (sample.temperature ?? null)
+    && storedNumber(row.humidity) === (sample.humidity ?? null)
+    && storedNumber(row.temperature_corrected) === (sample.temperatureCorrected ?? null)
+    && storedNumber(row.humidity_corrected) === (sample.humidityCorrected ?? null);
+}
+
 export async function receiveTelemetryOptimized(request: Request, env: Env): Promise<Response> {
   if (!bearerToken(request)) return unauthorized();
 
@@ -110,15 +125,37 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
   const returnedRows = new Map<number, EnvironmentHistoryRow>();
   let accepted = 0;
 
+  const acknowledge = (sequence: number, bucketApplied: number): void => {
+    acknowledged.add(sequence);
+    if (bucketApplied === 0) pendingSequences.add(sequence);
+  };
+
   for (let offset = 0; offset < uniqueSamples.length; offset += TELEMETRY_SAMPLES_PER_BATCH) {
     const chunk = uniqueSamples.slice(offset, offset + TELEMETRY_SAMPLES_PER_BATCH);
     const receiptResults = await env.DB.batch(chunk.map(sample => telemetrySampleStatement(env, deviceId, sample)));
+    const returned = new Set<number>();
     for (const result of receiptResults) {
       const rows = (result.results ?? []) as TelemetrySampleReceipt[];
       for (const row of rows) {
         const sequence = Number(row.sequence);
-        acknowledged.add(sequence);
-        if (Number(row.bucket_applied) === 0) pendingSequences.add(sequence);
+        returned.add(sequence);
+        acknowledge(sequence, Number(row.bucket_applied));
+      }
+    }
+
+    const missing = chunk.filter(sample => !returned.has(sample.sequence));
+    if (missing.length) {
+      const requestedBySequence = new Map(missing.map(sample => [sample.sequence, sample]));
+      const readback = await telemetrySampleReadbackStatement(
+        env,
+        deviceId,
+        missing.map(sample => sample.sequence),
+      ).all<TelemetryStoredSampleReceipt>();
+      for (const row of readback.results ?? []) {
+        const sequence = Number(row.sequence);
+        const sample = requestedBySequence.get(sequence);
+        if (!sample || !storedSampleMatches(sample, row)) continue;
+        acknowledge(sequence, Number(row.bucket_applied));
       }
     }
   }

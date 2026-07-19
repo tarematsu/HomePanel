@@ -15,6 +15,15 @@ export interface TelemetrySampleReceipt {
   bucket_applied: number;
 }
 
+export interface TelemetryStoredSampleReceipt extends TelemetrySampleReceipt {
+  observed_at: number;
+  co2: number | null;
+  temperature: number | null;
+  humidity: number | null;
+  temperature_corrected: number | null;
+  humidity_corrected: number | null;
+}
+
 export interface EnvironmentHistoryRow {
   t: number;
   co2: number | null;
@@ -94,19 +103,8 @@ export function telemetrySampleStatement(
        humidity=excluded.humidity,
        temperature_corrected=excluded.temperature_corrected,
        humidity_corrected=excluded.humidity_corrected,
-       bucket_applied=CASE
-         WHEN excluded.observed_at>environment_samples.observed_at THEN 0
-         ELSE environment_samples.bucket_applied
-       END
+       bucket_applied=0
      WHERE excluded.observed_at>environment_samples.observed_at
-        OR (
-          excluded.observed_at=environment_samples.observed_at
-          AND excluded.co2 IS environment_samples.co2
-          AND excluded.temperature IS environment_samples.temperature
-          AND excluded.humidity IS environment_samples.humidity
-          AND excluded.temperature_corrected IS environment_samples.temperature_corrected
-          AND excluded.humidity_corrected IS environment_samples.humidity_corrected
-        )
      RETURNING sequence,bucket_applied`,
   ).bind(
     deviceId,
@@ -118,6 +116,21 @@ export function telemetrySampleStatement(
     sample.temperatureCorrected ?? null,
     sample.humidityCorrected ?? null,
   );
+}
+
+export function telemetrySampleReadbackStatement(
+  env: Env,
+  deviceId: string,
+  sequences: readonly number[],
+): D1PreparedStatement {
+  if (!sequences.length) throw new Error("telemetry sequence list is empty");
+  const placeholders = sequences.map((_, index) => `?${index + 2}`).join(",");
+  return env.DB.prepare(
+    `SELECT sequence,observed_at,co2,temperature,humidity,
+            temperature_corrected,humidity_corrected,bucket_applied
+       FROM environment_samples
+      WHERE device_id=?1 AND sequence IN (${placeholders})`,
+  ).bind(deviceId, ...sequences);
 }
 
 export function telemetryBucketAggregateStatement(
