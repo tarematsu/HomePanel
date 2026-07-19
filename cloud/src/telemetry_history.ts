@@ -21,8 +21,22 @@ interface ParsedEnvironmentState {
 
 const ENVIRONMENT_HISTORY_MS = 24 * 60 * 60 * 1000;
 const FAST_MERGE_ATTEMPTS = 2;
+const ENVIRONMENT_STATE_CACHE = new WeakMap<D1Database, StateRow | null>();
 
 type FastMergeResult = "updated" | "not_applicable" | "conflict";
+
+export function invalidateEnvironmentStateCache(db: D1Database): void {
+  ENVIRONMENT_STATE_CACHE.delete(db);
+}
+
+async function readEnvironmentState(env: Env, force = false): Promise<StateRow | null> {
+  if (!force && ENVIRONMENT_STATE_CACHE.has(env.DB)) {
+    return ENVIRONMENT_STATE_CACHE.get(env.DB) ?? null;
+  }
+  const row = await readState(env, "environment");
+  ENVIRONMENT_STATE_CACHE.set(env.DB, row);
+  return row;
+}
 
 function previousSelectedDevice(previous: StateRow | null): string {
   if (!previous?.payload) return "";
@@ -159,6 +173,22 @@ function mergeSortedHistory(
   return merged;
 }
 
+function updateCachedEnvironmentRow(
+  previous: StateRow,
+  serialized: string,
+  hash: string,
+  now: number,
+): void {
+  previous.version += 1;
+  previous.payload = serialized;
+  previous.observed_at = now;
+  previous.fetched_at = now;
+  previous.last_success_at = now;
+  previous.status = "ok";
+  previous.error = null;
+  previous.content_hash = hash;
+}
+
 async function mergeDeviceState(
   env: Env,
   previous: StateRow,
@@ -201,7 +231,9 @@ async function mergeDeviceState(
             last_success_at=?2, status='ok', error=NULL, content_hash=?3
       WHERE source='environment' AND version=?4`,
   ).bind(serialized, now, hash, previous.version).run();
-  return Number(updated.meta.changes ?? 0) === 1 ? "updated" : "conflict";
+  if (Number(updated.meta.changes ?? 0) !== 1) return "conflict";
+  updateCachedEnvironmentRow(previous, serialized, hash, now);
+  return "updated";
 }
 
 export async function mergeEnvironmentRows(
@@ -211,7 +243,7 @@ export async function mergeEnvironmentRows(
   now: number,
 ): Promise<void> {
   const cutoff = now - ENVIRONMENT_HISTORY_MS;
-  let previous = await readState(env, "environment");
+  let previous = await readEnvironmentState(env);
   let fastResult: FastMergeResult = "not_applicable";
   for (let attempt = 0; previous && attempt < FAST_MERGE_ATTEMPTS; attempt += 1) {
     fastResult = await mergeDeviceState(
@@ -224,7 +256,7 @@ export async function mergeEnvironmentRows(
     );
     if (fastResult === "updated") return;
     if (fastResult === "not_applicable") break;
-    previous = await readState(env, "environment");
+    previous = await readEnvironmentState(env, true);
   }
 
   const stored = await env.DB.prepare(
@@ -267,7 +299,7 @@ export async function mergeEnvironmentRows(
   }
 
   const latestPrevious = !previous || fastResult === "conflict"
-    ? await readState(env, "environment")
+    ? await readEnvironmentState(env, true)
     : previous;
   const previousDeviceId = previousSelectedDevice(latestPrevious);
   const preferred = env.HOMEPANEL_PRIMARY_DEVICE_ID?.trim() ?? "";
@@ -289,4 +321,5 @@ export async function mergeEnvironmentRows(
       devices,
     },
   }, undefined, latestPrevious);
+  invalidateEnvironmentStateCache(env.DB);
 }
