@@ -8,8 +8,6 @@ const RADAR_TILE_URL_LIFETIME_SECONDS = 30 * 60;
 const RADAR_FORECAST_WINDOW_MS = 60 * 60 * 1000;
 const RADAR_FRAME_INTERVAL_MS = 5 * 1000;
 const RADAR_FRAME_PREFIX = "radar/frames/";
-const RADAR_MANIFEST_KEY = "radar/manifest.json";
-const RADAR_MANIFEST_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const RADAR_OUTPUT_WIDTH = 1920;
 const RADAR_OUTPUT_HEIGHT = 1280;
 const RADAR_LEGEND = [0, 1, 2, 4, 8, 16, 32, 64] as const;
@@ -19,13 +17,6 @@ const JMA_FORECAST_TIMES_URL = "https://www.jma.go.jp/bosai/jmatile/data/nowc/ta
 
 export type RadarTimeEntry = { basetime: string; validtime: string; elements?: string[] };
 type RadarTileLayout = { x: number; y: number; destX: number; destY: number };
-type RadarManifestFrame = {
-  baseTime: string;
-  validTime: string;
-  validAt: number;
-  variant: string;
-  url: string;
-};
 
 function jmaTimestampToMillis(value: string): number {
   if (value.length !== 14) return 0;
@@ -116,139 +107,20 @@ function frameKey(variant: string, validTime: string): string {
   return `${RADAR_FRAME_PREFIX}${variant}/${validTime}.webp`;
 }
 
-function framePath(variant: string, validTime: string): string {
-  return `/v1/radar/frame/${variant}/${validTime}.webp`;
+export async function radarFrameResponse(pathname: string, env: Env): Promise<Response> {
+  const match = pathname.match(RADAR_FRAME_PATH);
+  if (!match || !env.UPDATE_BUCKET) return new Response(null, { status: 404 });
+  const object = await env.UPDATE_BUCKET.get(frameKey(match[1]!, match[2]!));
+  if (!object?.body) return new Response(null, { status: 404 });
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("Content-Type", "image/webp");
+  headers.set("Cache-Control", "private, max-age=10800, immutable");
+  if (object.httpEtag) headers.set("ETag", object.httpEtag);
+  return new Response(object.body, { headers });
 }
 
-function manifestFrame(value: unknown): RadarManifestFrame | null {
-  if (!value || typeof value !== "object") return null;
-  const item = value as Record<string, unknown>;
-  const baseTime = typeof item.baseTime === "string" ? item.baseTime : "";
-  const validTime = typeof item.validTime === "string" ? item.validTime : "";
-  const variant = typeof item.variant === "string" ? item.variant : "";
-  const url = typeof item.url === "string" ? item.url : "";
-  const validAt = typeof item.validAt === "number" ? item.validAt : Number.NaN;
-  if (!/^\d{14}$/.test(baseTime) || !/^\d{14}$/.test(validTime)) return null;
-  if (!/^[a-z0-9-]{1,96}$/.test(variant)) return null;
-  if (!Number.isFinite(validAt) || validAt <= 0) return null;
-  if (url !== framePath(variant, validTime)) return null;
-  return { baseTime, validTime, validAt, variant, url };
-}
-
-function manifestNumber(
-  root: Record<string, unknown>,
-  name: string,
-  fallback: number,
-  minimum: number,
-  maximum: number,
-): number {
-  const value = root[name];
-  return typeof value === "number" && Number.isFinite(value)
-    ? Math.max(minimum, Math.min(maximum, value))
-    : fallback;
-}
-
-async function radarFromManifest(env: Env): Promise<SourceResult | null> {
-  const bucket = env.UPDATE_BUCKET;
-  if (!bucket) return null;
-
-  const object = await bucket.get(RADAR_MANIFEST_KEY);
-  if (!object) return null;
-
-  let value: unknown;
-  try {
-    value = JSON.parse(await object.text());
-  } catch (error) {
-    console.error("radar manifest parse failed", error instanceof Error ? error.message : String(error));
-    return null;
-  }
-  if (!value || typeof value !== "object") return null;
-  const root = value as Record<string, unknown>;
-  const generatedAt = typeof root.generatedAt === "string" ? Date.parse(root.generatedAt) : Number.NaN;
-  const currentAt = typeof root.currentAt === "number" ? root.currentAt : Number.NaN;
-  const now = Date.now();
-  if (!Number.isFinite(generatedAt)
-      || !Number.isFinite(currentAt)
-      || generatedAt > now + 5 * 60 * 1000
-      || currentAt > now + 5 * 60 * 1000
-      || now - generatedAt > RADAR_MANIFEST_MAX_AGE_MS
-      || now - currentAt > RADAR_MANIFEST_MAX_AGE_MS) {
-    return null;
-  }
-
-  const rawFrames = Array.isArray(root.frames) ? root.frames : [];
-  const parsedFrames: RadarManifestFrame[] = [];
-  for (const rawFrame of rawFrames) {
-    const frame = manifestFrame(rawFrame);
-    if (frame) parsedFrames.push(frame);
-  }
-  parsedFrames.sort((left, right) => left.validAt - right.validAt);
-  let currentFrame: RadarManifestFrame | null = null;
-  for (const frame of parsedFrames) {
-    if (frame.validAt === currentAt && frame.baseTime === frame.validTime) {
-      currentFrame = frame;
-      break;
-    }
-  }
-  if (!currentFrame) return null;
-
-  const frames: RadarManifestFrame[] = [];
-  const forecastEnd = currentAt + RADAR_FORECAST_WINDOW_MS;
-  for (const frame of parsedFrames) {
-    if (frame.baseTime === currentFrame.baseTime
-        && frame.validAt >= currentAt
-        && frame.validAt <= forecastEnd) {
-      frames.push(frame);
-    }
-  }
-  if (frames.length < 2) return null;
-
-  const centerValue = root.center;
-  const centerRoot = centerValue && typeof centerValue === "object"
-    ? centerValue as Record<string, unknown>
-    : {};
-  const center = {
-    lat: manifestNumber(centerRoot, "lat", DEFAULT_RADAR_CENTER.lat, -85.05112878, 85.05112878),
-    lon: manifestNumber(centerRoot, "lon", DEFAULT_RADAR_CENTER.lon, -180, 180),
-  };
-  const zoom = Math.trunc(manifestNumber(root, "zoom", DEFAULT_RADAR_ZOOM, 4, 14));
-  const suppliedProvider = typeof root.provider === "string" ? root.provider.trim() : "";
-  const provider = suppliedProvider
-    || "JMA current radar and one-hour forecast rendered by GitHub Actions and cached in Cloudflare R2";
-  const precomposed = root.precomposed === true;
-  const payloadFrames = new Array<Record<string, unknown>>(frames.length);
-  for (let index = 0; index < frames.length; index += 1) {
-    const frame = frames[index]!;
-    payloadFrames[index] = {
-      baseTime: frame.baseTime,
-      validTime: frame.validTime,
-      validAt: frame.validAt,
-      tiles: [{ x: 0, y: 0, destX: 0, destY: 0, url: frame.url }],
-    };
-  }
-
-  return {
-    source: "radar",
-    payload: {
-      provider,
-      precomposed,
-      width: 256,
-      height: 256,
-      outputWidth: RADAR_OUTPUT_WIDTH,
-      outputHeight: RADAR_OUTPUT_HEIGHT,
-      center,
-      zoom,
-      forecastWindowMs: RADAR_FORECAST_WINDOW_MS,
-      frameIntervalMs: RADAR_FRAME_INTERVAL_MS,
-      playbackRate: 1,
-      frames: payloadFrames,
-      legend: RADAR_LEGEND,
-    },
-    observedAt: currentAt,
-  };
-}
-
-async function radarFromJmaTiles(env: Env): Promise<SourceResult> {
+export async function fetchRadar(env: Env): Promise<SourceResult> {
   const [observed, forecast] = await Promise.all([
     fetchJson<RadarTimeEntry[]>(JMA_OBSERVED_TIMES_URL),
     fetchJson<RadarTimeEntry[]>(JMA_FORECAST_TIMES_URL),
@@ -256,7 +128,8 @@ async function radarFromJmaTiles(env: Env): Promise<SourceResult> {
   const entries = selectRadarForecastEntries(observed, forecast);
   if (entries.length < 2) throw new Error("JMA current-to-one-hour forecast frames are unavailable");
   const currentAt = jmaTimestampToMillis(entries[0]!.validtime);
-  const width = 480, height = 320;
+  const width = 480;
+  const height = 320;
   const zoom = Math.trunc(envNumber(env.RADAR_ZOOM, DEFAULT_RADAR_ZOOM, 4, 14));
   const center = {
     lat: envNumber(env.RADAR_CENTER_LAT, DEFAULT_RADAR_CENTER.lat, -85.05112878, 85.05112878),
@@ -286,10 +159,13 @@ async function radarFromJmaTiles(env: Env): Promise<SourceResult> {
   return {
     source: "radar",
     payload: {
-      provider: "JMA current radar and one-hour forecast via Cloudflare Cache",
+      provider: "JMA current radar and one-hour forecast via Cloudflare radar bundle",
       precomposed: false,
+      bundleUrl: `/v1/radar/bundle/${entries[0]!.basetime}.hpb`,
       width,
       height,
+      outputWidth: RADAR_OUTPUT_WIDTH,
+      outputHeight: RADAR_OUTPUT_HEIGHT,
       center,
       zoom,
       forecastWindowMs: RADAR_FORECAST_WINDOW_MS,
@@ -300,27 +176,4 @@ async function radarFromJmaTiles(env: Env): Promise<SourceResult> {
     },
     observedAt: currentAt,
   };
-}
-
-export async function radarFrameResponse(pathname: string, env: Env): Promise<Response> {
-  const match = pathname.match(RADAR_FRAME_PATH);
-  if (!match || !env.UPDATE_BUCKET) return new Response(null, { status: 404 });
-  const object = await env.UPDATE_BUCKET.get(frameKey(match[1]!, match[2]!));
-  if (!object?.body) return new Response(null, { status: 404 });
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set("Content-Type", "image/webp");
-  headers.set("Cache-Control", "private, max-age=10800, immutable");
-  if (object.httpEtag) headers.set("ETag", object.httpEtag);
-  return new Response(object.body, { headers });
-}
-
-export async function fetchRadar(env: Env): Promise<SourceResult> {
-  try {
-    const manifest = await radarFromManifest(env);
-    if (manifest) return manifest;
-  } catch (error) {
-    console.error("radar manifest read failed", error instanceof Error ? error.message : String(error));
-  }
-  return radarFromJmaTiles(env);
 }

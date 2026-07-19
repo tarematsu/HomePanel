@@ -5,6 +5,7 @@ import {
   cachedMeta,
   cachedMetaEtag,
 } from "./dashboard_cache";
+import { radarBundleResponse } from "./radar_bundle";
 import worker from "./worker_core";
 import { etagResponse, suppliedEtags, unauthorized } from "./response";
 import { radarFrameResponse } from "./radar_source";
@@ -47,6 +48,11 @@ export default {
         workerVersion: WORKER_VERSION,
         now: new Date().toISOString(),
       });
+    }
+
+    if (request.method === "GET" && path.startsWith("/v1/radar/bundle/")) {
+      if (!authorizedAnyDevice(request, env)) return unauthorized();
+      return radarBundleResponse(request, env, ctx);
     }
 
     if (request.method === "GET" && path.startsWith("/v1/radar/frame/")) {

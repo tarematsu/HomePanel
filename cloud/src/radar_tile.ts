@@ -6,7 +6,7 @@ const SIGNED_URL_LIFETIME_SECONDS = 30 * 60;
 const UTF8_ENCODER = new TextEncoder();
 const HEX_DIGITS = "0123456789abcdef";
 
-interface RadarTileTarget {
+export interface RadarTileTarget {
   upstream: string;
   ttl: number;
 }
@@ -26,7 +26,7 @@ function validTileCoordinates(
   return { zoom, x, y };
 }
 
-function tileRequest(pathname: string): RadarTileTarget | null {
+export function radarTileTargetForPath(pathname: string): RadarTileTarget | null {
   let match = pathname.match(/^\/v1\/radar\/tile\/gsi\/(\d{1,2})\/(\d+)\/(\d+)\.png$/);
   if (match) {
     const coordinates = validTileCoordinates(match[1], match[2], match[3]);
@@ -93,7 +93,7 @@ async function verifyRadarTileUrl(
   url: URL,
   env: Env,
   nowSeconds: number,
-  target: RadarTileTarget | null = tileRequest(url.pathname),
+  target: RadarTileTarget | null = radarTileTargetForPath(url.pathname),
 ): Promise<boolean> {
   if (!target) return false;
   const secret = signingSecret(env);
@@ -113,7 +113,7 @@ export async function signedRadarTilePath(
   pathname: string,
   expires = Math.floor(Date.now() / 1000) + SIGNED_URL_LIFETIME_SECONDS,
 ): Promise<string> {
-  if (!tileRequest(pathname)) throw new Error("invalid radar tile path");
+  if (!radarTileTargetForPath(pathname)) throw new Error("invalid radar tile path");
   const secret = signingSecret(env);
   if (!secret) throw new Error("radar tile signing unavailable");
   const signed = hexDigest(await signatureDigest(secret, pathname, expires));
@@ -130,13 +130,13 @@ export async function verifyRadarTileRequest(
 
 export async function proxyRadarTile(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const target = tileRequest(url.pathname);
+  const target = radarTileTargetForPath(url.pathname);
   if (!target) return json({ error: "invalid radar tile" }, { status: 404 });
   if (!await verifyRadarTileUrl(url, env, Math.floor(Date.now() / 1000), target)) {
     return json({ error: "invalid or expired radar tile signature" }, { status: 403 });
   }
   const upstream = await fetch(target.upstream, {
-    headers: { "User-Agent": "HomePanel-Cloud/2.2" },
+    headers: { "User-Agent": "HomePanel-Cloud/2.6" },
     cf: { cacheEverything: true, cacheTtl: target.ttl },
   });
   if (!upstream.ok || !upstream.body) return new Response(null, { status: upstream.status || 502 });

@@ -1,3 +1,4 @@
+import { radarBundleShardResponse } from "./radar_bundle";
 import { ensureSystemJobs, runSchedulerTick } from "./scheduler";
 import type { Env } from "./sources";
 
@@ -101,6 +102,9 @@ export class SchedulerCoordinator {
       });
     }
     const path = new URL(request.url).pathname;
+    if (path === "/radar-bundle-shard") {
+      return radarBundleShardResponse(request, this.env);
+    }
     if (path === "/wake") {
       const alarmAt = await this.setEarlierAlarm(Date.now() + MIN_ALARM_DELAY_MS);
       return Response.json({ scheduled: true, alarmAt }, { status: 202 });

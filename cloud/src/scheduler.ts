@@ -7,7 +7,6 @@ import { configuredIds, loadSwitchBotSnapshot } from "./switchbot_api";
 import { fetchSwitchBotOptimized } from "./switchbot_poll";
 import { failSafeSwitchBotState } from "./switchbot_state";
 import type { SwitchBotEnv } from "./switchbot_types";
-import { dispatchRadarBuildIfStale } from "./radar_dispatch";
 
 export interface JobRow {
   name: string;
@@ -23,7 +22,6 @@ const MAX_PARALLEL = 3;
 const MAX_SCHEDULER_BATCHES = 10;
 const SUCCESS_CHECKPOINT_INTERVAL_SECONDS = 6 * 60 * 60;
 const OCTOPUS_INTERVAL_SECONDS = 60 * 60 * 6;
-const RADAR_DISPATCH_INTERVAL_SECONDS = 5 * 60;
 const SYSTEM_JOBS_CACHE_MS = 15 * 60_000;
 const DAY_MS = 86_400_000;
 const DAY_SECONDS = 86_400;
@@ -41,7 +39,6 @@ const REFRESHABLE_JOBS = [
 const REFRESHABLE_JOB_SET = new Set<string>(REFRESHABLE_JOBS);
 
 interface SystemJobsCacheEntry {
-  radarEnabled: boolean;
   expiresAt: number;
   inFlight: Promise<void> | null;
 }
@@ -52,19 +49,14 @@ export function invalidateSystemJobsCache(db: D1Database): void {
   SYSTEM_JOBS_CACHE.delete(db);
 }
 
-async function reconcileSystemJobs(env: Env, nowMs: number, radarEnabled: boolean): Promise<void> {
+async function reconcileSystemJobs(env: Env, nowMs: number): Promise<void> {
   const octopusDeadline = Math.floor(nowMs / 1000) + OCTOPUS_INTERVAL_SECONDS;
-  const radarValues = radarEnabled
-    ? ",('radar_dispatch',?2,0,NULL,NULL,NULL,0)"
-    : "";
-  const deadlineParameter = radarEnabled ? "?3" : "?2";
   const statement = env.DB.prepare(
     `INSERT INTO jobs(
        name,interval_seconds,next_run_at,lease_until,last_success_at,last_error,consecutive_failures
      ) VALUES
        ('stationhead_health',300,0,NULL,NULL,NULL,0),
        ('octopus',?1,0,NULL,NULL,NULL,0)
-       ${radarValues}
      ON CONFLICT(name) DO UPDATE SET
        interval_seconds=CASE
          WHEN excluded.name='stationhead_health' THEN jobs.interval_seconds
@@ -73,42 +65,31 @@ async function reconcileSystemJobs(env: Env, nowMs: number, radarEnabled: boolea
        next_run_at=CASE
          WHEN excluded.name='octopus' THEN CASE
            WHEN jobs.next_run_at=0 THEN 0
-           WHEN jobs.next_run_at>${deadlineParameter} THEN ${deadlineParameter}
+           WHEN jobs.next_run_at>?2 THEN ?2
            ELSE jobs.next_run_at
          END
          ELSE jobs.next_run_at
        END
-     WHERE
-       (excluded.name='octopus' AND (
-         jobs.interval_seconds<>excluded.interval_seconds
-         OR (jobs.next_run_at<>0 AND jobs.next_run_at>${deadlineParameter})
-       ))
-       OR (excluded.name='radar_dispatch' AND jobs.interval_seconds<>excluded.interval_seconds)`,
+     WHERE excluded.name='octopus' AND (
+       jobs.interval_seconds<>excluded.interval_seconds
+       OR (jobs.next_run_at<>0 AND jobs.next_run_at>?2)
+     )`,
   );
-  if (radarEnabled) {
-    await statement.bind(
-      OCTOPUS_INTERVAL_SECONDS,
-      RADAR_DISPATCH_INTERVAL_SECONDS,
-      octopusDeadline,
-    ).run();
-  } else {
-    await env.DB.batch([
-      statement.bind(OCTOPUS_INTERVAL_SECONDS, octopusDeadline),
-      env.DB.prepare("DELETE FROM jobs WHERE name='radar_dispatch'"),
-    ]);
-  }
+  await env.DB.batch([
+    statement.bind(OCTOPUS_INTERVAL_SECONDS, octopusDeadline),
+    env.DB.prepare("DELETE FROM jobs WHERE name='radar_dispatch'"),
+  ]);
 }
 
 export async function ensureSystemJobs(env: Env, nowMs = Date.now()): Promise<void> {
-  const radarEnabled = Boolean(env.GITHUB_RADAR_DISPATCH_TOKEN?.trim());
   const cached = SYSTEM_JOBS_CACHE.get(env.DB);
-  if (cached?.radarEnabled === radarEnabled) {
+  if (cached) {
     if (cached.inFlight) return cached.inFlight;
     if (cached.expiresAt > nowMs) return;
   }
 
-  const entry: SystemJobsCacheEntry = { radarEnabled, expiresAt: 0, inFlight: null };
-  const task = reconcileSystemJobs(env, nowMs, radarEnabled).then(
+  const entry: SystemJobsCacheEntry = { expiresAt: 0, inFlight: null };
+  const task = reconcileSystemJobs(env, nowMs).then(
     () => {
       if (SYSTEM_JOBS_CACHE.get(env.DB) === entry) {
         entry.expiresAt = nowMs + SYSTEM_JOBS_CACHE_MS;
@@ -249,7 +230,6 @@ async function runOne(env: Env, job: JobRow): Promise<void> {
   try {
     if (job.name === "cleanup") await cleanupExpiredData(env);
     else if (job.name === "update_check") await runUpdateCheck(env);
-    else if (job.name === "radar_dispatch") await dispatchRadarBuildIfStale(env);
     else if (job.name === "stationhead") {
       sourceFailureRecorded = true;
       await refreshStationheadMonitor(env);
@@ -275,7 +255,7 @@ async function runOne(env: Env, job: JobRow): Promise<void> {
           payload: failSafeSwitchBotState(snapshot.state, now, controlPlugIds, message),
           observedAt: now,
         }, undefined, snapshot.row);
-      } else if (!["cleanup", "update_check", "radar_dispatch"].includes(job.name) && !sourceFailureRecorded) {
+      } else if (!["cleanup", "update_check"].includes(job.name) && !sourceFailureRecorded) {
         await updateState(env, { source: job.name, payload: null, observedAt: Date.now() }, message);
       }
     } catch (stateError) {

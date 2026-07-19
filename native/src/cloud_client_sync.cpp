@@ -1,9 +1,3 @@
-
-
-
-
-
-
 #include "cloud_client.h"
 #include <limits>
 #include <set>
@@ -138,7 +132,69 @@ std::vector<uint8_t> CloudClient::LocalizeRadarTiles(const std::vector<uint8_t>&
     return base + (url.empty() || url.front() == L'/' ? url : L"/" + url);
   };
 
+  JsonObject root = JsonObject::Parse(Utf8BytesToWide(body));
   std::set<std::wstring> retained;
+  const std::wstring bundleUrl = root.GetNamedString(L"bundleUrl", L"").c_str();
+  if (!bundleUrl.empty() && bundleUrl.front() == L'/') {
+    try {
+      const auto response = Request(L"GET", bundleUrl, deviceToken_);
+      if (response.status != 200 || response.body.size() < 12) {
+        throw std::runtime_error("radar bundle HTTP " + std::to_string(response.status));
+      }
+      static constexpr char kBundleMagic[] = "HPRB0001";
+      if (std::memcmp(response.body.data(), kBundleMagic, 8) != 0) {
+        throw std::runtime_error("radar bundle magic mismatch");
+      }
+      size_t offset = 8;
+      const auto readUint16 = [&](uint16_t& value) {
+        if (offset + 2 > response.body.size()) throw std::runtime_error("radar bundle truncated");
+        value = static_cast<uint16_t>(response.body[offset])
+            | static_cast<uint16_t>(response.body[offset + 1]) << 8;
+        offset += 2;
+      };
+      const auto readUint32 = [&](uint32_t& value) {
+        if (offset + 4 > response.body.size()) throw std::runtime_error("radar bundle truncated");
+        value = static_cast<uint32_t>(response.body[offset])
+            | static_cast<uint32_t>(response.body[offset + 1]) << 8
+            | static_cast<uint32_t>(response.body[offset + 2]) << 16
+            | static_cast<uint32_t>(response.body[offset + 3]) << 24;
+        offset += 4;
+      };
+      uint32_t recordCount = 0;
+      readUint32(recordCount);
+      if (recordCount == 0 || recordCount > 256) throw std::runtime_error("radar bundle record count invalid");
+      for (uint32_t record = 0; record < recordCount; ++record) {
+        uint16_t pathLength = 0;
+        uint32_t bodyLength = 0;
+        readUint16(pathLength);
+        readUint32(bodyLength);
+        if (pathLength == 0 || bodyLength == 0 ||
+            offset + static_cast<size_t>(pathLength) + static_cast<size_t>(bodyLength) > response.body.size()) {
+          throw std::runtime_error("radar bundle record invalid");
+        }
+        const std::string pathUtf8(
+            reinterpret_cast<const char*>(response.body.data() + offset), pathLength);
+        offset += pathLength;
+        const std::wstring pathname = Utf8ToWide(pathUtf8);
+        if (!pathname.starts_with(L"/v1/radar/tile/jma/")) {
+          throw std::runtime_error("radar bundle path invalid");
+        }
+        const fs::path target = localPathFor(pathname);
+        retained.insert(target.wstring());
+        std::error_code error;
+        if (!fs::exists(target, error) || fs::file_size(target, error) == 0) {
+          if (!AtomicWriteBytes(target, response.body.data() + offset, bodyLength)) {
+            throw std::runtime_error("radar bundle cache write failed");
+          }
+        }
+        offset += bodyLength;
+      }
+      if (offset != response.body.size()) throw std::runtime_error("radar bundle trailing data");
+    } catch (const std::exception& error) {
+      log_.Warn(L"Radar bundle fetch failed; falling back to individual tiles: " + Utf8ToWide(error.what()));
+    }
+  }
+
   const auto localizeTile = [&](JsonObject item) {
     const std::wstring url = item.GetNamedString(L"url", L"").c_str();
     if (url.empty() || url.front() != L'/') return;
@@ -162,7 +218,6 @@ std::vector<uint8_t> CloudClient::LocalizeRadarTiles(const std::vector<uint8_t>&
     item.SetNamedValue(L"url", JsonValue::CreateStringValue(localUrlFor(url)));
   };
 
-  JsonObject root = JsonObject::Parse(Utf8BytesToWide(body));
   if (root.HasKey(L"frames") && root.GetNamedValue(L"frames").ValueType() == JsonValueType::Array) {
     for (auto frameValue : root.GetNamedArray(L"frames")) {
       if (frameValue.ValueType() != JsonValueType::Object) continue;
@@ -271,7 +326,7 @@ void CloudClient::Synchronize() {
     PostMessageW(window_, WM_HP_SWITCHBOT_UPDATED, 0, 0);
   }
   if (auto payload = StringPayload(root, L"stationhead")) {
-    if (!AtomicWriteBytes(stationheadPath, *payload)) throw std::runtime_error("Stationhead state cache write failed");
+    if (!AtomicWriteBytes(stationheadPath, *payload)) throw std::runtime_error("Stationhead cache write failed");
     stationheadApplied = true;
     PostMessageW(window_, WM_HP_STATIONHEAD_CHANGED, 0, 0);
   }
