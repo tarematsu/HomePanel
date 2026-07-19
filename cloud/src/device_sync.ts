@@ -6,25 +6,22 @@ import {
   WORKER_VERSION,
   type StateRow,
 } from "./snapshot";
+import {
+  normalizeDeviceSyncVersions,
+  SYNC_SOURCE_NAMES,
+  SYNC_SOURCE_PLACEHOLDERS,
+} from "./device_sync_versions";
 import type { Env } from "./sources";
 import { stationheadHealthPayload } from "./stationhead_health";
 
 const COMMAND_REDELIVERY_MS = 90_000;
-const SYNC_SOURCE_NAMES = [...DASHBOARD_SOURCE_NAMES, "radar", "stationhead_health"] as const;
-const SYNC_SOURCE_PLACEHOLDERS = SYNC_SOURCE_NAMES.map(() => "?").join(",");
 
 type SyncSourceName = typeof SYNC_SOURCE_NAMES[number];
-type SyncStateMetadata = Omit<StateRow, "payload">;
 
 interface DeviceSyncAuxRow {
   config_version: number;
   config_updated_at: number;
   pending: number;
-}
-
-interface PayloadRow {
-  source: SyncSourceName;
-  payload: string;
 }
 
 interface DeviceCommandRow {
@@ -76,10 +73,6 @@ async function pendingCommands(env: Env, deviceId: string, now: number): Promise
   });
 }
 
-function stateRow(metadata: SyncStateMetadata, payload = ""): StateRow {
-  return { ...metadata, payload };
-}
-
 export async function getDeviceSync(request: Request, env: Env): Promise<Response> {
   const deviceId = deviceIdFrom(request);
   if (!deviceId) return json({ error: "valid deviceId is required" }, { status: 400 });
@@ -94,11 +87,18 @@ export async function getDeviceSync(request: Request, env: Env): Promise<Respons
   };
   const now = Date.now();
 
-  const [stateResult, auxResult] = await env.DB.batch([
+  const [versionResult, auxResult] = await env.DB.batch([
     env.DB.prepare(
-      `SELECT source,version,observed_at,fetched_at,last_success_at,status,error,content_hash
-         FROM current_state
-        WHERE source IN (${SYNC_SOURCE_PLACEHOLDERS})`,
+      `SELECT
+         COALESCE(SUM(CASE
+           WHEN source IN ('weather','news','octopus','switchbot','stationhead','environment')
+           THEN version ELSE 0 END),0) AS dashboard_version,
+         COALESCE(MAX(CASE WHEN source='radar' THEN version ELSE 0 END),0) AS radar_version,
+         COALESCE(MAX(CASE WHEN source='switchbot' THEN version ELSE 0 END),0) AS switchbot_version,
+         COALESCE(MAX(CASE WHEN source='stationhead' THEN version ELSE 0 END),0) AS stationhead_version,
+         COALESCE(MAX(CASE WHEN source='stationhead_health' THEN version ELSE 0 END),0) AS stationhead_health_version
+       FROM current_state
+       WHERE source IN (${SYNC_SOURCE_PLACEHOLDERS})`,
     ).bind(...SYNC_SOURCE_NAMES),
     env.DB.prepare(
       `WITH config AS (
@@ -117,32 +117,14 @@ export async function getDeviceSync(request: Request, env: Env): Promise<Respons
     ).bind(deviceId, now, now - COMMAND_REDELIVERY_MS),
   ]);
 
-  const metadata = new Map<string, SyncStateMetadata>();
-  let currentDashboardVersion = 0;
-  let radarVersion = 0;
-  let switchbotVersion = 0;
-  let stationheadVersion = 0;
-  let stationheadHealthVersion = 0;
-  for (const raw of stateResult?.results ?? []) {
-    const row = raw as unknown as SyncStateMetadata;
-    const version = Number(row.version);
-    const normalized: SyncStateMetadata = {
-      source: String(row.source),
-      version,
-      observed_at: row.observed_at,
-      fetched_at: Number(row.fetched_at ?? 0),
-      last_success_at: row.last_success_at,
-      status: row.status,
-      error: row.error,
-      content_hash: row.content_hash,
-    };
-    metadata.set(normalized.source, normalized);
-    if ((DASHBOARD_SOURCE_NAMES as readonly string[]).includes(normalized.source)) currentDashboardVersion += version;
-    if (normalized.source === "radar") radarVersion = version;
-    else if (normalized.source === "switchbot") switchbotVersion = version;
-    else if (normalized.source === "stationhead") stationheadVersion = version;
-    else if (normalized.source === "stationhead_health") stationheadHealthVersion = version;
-  }
+  const versions = normalizeDeviceSyncVersions(
+    versionResult?.results?.[0] as Partial<ReturnType<typeof normalizeDeviceSyncVersions>> | undefined,
+  );
+  const currentDashboardVersion = versions.dashboard_version;
+  const radarVersion = versions.radar_version;
+  const switchbotVersion = versions.switchbot_version;
+  const stationheadVersion = versions.stationhead_version;
+  const stationheadHealthVersion = versions.stationhead_health_version;
 
   const aux = (auxResult?.results?.[0] ?? {}) as unknown as DeviceSyncAuxRow;
   const configVersion = Number(aux.config_version ?? 0);
@@ -162,7 +144,7 @@ export async function getDeviceSync(request: Request, env: Env): Promise<Respons
   };
 
   const dashboardChanged = currentDashboardVersion !== requested.dashboard;
-  const payloadSources = new Set<string>();
+  const payloadSources = new Set<SyncSourceName>();
   if (dashboardChanged) for (const source of DASHBOARD_SOURCE_NAMES) payloadSources.add(source);
   if (radarVersion !== requested.radar) payloadSources.add("radar");
   if (switchbotVersion !== requested.switchbot) payloadSources.add("switchbot");
@@ -173,14 +155,11 @@ export async function getDeviceSync(request: Request, env: Env): Promise<Respons
   if (payloadSources.size) {
     const names = [...payloadSources];
     const placeholders = names.map(() => "?").join(",");
-    const payloadResult = await env.DB.prepare(
-      `SELECT source,payload FROM current_state WHERE source IN (${placeholders})`,
-    ).bind(...names).all<PayloadRow>();
-    const payloads = new Map((payloadResult.results ?? []).map(row => [row.source, row.payload]));
-    for (const source of names) {
-      const row = metadata.get(source);
-      if (row) states[source] = stateRow(row, payloads.get(source as SyncSourceName) ?? "");
-    }
+    const stateResult = await env.DB.prepare(
+      `SELECT source,version,payload,observed_at,fetched_at,last_success_at,status,error,content_hash
+         FROM current_state WHERE source IN (${placeholders})`,
+    ).bind(...names).all<StateRow>();
+    for (const row of stateResult.results ?? []) states[row.source] = row;
   }
 
   if (dashboardChanged) response.dashboard = JSON.stringify(dashboardPayload(states));
