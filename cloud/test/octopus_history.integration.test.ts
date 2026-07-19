@@ -117,9 +117,14 @@ describe("Octopus D1 history", () => {
     expect(oldRows?.count).toBe(0);
   });
 
-  it("rounds collection and stability boundaries down to half-hour slots", () => {
+  it("rounds stability down and collection up to half-hour slots", () => {
     const now = Date.parse("2026-07-10T18:17:42Z");
+    const exactCollectionStart = now - OCTOPUS_COLLECTION_DAYS * DAY_MS;
+    const collectionStart = octopusCollectionStart(now);
+
     expect(new Date(octopusStableCutoffJst(now)).toISOString()).toBe("2026-07-08T18:00:00.000Z");
-    expect(new Date(octopusCollectionStart(now)).toISOString()).toBe("2026-07-03T18:00:00.000Z");
+    expect(new Date(collectionStart).toISOString()).toBe("2026-07-03T18:30:00.000Z");
+    expect(collectionStart).toBeGreaterThanOrEqual(exactCollectionStart);
+    expect(collectionStart - HALF_HOUR_MS).toBeLessThan(exactCollectionStart);
   });
 });
