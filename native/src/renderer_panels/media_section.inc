@@ -57,20 +57,23 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
 
   DrawSectionCard(dc, card);
   HGDIOBJ previousFont = SelectObject(dc, TierFont(FontTier::Small));
-  std::wstring dailyPlaySummary = L"直近1時間 --　本日 --　昨日 --";
+  const auto playValueText = [](int64_t value) {
+    return value >= 0 ? std::to_wstring(value) : std::wstring(L"--");
+  };
+  const int recentIncrease = RecentStationheadPlayIncrease(nativeStationheadPlayHistory_);
+  const std::wstring recentText = playValueText(recentIncrease);
+  StationheadPlayPeriodSummary playSummary;
   if (nativeStationhead_.dailyPlayStatsUpdatedAt > 0 &&
       !nativeStationhead_.dailyPlayCounts.empty()) {
-    const auto& counts = nativeStationhead_.dailyPlayCounts;
-    const int recentIncrease = RecentStationheadPlayIncrease(nativeStationheadPlayHistory_);
-    const std::wstring recentText = recentIncrease >= 0
-        ? std::to_wstring(recentIncrease)
-        : L"--";
-    dailyPlaySummary = L"直近1時間 " + recentText + L"　本日 " +
-                       std::to_wstring(counts.back().value) + L"　昨日 ";
-    dailyPlaySummary += counts.size() >= 2
-        ? std::to_wstring(counts[counts.size() - 2].value)
-        : L"--";
+    playSummary = SummarizeStationheadDailyPlays(
+        nativeStationhead_.dailyPlayCounts, nowMs);
   }
+  const std::wstring dailyPlaySummary =
+      L"直近1時間 " + recentText +
+      L"　本日 " + playValueText(playSummary.today) +
+      L"　昨日 " + playValueText(playSummary.yesterday) +
+      L"　今週 " + playValueText(playSummary.thisWeek) +
+      L"　先週 " + playValueText(playSummary.lastWeek);
   SetTextColor(dc, kWidgetSubtle);
   RECT dailyPlayHeader{content.left, content.top, content.right,
                        content.top + CardHeaderHeight(content)};

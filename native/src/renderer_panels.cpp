@@ -1,5 +1,6 @@
 // Kept as one translation unit so cached GDI primitives remain shared.
 // Fragment boundaries follow complete responsibilities and never split functions.
+#include "stationhead_play_summary.h"
 #include "renderer_panels/primitives.inc"
 #include "renderer_panels/layout_overrides.inc"
 
