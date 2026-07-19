@@ -1,12 +1,6 @@
 import type { Env } from "./sources";
 import { DEVICE_ID_PATTERN, deviceIdFromRequest as deviceIdFrom } from "./auth";
 import { json } from "./http";
-import {
-  dashboardPayload,
-  WORKER_VERSION,
-  type StateRow,
-} from "./snapshot";
-import { stationheadHealthPayload } from "./stationhead_health";
 
 const ALLOWED_COMMANDS = new Set([
   "restart_app",
@@ -29,21 +23,6 @@ interface DeviceCommandRow {
   payload: string | null;
   created_at: number;
   expires_at: number | null;
-}
-
-interface SyncRow {
-  kind: "state" | "config" | "commands";
-  source: string;
-  version: number;
-  payload: string | null;
-  observed_at: number | null;
-  fetched_at: number | null;
-  last_success_at: number | null;
-  status: StateRow["status"] | null;
-  error: string | null;
-  content_hash: string | null;
-  updated_at: number | null;
-  pending: number;
 }
 
 function configEtag(deviceId: string, version: number): string {
@@ -92,11 +71,6 @@ function canonicalValue(value: unknown): unknown {
 
 function canonicalJson(value: unknown): string {
   return JSON.stringify(canonicalValue(value));
-}
-
-function requestedVersion(url: URL, name: string): number {
-  const value = Number(url.searchParams.get(name));
-  return Number.isSafeInteger(value) && value >= 0 ? value : -1;
 }
 
 export async function enqueueCommandOnce(
@@ -179,149 +153,6 @@ async function pendingCommands(env: Env, deviceId: string, now: number): Promise
     });
   }
   return commands;
-}
-
-export async function getDeviceSync(request: Request, env: Env): Promise<Response> {
-  const deviceId = deviceIdFrom(request);
-  if (!deviceId) return json({ error: "valid deviceId is required" }, { status: 400 });
-  const url = new URL(request.url);
-  const requested = {
-    dashboard: requestedVersion(url, "dashboardVersion"),
-    radar: requestedVersion(url, "radarVersion"),
-    switchbot: requestedVersion(url, "switchbotVersion"),
-    stationhead: requestedVersion(url, "stationheadVersion"),
-    stationheadHealth: requestedVersion(url, "stationheadHealthVersion"),
-    config: requestedVersion(url, "configVersion"),
-  };
-  const now = Date.now();
-  const rowsResult = await env.DB.prepare(
-    `WITH state_rows AS (
-       SELECT source, version, payload, observed_at, fetched_at,
-              last_success_at, status, error, content_hash,
-              COALESCE(SUM(CASE
-                WHEN source IN ('weather','news','octopus','switchbot','stationhead','environment')
-                  THEN version ELSE 0 END) OVER (), 0) AS dashboard_version
-         FROM current_state
-        WHERE source IN ('weather','news','octopus','switchbot','stationhead','environment','radar','stationhead_health')
-     )
-     SELECT 'state' AS kind, source, version,
-            CASE
-              WHEN source IN ('weather','news','octopus','switchbot','stationhead','environment')
-                   AND dashboard_version<>?4 THEN payload
-              WHEN source='radar' AND version<>?5 THEN payload
-              WHEN source='switchbot' AND version<>?6 THEN payload
-              WHEN source='stationhead' AND version<>?7 THEN payload
-              WHEN source='stationhead_health' AND version<>?9 THEN payload
-              ELSE NULL
-            END AS payload,
-            observed_at, fetched_at,
-            last_success_at, status, error, content_hash,
-            NULL AS updated_at, 0 AS pending
-       FROM state_rows
-     UNION ALL
-     SELECT 'config' AS kind, 'config' AS source, version,
-            CASE WHEN version<>?8 THEN payload ELSE NULL END,
-            NULL, NULL, NULL, NULL, NULL, NULL, updated_at, 0
-       FROM device_configs
-      WHERE device_id=?1
-     UNION ALL
-     SELECT 'commands' AS kind, 'commands' AS source, 0, NULL,
-            NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-            EXISTS(
-              SELECT 1 FROM device_commands
-               WHERE device_id=?1
-                 AND completed_at IS NULL
-                 AND (expires_at IS NULL OR expires_at>?2)
-                 AND (delivered_at IS NULL OR delivered_at<=?3)
-            )`,
-  ).bind(
-    deviceId,
-    now,
-    now - COMMAND_REDELIVERY_MS,
-    requested.dashboard,
-    requested.radar,
-    requested.switchbot,
-    requested.stationhead,
-    requested.config,
-    requested.stationheadHealth,
-  ).all<SyncRow>();
-  const states: Record<string, StateRow> = {};
-  let configRow: SyncRow | undefined;
-  let hasPendingCommands = false;
-  let currentDashboardVersion = 0;
-  let radarVersion = 0;
-  let switchbotVersion = 0;
-  let stationheadVersion = 0;
-  let stationheadHealthVersion = 0;
-  for (const row of rowsResult.results ?? []) {
-    if (row.kind === "config") {
-      configRow = row;
-      continue;
-    }
-    if (row.kind === "commands") {
-      hasPendingCommands = Number(row.pending) === 1;
-      continue;
-    }
-    if (!row.status) continue;
-    const version = Number(row.version);
-    states[row.source] = {
-      source: row.source,
-      version,
-      payload: row.payload ?? "",
-      observed_at: row.observed_at,
-      fetched_at: Number(row.fetched_at ?? 0),
-      last_success_at: row.last_success_at,
-      status: row.status,
-      error: row.error,
-      content_hash: row.content_hash,
-    };
-    if (row.source === "weather" || row.source === "news" || row.source === "octopus" ||
-        row.source === "switchbot" || row.source === "stationhead" || row.source === "environment") {
-      currentDashboardVersion += version;
-    }
-    if (row.source === "radar") radarVersion = version;
-    else if (row.source === "switchbot") switchbotVersion = version;
-    else if (row.source === "stationhead") stationheadVersion = version;
-    else if (row.source === "stationhead_health") stationheadHealthVersion = version;
-  }
-  const configVersion = Number(configRow?.version ?? 0);
-  const commands = hasPendingCommands ? await pendingCommands(env, deviceId, now) : [];
-  const response: Record<string, unknown> = {
-    workerVersion: WORKER_VERSION,
-    versions: {
-      dashboard: currentDashboardVersion,
-      radar: radarVersion,
-      switchbot: switchbotVersion,
-      stationhead: stationheadVersion,
-      stationheadHealth: stationheadHealthVersion,
-      config: configVersion,
-    },
-    commands,
-  };
-  if (currentDashboardVersion !== requested.dashboard) {
-    response.dashboard = JSON.stringify(dashboardPayload(states));
-  }
-  const radarState = states.radar;
-  if (radarState && radarState.version !== requested.radar) response.radar = radarState.payload;
-  const switchbotState = states.switchbot;
-  if (switchbotState && switchbotState.version !== requested.switchbot) response.switchbot = switchbotState.payload;
-  const stationheadState = states.stationhead;
-  if (stationheadState && stationheadState.version !== requested.stationhead) response.stationhead = stationheadState.payload;
-  const stationheadHealthState = states.stationhead_health;
-  if (stationheadHealthState && stationheadHealthState.version !== requested.stationheadHealth) {
-    response.stationheadHealth = JSON.stringify(stationheadHealthPayload(stationheadHealthState));
-  }
-  if (configVersion !== requested.config) {
-    let value: unknown = {};
-    try { value = configRow?.payload ? JSON.parse(configRow.payload) : {}; } catch { value = {}; }
-    response.deviceConfig = JSON.stringify({
-      deviceId,
-      version: configVersion,
-      updatedAt: Number(configRow?.updated_at ?? 0),
-      config: value,
-    });
-  }
-  return json(response);
 }
 
 export async function getDeviceConfig(request: Request, env: Env): Promise<Response> {
