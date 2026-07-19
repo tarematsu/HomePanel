@@ -6,6 +6,9 @@
   "workers_dev": true,
   "keep_vars": true,
   "logpush": true,
+  "triggers": {
+    "crons": []
+  },
   "durable_objects": {
     "bindings": [
       {
