@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("cloud sources", () => {
-  it("stores stable Octopus readings and prioritizes the older complete seven-day window", async () => {
+  it("limits Octopus API refreshes to seven days without changing the dashboard payload", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-10T18:00:00Z"));
     const requests: Request[] = [];
@@ -76,14 +76,25 @@ describe("cloud sources", () => {
     } as Env & { OCTOPUS_ACCOUNT: string });
 
     expect(result.source).toBe("octopus");
-    expect(requests.filter(request => request.headers.get("Authorization") === "octopus-token").length)
-      .toBeGreaterThanOrEqual(20);
-    expect(readingRanges).toEqual(expect.arrayContaining([
+    expect(requests.filter(request => request.headers.get("Authorization") === "octopus-token")).toHaveLength(4);
+    expect(readingRanges).toEqual([
       expect.objectContaining({
-        fromDatetime: "2026-06-25T15:00:00.000Z",
-        toDatetime: "2026-06-27T15:00:00.000Z",
+        fromDatetime: "2026-07-03T18:00:00.000Z",
+        toDatetime: "2026-07-05T18:00:00.000Z",
       }),
-    ]));
+      expect.objectContaining({
+        fromDatetime: "2026-07-05T18:00:00.000Z",
+        toDatetime: "2026-07-07T18:00:00.000Z",
+      }),
+      expect.objectContaining({
+        fromDatetime: "2026-07-07T18:00:00.000Z",
+        toDatetime: "2026-07-09T18:00:00.000Z",
+      }),
+      expect.objectContaining({
+        fromDatetime: "2026-07-09T18:00:00.000Z",
+        toDatetime: "2026-07-10T18:00:00.000Z",
+      }),
+    ]);
 
     const payload = result.payload as {
       comparison: {
@@ -93,8 +104,15 @@ describe("cloud sources", () => {
         currentEndDate: string;
         previousStartDate: string;
         previousEndDate: string;
+        excludedRecentDays: number;
       };
-      archive: { stableThrough: number; historyFloor: number; excludedRecentDays: number };
+      archive: {
+        stableThrough: number;
+        historyFloor: number;
+        cursorBefore: number;
+        completed: boolean;
+        excludedRecentDays: number;
+      };
       profile: Array<{ day: string; currentTotal: number | null; previousTotal: number | null }>;
     };
     expect(payload.comparison).toEqual({
@@ -109,13 +127,16 @@ describe("cloud sources", () => {
     expect(payload.profile).toHaveLength(7);
     expect(payload.profile.map(point => point.day)).toEqual(["金", "土", "日", "月", "火", "水", "木"]);
     expect(payload.archive.excludedRecentDays).toBe(2);
+    expect(payload.archive.completed).toBe(true);
     expect(new Date(payload.archive.stableThrough).toISOString()).toBe("2026-07-08T18:00:00.000Z");
+    expect(new Date(payload.archive.cursorBefore).toISOString()).toBe("2026-07-03T18:00:00.000Z");
     expect(new Date(payload.archive.historyFloor).toISOString()).toBe("2025-10-31T15:00:00.000Z");
+
     const stored = await env.DB.prepare(
       "SELECT COUNT(*) AS count,MIN(observed_at) AS oldest,MAX(observed_at) AS latest FROM octopus_readings WHERE account_number=?1",
     ).bind("A-123").first<{ count: number; oldest: number; latest: number }>();
-    expect(Number(stored?.count)).toBeGreaterThan(0);
-    expect(Number(stored?.oldest)).toBeGreaterThanOrEqual(payload.archive.historyFloor);
+    expect(Number(stored?.count)).toBe(3);
+    expect(new Date(Number(stored?.oldest)).toISOString()).toBe("2026-07-03T18:30:00.000Z");
     expect(Number(stored?.latest)).toBeLessThan(payload.archive.stableThrough);
   });
 

@@ -6,10 +6,10 @@ namespace hp {
 namespace {
 constexpr auto kCommandTimeout = std::chrono::seconds(10);
 constexpr auto kSampleTimeout = std::chrono::seconds(10);
-constexpr size_t kCompactAfterAck = 288;
+constexpr size_t kCompactAfterAck = 48;
 constexpr uintmax_t kCompactBytes = 1024 * 1024;
 constexpr int64_t kEarliestSampleTime = 946'684'800'000;
-constexpr int64_t kTelemetryBucketMs = 5 * 60'000;
+constexpr int64_t kTelemetryBucketMs = 30 * 60'000;
 
 bool MeasurementValuesValid(int co2, double humidity, double temperature) {
   return co2 >= 250 && co2 <= 10'000 &&
