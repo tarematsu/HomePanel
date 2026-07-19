@@ -21,46 +21,6 @@ import { fetchStationhead } from "./spotify_source";
 import { stationheadHealthPayload } from "./stationhead_health";
 import { receiveTelemetryOptimized } from "./telemetry_route";
 
-const DEVICE_SYNC_SCHEDULER_COOLDOWN_MS = 4 * 60_000;
-
-interface DeviceSyncSchedulerState {
-  lastStartedAt: number;
-  inFlight: Promise<void> | null;
-}
-
-const DEVICE_SYNC_SCHEDULER_STATES = new WeakMap<D1Database, DeviceSyncSchedulerState>();
-
-export function runSchedulerFromDeviceSync(
-  env: Env,
-  now = Date.now(),
-  runner: (target: Env) => Promise<void> = runScheduler,
-): Promise<void> | null {
-  let cached = DEVICE_SYNC_SCHEDULER_STATES.get(env.DB);
-  if (!cached) {
-    cached = { lastStartedAt: Number.NEGATIVE_INFINITY, inFlight: null };
-    DEVICE_SYNC_SCHEDULER_STATES.set(env.DB, cached);
-  }
-  const state = cached;
-  if (state.inFlight) return state.inFlight;
-  if (now - state.lastStartedAt < DEVICE_SYNC_SCHEDULER_COOLDOWN_MS) return null;
-
-  state.lastStartedAt = now;
-  const task = runner(env);
-  state.inFlight = task;
-  void task.then(
-    () => {
-      if (state.inFlight === task) state.inFlight = null;
-    },
-    () => {
-      if (state.inFlight === task) {
-        state.inFlight = null;
-        state.lastStartedAt = Number.NEGATIVE_INFINITY;
-      }
-    },
-  );
-  return task;
-}
-
 async function dashboardJsonResponse(request: Request, env: Env): Promise<Response> {
   const snapshot = await ensureDashboard(env);
   return etagResponse(request, snapshot.payload, "application/json; charset=utf-8", snapshot.content_hash!);
@@ -138,12 +98,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     const deviceId = deviceIdFromRequest(request);
     if (!deviceId) return json({ error: "valid deviceId is required" }, { status: 400 });
     if (!authorizedDevice(request, env, deviceId)) return unauthorized();
-    const response = await getDeviceSync(request, env);
-    if (response.ok && request.headers.get("X-HomePanel-Run-Scheduler") === "1") {
-      const scheduler = runSchedulerFromDeviceSync(env);
-      if (scheduler) ctx.waitUntil(scheduler);
-    }
-    return response;
+    return getDeviceSync(request, env);
   }
 
   if (url.pathname === "/v1/device/config") {
