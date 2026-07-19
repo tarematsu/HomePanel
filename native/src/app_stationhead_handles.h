@@ -19,6 +19,9 @@ class StationheadHandleBase {
   StationheadHandleBase& operator=(const StationheadHandleBase&) = delete;
 
   explicit operator bool() const noexcept;
+  [[nodiscard]] bool AudioPlaying() const noexcept {
+    return player_ && player_->AudioPlaying();
+  }
   void Stop();
   void SetAudioMuted(bool muted) noexcept;
   void SetBounds(const RECT& bounds);
