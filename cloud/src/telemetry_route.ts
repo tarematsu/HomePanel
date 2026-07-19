@@ -40,24 +40,49 @@ const TELEMETRY_STATEMENTS_PER_BATCH = 90;
 
 function finiteOptional(value: unknown): number | null | undefined {
   if (value === undefined || value === null) return null;
-  const result = Number(value);
-  return Number.isFinite(result) ? result : undefined;
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function boundedOptional(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): number | null | undefined {
+  const result = finiteOptional(value);
+  if (result === null || result === undefined) return result;
+  return result >= minimum && result <= maximum ? result : undefined;
 }
 
 function normalizeSample(value: unknown, now: number): TelemetrySample | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const input = value as Record<string, unknown>;
-  const sequence = Math.trunc(Number(input.sequence));
-  const observedAt = Math.trunc(Number(input.observedAt));
-  if (!Number.isSafeInteger(sequence) || sequence <= 0 || sequence >= Number.MAX_SAFE_INTEGER) return null;
-  if (!Number.isSafeInteger(observedAt) || observedAt < 946_684_800_000 || observedAt > now + 86_400_000) return null;
-  const fields = ["co2", "temperature", "humidity", "temperatureCorrected", "humidityCorrected"] as const;
-  const normalized: TelemetrySample = { sequence, observedAt };
-  for (const field of fields) {
-    const number = finiteOptional(input[field]);
-    if (number === undefined) return null;
-    if (number !== null) normalized[field] = number;
+  if (typeof input.sequence !== "number" || !Number.isSafeInteger(input.sequence) ||
+      input.sequence <= 0 || input.sequence >= Number.MAX_SAFE_INTEGER) {
+    return null;
   }
+  if (typeof input.observedAt !== "number" || !Number.isSafeInteger(input.observedAt) ||
+      input.observedAt < 946_684_800_000 || input.observedAt > now + 86_400_000) {
+    return null;
+  }
+  const sequence = input.sequence;
+  const observedAt = input.observedAt;
+
+  const co2 = boundedOptional(input.co2, 250, 10_000);
+  const temperature = boundedOptional(input.temperature, -40, 85);
+  const humidity = boundedOptional(input.humidity, 0, 100);
+  const temperatureCorrected = boundedOptional(input.temperatureCorrected, -80, 120);
+  const humidityCorrected = boundedOptional(input.humidityCorrected, 0, 100);
+  if (co2 === undefined || temperature === undefined || humidity === undefined ||
+      temperatureCorrected === undefined || humidityCorrected === undefined) {
+    return null;
+  }
+
+  const normalized: TelemetrySample = { sequence, observedAt };
+  if (co2 !== null) normalized.co2 = co2;
+  if (temperature !== null) normalized.temperature = temperature;
+  if (humidity !== null) normalized.humidity = humidity;
+  if (temperatureCorrected !== null) normalized.temperatureCorrected = temperatureCorrected;
+  if (humidityCorrected !== null) normalized.humidityCorrected = humidityCorrected;
   return normalized;
 }
 
