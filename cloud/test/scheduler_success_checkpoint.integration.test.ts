@@ -8,14 +8,19 @@ type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migratio
 beforeEach(async () => {
   const testEnv = env as TestEnv;
   await resetD1TestDatabase(testEnv.DB, testEnv.TEST_MIGRATIONS);
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `UPDATE jobs SET next_run_at=?1,lease_until=NULL,last_success_at=?2,
+       last_error=NULL,consecutive_failures=0`,
+  ).bind(now + 3600, now - 60).run();
 });
 
 describe("scheduler success checkpoints", () => {
   it("keeps a recent successful lease as the completion checkpoint", async () => {
     const now = Math.floor(Date.now() / 1000);
     await env.DB.prepare(
-      "UPDATE jobs SET next_run_at=?1,lease_until=NULL,last_success_at=?2,consecutive_failures=0 WHERE name='weather'",
-    ).bind(now - 1, now - 60).run();
+      "UPDATE jobs SET next_run_at=?1 WHERE name='weather'",
+    ).bind(now - 1).run();
 
     const weather = (await acquireDueJobs(env, now)).find(job => job.name === "weather");
     expect(weather).toBeTruthy();
@@ -35,8 +40,8 @@ describe("scheduler success checkpoints", () => {
   it("writes a forced run completion immediately", async () => {
     const now = Math.floor(Date.now() / 1000);
     await env.DB.prepare(
-      "UPDATE jobs SET next_run_at=0,lease_until=NULL,last_success_at=?1,consecutive_failures=0 WHERE name='weather'",
-    ).bind(now - 60).run();
+      "UPDATE jobs SET next_run_at=0 WHERE name='weather'",
+    ).run();
 
     const weather = (await acquireDueJobs(env, now)).find(job => job.name === "weather");
     expect(Number(weather?.next_run_at)).toBeLessThan(0);
