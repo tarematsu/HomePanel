@@ -319,11 +319,11 @@ export async function runSchedulerTick(env: Env): Promise<void> {
 }
 
 export async function requestRefresh(env: Env, names?: string[]): Promise<boolean> {
-  await ensureSystemJobs(env);
   const selected = names === undefined
     ? [...REFRESHABLE_JOBS]
     : [...new Set(names.filter(name => REFRESHABLE_JOB_SET.has(name)))];
   if (!selected.length) return false;
+  await ensureSystemJobs(env);
   const placeholders = selected.map(() => "?").join(",");
   await env.DB.prepare(
     `UPDATE jobs SET next_run_at=0
