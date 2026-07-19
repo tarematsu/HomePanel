@@ -19,6 +19,17 @@ constexpr bool DashboardAudioReady(bool primaryAudioReady,
   return primaryAudioReady && (!secondaryEnabled || secondaryAudioReady);
 }
 
+constexpr bool CanReuseStationheadSnapshots(
+    bool rendererStarted,
+    bool primaryAudioPlaying,
+    bool cachedPrimaryAudioPlaying,
+    bool secondaryEnabled,
+    bool secondaryAudioPlaying,
+    bool cachedSecondaryPlaying) noexcept {
+  return rendererStarted && primaryAudioPlaying && cachedPrimaryAudioPlaying &&
+      (!secondaryEnabled || (secondaryAudioPlaying && cachedSecondaryPlaying));
+}
+
 static_assert(DashboardAudioReady(true, false, false));
 static_assert(!DashboardAudioReady(false, false, false));
 static_assert(DashboardAudioReady(true, true, true));
@@ -26,6 +37,13 @@ static_assert(!DashboardAudioReady(true, true, false));
 static_assert(!DashboardAudioReady(false, true, true));
 static_assert(kDashboardStartupFallbackMs == 30'000);
 static_assert(kDashboardAudioStabilityMs >= 1'000);
+static_assert(CanReuseStationheadSnapshots(true, true, true, false, false, false));
+static_assert(CanReuseStationheadSnapshots(true, true, true, true, true, true));
+static_assert(!CanReuseStationheadSnapshots(false, true, true, false, false, false));
+static_assert(!CanReuseStationheadSnapshots(true, false, true, false, false, false));
+static_assert(!CanReuseStationheadSnapshots(true, true, false, false, false, false));
+static_assert(!CanReuseStationheadSnapshots(true, true, true, true, false, true));
+static_assert(!CanReuseStationheadSnapshots(true, true, true, true, true, false));
 
 uint32_t NextDelayFromDeadline(int64_t now, int64_t deadline, uint32_t fallbackMs) {
   if (deadline <= 0) return fallbackMs;
@@ -214,13 +232,10 @@ void App::ClearStartupStationheadPreview() {
 }
 
 void App::StartDeferredServices(int64_t now, const StationheadStatus&) {
-  const bool primaryAudioReady = stationhead_->RawStatus().audioPlaying;
+  const bool primaryAudioReady = stationhead_->AudioPlaying();
   const bool secondaryEnabled = static_cast<bool>(secondaryStationhead_);
-  bool secondaryAudioReady = true;
-  if (secondaryEnabled) {
-    const StationheadStatus secondaryStatus = secondaryStationhead_->RawStatus();
-    secondaryAudioReady = secondaryStatus.audioPlaying;
-  }
+  const bool secondaryAudioReady =
+      !secondaryEnabled || secondaryStationhead_->AudioPlaying();
   const bool dashboardAudioReady =
       DashboardAudioReady(primaryAudioReady, secondaryEnabled, secondaryAudioReady);
   if (dashboardAudioReady) {
@@ -326,16 +341,34 @@ void App::Tick() {
   const int64_t now = UnixMillis();
 
   if (secondaryStarted_ && secondaryStationhead_) secondaryStationhead_->Tick(now);
-  StationheadStatus secondaryStatus =
-      secondaryStationhead_ ? secondaryStationhead_->Status() : StationheadStatus{};
   stationhead_->Tick(now);
-  StationheadStatus nextStationheadState = stationhead_->Status();
-  EnrichRenderStationheadState(
-      nextStationheadState,
-      secondaryStationhead_ ? &secondaryStatus : nullptr,
-      config_.stationhead);
-  nextStationheadState.primaryAudioSelected = scheduledPrimaryAudioAudible_;
-  UpdateRenderStationheadState(std::move(nextStationheadState));
+
+  const bool primaryAudioPlaying = stationhead_->AudioPlaying();
+  const bool secondaryEnabled = static_cast<bool>(secondaryStationhead_);
+  const bool secondaryAudioPlaying =
+      secondaryEnabled && secondaryStationhead_->AudioPlaying();
+  StationheadStatus secondaryStatus;
+  secondaryStatus.audioPlaying = secondaryAudioPlaying;
+  secondaryStatus.playing = secondaryAudioPlaying;
+
+  const bool reuseSnapshots = CanReuseStationheadSnapshots(
+      rendererStarted_,
+      primaryAudioPlaying,
+      renderState_.stationhead.audioPlaying,
+      secondaryEnabled,
+      secondaryAudioPlaying,
+      renderState_.stationhead.secondaryPlaying);
+  if (!reuseSnapshots) {
+    if (secondaryEnabled) secondaryStatus = secondaryStationhead_->Status();
+    StationheadStatus nextStationheadState = stationhead_->Status();
+    EnrichRenderStationheadState(
+        nextStationheadState,
+        secondaryEnabled ? &secondaryStatus : nullptr,
+        config_.stationhead);
+    nextStationheadState.primaryAudioSelected = scheduledPrimaryAudioAudible_;
+    UpdateRenderStationheadState(std::move(nextStationheadState));
+  }
+
   const StationheadStatus& stationheadStatus = renderState_.stationhead;
   UpdateStationheadPlayHistory(stationheadStatus);
   StartDeferredServices(now, stationheadStatus);
@@ -552,5 +585,3 @@ void App::LogUnhandled(DWORD code, void* address) {
   }
 }
 }
-
-
