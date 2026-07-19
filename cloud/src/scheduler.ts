@@ -122,7 +122,12 @@ export async function ensureSystemJobs(env: Env, nowMs = Date.now()): Promise<vo
   return task;
 }
 
-export async function acquireDueJobs(env: Env, nowSeconds: number): Promise<JobRow[]> {
+export async function acquireDueJobs(
+  env: Env,
+  nowSeconds: number,
+  limit = MAX_PARALLEL,
+): Promise<JobRow[]> {
+  const batchSize = Math.max(1, Math.min(MAX_PARALLEL, Math.trunc(limit)));
   const result = await env.DB.prepare(
     `WITH due AS (
        SELECT name FROM jobs
@@ -138,7 +143,7 @@ export async function acquireDueJobs(env: Env, nowSeconds: number): Promise<JobR
       WHERE name IN (SELECT name FROM due)
         AND next_run_at <= ?1 AND (lease_until IS NULL OR lease_until < ?1)
      RETURNING name, interval_seconds, next_run_at, lease_until, last_success_at, consecutive_failures`,
-  ).bind(nowSeconds, MAX_PARALLEL, nowSeconds + LEASE_SECONDS).all<JobRow>();
+  ).bind(nowSeconds, batchSize, nowSeconds + LEASE_SECONDS).all<JobRow>();
   return result.results ?? [];
 }
 
@@ -296,6 +301,19 @@ export async function runScheduler(env: Env): Promise<void> {
     if (jobs.length < MAX_PARALLEL) return;
   }
   console.error("Scheduler stopped after the safety batch limit with due work possibly remaining");
+}
+
+export async function runSchedulerTick(env: Env): Promise<void> {
+  await ensureSystemJobs(env);
+  const now = Math.floor(Date.now() / 1000);
+  const jobs = await acquireDueJobs(env, now, 1);
+  const job = jobs[0];
+  if (!job) return;
+  try {
+    await runOne(env, job);
+  } catch (error) {
+    console.error(`Scheduled job ${job.name} failed to finalize`, error);
+  }
 }
 
 export async function requestRefresh(env: Env, names?: string[]): Promise<void> {
