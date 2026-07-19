@@ -12,9 +12,9 @@ import {
   createDeviceCommand,
   getDeviceCommands,
   getDeviceConfig,
-  getDeviceSync,
   putDeviceConfig,
 } from "./device_control";
+import { getDeviceSync } from "./device_sync";
 import { proxyRadarTile } from "./radar_tile";
 import type { Env } from "./sources";
 import { fetchStationhead } from "./spotify_source";
