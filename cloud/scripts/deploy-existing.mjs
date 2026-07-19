@@ -21,6 +21,8 @@ const migrateLocal = process.argv.includes("--migrate-local");
 const migrateRemoteOnly = process.argv.includes("--migrate-only");
 const forceRemoteMigrations = process.argv.includes("--with-migrations")
   || process.env.HOMEPANEL_APPLY_D1_MIGRATIONS?.trim() === "1";
+// Schema changes remain owned by the dedicated migration workflow. Routine
+// Worker deploys opt out explicitly instead of rediscovering the same list.
 const skipRemoteMigrations = process.argv.includes("--without-migrations")
   || process.env.HOMEPANEL_SKIP_D1_MIGRATIONS?.trim() === "1";
 
