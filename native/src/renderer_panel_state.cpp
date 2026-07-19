@@ -3,7 +3,23 @@
 namespace hp {
 namespace {
 constexpr int64_t kAirGraphWindowMs = 24LL * 60 * 60 * 1000;
+
+struct NativeHistoryRevisionCache {
+  const Renderer* owner = nullptr;
+  uint64_t air = 0;
+  uint64_t stationhead = 0;
+};
+
+NativeHistoryRevisionCache& HistoryRevisionCacheFor(const Renderer* owner) {
+  static NativeHistoryRevisionCache cache;
+  if (cache.owner != owner) {
+    cache.owner = owner;
+    cache.air = std::numeric_limits<uint64_t>::max();
+    cache.stationhead = std::numeric_limits<uint64_t>::max();
+  }
+  return cache;
 }
+}  // namespace
 
 void Renderer::RebuildNativeAirGraph(int64_t nowMs) {
   AirGraphProjection next;
@@ -41,11 +57,12 @@ void Renderer::RebuildNativeAirGraph(int64_t nowMs) {
 }
 
 void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
+  NativeHistoryRevisionCache& historyRevisions = HistoryRevisionCacheFor(this);
   const bool sensorsChanged = nativeSensors_ != state.sensors;
-  const bool historyChanged = nativeAirHistory_ != state.airHistory;
+  const bool historyChanged = historyRevisions.air != state.airHistoryRevision;
   const bool stationheadChanged = nativeStationhead_ != state.stationhead;
   const bool stationheadHistoryChanged =
-      nativeStationheadPlayHistory_ != state.stationheadPlayHistory;
+      historyRevisions.stationhead != state.stationheadPlayHistoryRevision;
   const bool controlsChanged =
       nativeAppVersion_ != state.appVersion || nativeToast_ != state.toast;
   const bool newsIndexChanged = nativeNewsIndex_ != state.newsIndex;
@@ -59,11 +76,13 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   if (sensorsChanged) nativeSensors_ = state.sensors;
   if (historyChanged) {
     nativeAirHistory_ = state.airHistory;
+    historyRevisions.air = state.airHistoryRevision;
     RebuildNativeAirGraph(UnixMillis());
   }
   if (sensorsChanged || historyChanged) ++nativeAirRenderRevision_;
   if (stationheadHistoryChanged) {
     nativeStationheadPlayHistory_ = state.stationheadPlayHistory;
+    historyRevisions.stationhead = state.stationheadPlayHistoryRevision;
   }
   if (stationheadChanged) nativeStationhead_ = state.stationhead;
   if (controlsChanged) {
