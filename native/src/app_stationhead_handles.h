@@ -64,6 +64,8 @@ class StationheadHandleBase {
   bool audioMuted_ = false;
   mutable bool playbackObserved_ = false;
   mutable int64_t playbackMissingSinceAt_ = 0;
+  mutable bool transitionSuppressed_ = false;
+  mutable uint64_t contentRevision_ = 1;
 };
 
 class AppStationheadHandle final : public StationheadHandleBase {
