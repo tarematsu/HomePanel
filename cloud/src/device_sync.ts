@@ -1,4 +1,8 @@
 import { deviceIdFromRequest as deviceIdFrom } from "./auth";
+import {
+  claimPendingDeviceCommands,
+  COMMAND_REDELIVERY_MS,
+} from "./device_command_delivery";
 import { json } from "./http";
 import {
   DASHBOARD_SOURCE_NAMES,
@@ -14,8 +18,6 @@ import {
 import type { Env } from "./sources";
 import { stationheadHealthPayload } from "./stationhead_health";
 
-const COMMAND_REDELIVERY_MS = 90_000;
-
 type SyncSourceName = typeof SYNC_SOURCE_NAMES[number];
 
 interface DeviceSyncAuxRow {
@@ -24,53 +26,9 @@ interface DeviceSyncAuxRow {
   pending: number;
 }
 
-interface DeviceCommandRow {
-  id: number;
-  command: string;
-  payload: string | null;
-  created_at: number;
-  expires_at: number | null;
-}
-
 function requestedVersion(url: URL, name: string): number {
   const value = Number(url.searchParams.get(name));
   return Number.isSafeInteger(value) && value >= 0 ? value : -1;
-}
-
-async function pendingCommands(env: Env, deviceId: string, now: number): Promise<Array<Record<string, unknown>>> {
-  const rows = await env.DB.prepare(
-    `WITH pending AS (
-       SELECT id
-         FROM device_commands
-        WHERE device_id=?1
-          AND completed_at IS NULL
-          AND (expires_at IS NULL OR expires_at>?2)
-          AND (delivered_at IS NULL OR delivered_at<=?3)
-        ORDER BY id
-        LIMIT 10
-     )
-     UPDATE device_commands
-        SET delivered_at=?2
-      WHERE id IN (SELECT id FROM pending)
-        AND device_id=?1
-        AND completed_at IS NULL
-        AND (expires_at IS NULL OR expires_at>?2)
-        AND (delivered_at IS NULL OR delivered_at<=?3)
-     RETURNING id, command, payload, created_at, expires_at`,
-  ).bind(deviceId, now, now - COMMAND_REDELIVERY_MS).all<DeviceCommandRow>();
-  const results = rows.results ?? [];
-  results.sort((left, right) => Number(left.id) - Number(right.id));
-  return results.map(row => {
-    let payload: unknown = null;
-    try { payload = row.payload ? JSON.parse(row.payload) : null; } catch { payload = null; }
-    return {
-      id: row.id,
-      command: row.command,
-      payload,
-      createdAt: row.created_at,
-      expiresAt: row.expires_at,
-    };
-  });
 }
 
 export async function getDeviceSync(request: Request, env: Env): Promise<Response> {
@@ -129,7 +87,9 @@ export async function getDeviceSync(request: Request, env: Env): Promise<Respons
   const aux = (auxResult?.results?.[0] ?? {}) as unknown as DeviceSyncAuxRow;
   const configVersion = Number(aux.config_version ?? 0);
   const configUpdatedAt = Number(aux.config_updated_at ?? 0);
-  const commands = Number(aux.pending) === 1 ? await pendingCommands(env, deviceId, now) : [];
+  const commands = Number(aux.pending) === 1
+    ? await claimPendingDeviceCommands(env, deviceId, now)
+    : [];
   const response: Record<string, unknown> = {
     workerVersion: WORKER_VERSION,
     versions: {
