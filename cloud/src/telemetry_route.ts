@@ -3,12 +3,11 @@ import { json } from "./http";
 import { unauthorized } from "./response";
 import type { Env } from "./sources";
 import {
-  aggregateTelemetrySamples,
   markTelemetrySamplesAppliedStatement,
-  telemetryBucketAggregateStatement,
   telemetryBucketAt,
   telemetryHeartbeatStatement,
   telemetrySampleStatement,
+  telemetrySequenceBucketStatement,
   type EnvironmentHistoryRow,
   type TelemetrySample,
   type TelemetrySampleReceipt,
@@ -33,12 +32,12 @@ interface HeartbeatRow {
 
 interface BucketBatchLayout {
   aggregateIndex: number;
-  markIndexes: number[];
+  markIndex: number;
 }
 
 const MAX_TELEMETRY_SAMPLES = 1440;
 const TELEMETRY_SAMPLES_PER_BATCH = 99;
-const TELEMETRY_MARK_SEQUENCES_PER_STATEMENT = 90;
+const TELEMETRY_SEQUENCES_PER_STATEMENT = 90;
 const TELEMETRY_STATEMENTS_PER_BATCH = 90;
 const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 
@@ -141,30 +140,25 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
     for (const layout of layouts) {
       const rows = (results[layout.aggregateIndex]?.results ?? []) as EnvironmentHistoryRow[];
       for (const row of rows) returnedRows.set(Number(row.t), row);
-      for (const index of layout.markIndexes) accepted += Number(results[index]?.meta.changes ?? 0);
+      accepted += Number(results[layout.markIndex]?.meta.changes ?? 0);
     }
     statements = [];
     layouts = [];
   };
 
-  for (const bucket of aggregateTelemetrySamples(pendingSamples)) {
-    const sequences = sequencesByBucket.get(bucket.bucketAt) ?? [];
-    const markChunks: number[][] = [];
-    for (let offset = 0; offset < sequences.length; offset += TELEMETRY_MARK_SEQUENCES_PER_STATEMENT) {
-      markChunks.push(sequences.slice(offset, offset + TELEMETRY_MARK_SEQUENCES_PER_STATEMENT));
-    }
-    const requiredStatements = 1 + markChunks.length;
-    if (statements.length && statements.length + requiredStatements > TELEMETRY_STATEMENTS_PER_BATCH) {
-      await flushBuckets();
-    }
-    const aggregateIndex = statements.length;
-    statements.push(telemetryBucketAggregateStatement(env, deviceId, bucket));
-    const markIndexes: number[] = [];
-    for (const chunk of markChunks) {
-      markIndexes.push(statements.length);
+  const orderedBuckets = [...sequencesByBucket.entries()].sort((left, right) => left[0] - right[0]);
+  for (const [bucketAt, sequences] of orderedBuckets) {
+    for (let offset = 0; offset < sequences.length; offset += TELEMETRY_SEQUENCES_PER_STATEMENT) {
+      const chunk = sequences.slice(offset, offset + TELEMETRY_SEQUENCES_PER_STATEMENT);
+      if (statements.length && statements.length + 2 > TELEMETRY_STATEMENTS_PER_BATCH) {
+        await flushBuckets();
+      }
+      const aggregateIndex = statements.length;
+      statements.push(telemetrySequenceBucketStatement(env, deviceId, bucketAt, chunk));
+      const markIndex = statements.length;
       statements.push(markTelemetrySamplesAppliedStatement(env, deviceId, chunk));
+      layouts.push({ aggregateIndex, markIndex });
     }
-    layouts.push({ aggregateIndex, markIndexes });
   }
   await flushBuckets();
 
@@ -187,7 +181,7 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
     ).run();
   }
 
-  let rebuildEnvironment = pendingSamples.length > 0;
+  let rebuildEnvironment = accepted > 0;
   if (!rebuildEnvironment && acknowledgedSequences.length > 0) {
     const environmentState = await env.DB.prepare(
       "SELECT 1 AS present FROM current_state WHERE source='environment'",
