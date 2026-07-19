@@ -16,7 +16,7 @@ beforeEach(async () => {
 });
 
 describe("scheduler success checkpoints", () => {
-  it("keeps a recent successful lease as the completion checkpoint", async () => {
+  it("releases a recent successful lease without rewriting the checkpoint", async () => {
     const now = Math.floor(Date.now() / 1000);
     await env.DB.prepare(
       "UPDATE jobs SET next_run_at=?1 WHERE name='weather'",
@@ -32,7 +32,7 @@ describe("scheduler success checkpoints", () => {
     ).first<{ next_run_at: number; lease_until: number | null; last_success_at: number | null }>();
     expect(row).toEqual({
       next_run_at: weather?.next_run_at,
-      lease_until: weather?.lease_until,
+      lease_until: null,
       last_success_at: now - 60,
     });
   });
