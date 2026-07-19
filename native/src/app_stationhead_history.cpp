@@ -113,12 +113,12 @@ void App::UpdateStationheadPlayHistory(const StationheadStatus& status) {
   const int64_t currentDay =
       StationheadJstDayOrdinal(status.dailyPlayStatsUpdatedAt);
   const auto todayPoint = std::find_if(
-      status.dailyPlayCounts.begin(), status.dailyPlayCounts.end(),
+      status.dailyPlayCounts.rbegin(), status.dailyPlayCounts.rend(),
       [currentDay](const StationheadDailyPlayPoint& point) {
         return point.dayStartMsUtc > 0 && point.value >= 0 &&
             StationheadJstDayOrdinal(point.dayStartMsUtc) == currentDay;
       });
-  if (todayPoint == status.dailyPlayCounts.end()) return;
+  if (todayPoint == status.dailyPlayCounts.rend()) return;
 
   const int64_t bucket =
       status.dailyPlayStatsUpdatedAt / kSampleBucketMs * kSampleBucketMs;
