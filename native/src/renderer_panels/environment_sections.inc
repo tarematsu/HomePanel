@@ -116,11 +116,11 @@ void Renderer::DrawAirSection(HDC dc, const RECT& card) {
                     nativeAirGraph_.co2Min - 80, nativeAirGraph_.co2Max + 80,
                     kWidgetGreen, 2,
                     [](const AirHistorySample& s) { return static_cast<double>(s.co2); });
-    DrawDottedAirHistoryLine(
+    DrawHistoryLine(
         dc, samples, plot, cutoff, kWindowMs,
         nativeAirGraph_.temperatureMin - 0.5,
         nativeAirGraph_.temperatureMax + 0.5,
-        kWidgetText,
+        kWidgetText, 1,
         [](const AirHistorySample& s) { return s.temperature; });
     DrawDottedAirHistoryLine(
         dc, samples, plot, cutoff, kWindowMs,
