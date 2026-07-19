@@ -1,11 +1,13 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { invalidateSystemJobsCache } from "../src/scheduler";
+import { invalidateEnvironmentStateCache } from "../src/telemetry_history";
 
 export async function resetD1TestDatabase(
   db: D1Database,
   migrations: Parameters<typeof applyD1Migrations>[1],
 ): Promise<void> {
   invalidateSystemJobsCache(db);
+  invalidateEnvironmentStateCache(db);
   await applyD1Migrations(db, migrations);
   await db.batch([
     db.prepare("DELETE FROM job_runs"),
