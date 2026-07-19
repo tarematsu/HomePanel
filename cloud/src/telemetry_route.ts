@@ -6,7 +6,6 @@ import { markStateChanged } from "./state_generation";
 import {
   markTelemetrySamplesAppliedStatement,
   telemetryBucketAt,
-  telemetryHeartbeatStatement,
   telemetrySampleReadbackStatement,
   telemetrySampleStatement,
   telemetrySequenceBucketStatement,
@@ -15,6 +14,10 @@ import {
   type TelemetrySampleReceipt,
   type TelemetryStoredSampleReceipt,
 } from "./telemetry_bucket";
+import {
+  telemetryHeartbeatReturningStatement,
+  type TelemetryHeartbeatReceipt,
+} from "./telemetry_heartbeat";
 import { mergeEnvironmentRows } from "./telemetry_history";
 
 interface TelemetryInput {
@@ -23,14 +26,6 @@ interface TelemetryInput {
   stationheadOk?: boolean;
   outboxCount?: number;
   samples?: TelemetrySample[];
-}
-
-interface HeartbeatRow {
-  last_seen_at: number;
-  app_version: string | null;
-  stationhead_ok: number;
-  outbox_count: number;
-  last_sequence: number;
 }
 
 interface BucketBatchLayout {
@@ -42,7 +37,6 @@ const MAX_TELEMETRY_SAMPLES = 1440;
 const TELEMETRY_SAMPLES_PER_BATCH = 99;
 const TELEMETRY_SEQUENCES_PER_STATEMENT = 90;
 const TELEMETRY_STATEMENTS_PER_BATCH = 90;
-const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
 
 function finiteOptional(value: unknown): number | null | undefined {
   if (value === undefined || value === null) return null;
@@ -102,11 +96,6 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
     if (!normalized) return json({ error: "invalid telemetry sample" }, { status: 400 });
     samples.push(normalized);
   }
-  const previous = await env.DB.prepare(
-    `SELECT last_seen_at,app_version,stationhead_ok,outbox_count,last_sequence
-       FROM device_heartbeats WHERE device_id=?1`,
-  ).bind(deviceId).first<HeartbeatRow>();
-  const lastSequence = Number(previous?.last_sequence ?? 0);
   const unique = new Map<number, TelemetrySample>();
   let requestDuplicates = 0;
   for (const sample of samples) {
@@ -201,22 +190,22 @@ export async function receiveTelemetryOptimized(request: Request, env: Env): Pro
   await flushBuckets();
 
   const acknowledgedSequences = [...acknowledged].sort((left, right) => left - right);
-  const highestSequence = acknowledgedSequences.reduce((highest, sequence) => Math.max(highest, sequence), lastSequence);
-  const heartbeatDue = !previous || now - Number(previous.last_seen_at ?? 0) >= HEARTBEAT_INTERVAL_MS;
-  const heartbeatChanged = !previous
-    || previous.app_version !== appVersion
-    || Number(previous.stationhead_ok) !== stationheadOk
-    || Number(previous.outbox_count) !== outboxCount;
-  if (highestSequence > lastSequence || heartbeatDue || heartbeatChanged) {
-    await telemetryHeartbeatStatement(
-      env,
-      deviceId,
-      now,
-      appVersion,
-      stationheadOk,
-      outboxCount,
-      highestSequence,
-    ).run();
+  const proposedHighest = acknowledgedSequences[acknowledgedSequences.length - 1] ?? 0;
+  const heartbeat = await telemetryHeartbeatReturningStatement(
+    env,
+    deviceId,
+    now,
+    appVersion,
+    stationheadOk,
+    outboxCount,
+    proposedHighest,
+  ).first<TelemetryHeartbeatReceipt>();
+  let highestSequence = Math.max(proposedHighest, Number(heartbeat?.last_sequence ?? 0));
+  if (!heartbeat) {
+    const stored = await env.DB.prepare(
+      "SELECT last_sequence FROM device_heartbeats WHERE device_id=?1",
+    ).bind(deviceId).first<{ last_sequence: number }>();
+    highestSequence = Math.max(highestSequence, Number(stored?.last_sequence ?? 0));
   }
 
   let rebuildEnvironment = accepted > 0;
