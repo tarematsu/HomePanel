@@ -50,8 +50,9 @@ export function octopusStableCutoffJst(nowMs: number): number {
 
 export function octopusCollectionStart(nowMs: number): number {
   if (!Number.isFinite(nowMs)) throw new Error("Octopus collection time must be finite");
-  const recentStart = Math.floor((nowMs - OCTOPUS_COLLECTION_DAYS * DAY_MS) / HALF_HOUR_MS) * HALF_HOUR_MS;
-  return Math.max(OCTOPUS_HISTORY_FLOOR_MS, recentStart);
+  const exactStart = nowMs - OCTOPUS_COLLECTION_DAYS * DAY_MS;
+  const alignedStart = Math.ceil(exactStart / HALF_HOUR_MS) * HALF_HOUR_MS;
+  return Math.max(OCTOPUS_HISTORY_FLOOR_MS, alignedStart);
 }
 
 function* safeRanges(fromMs: number, toMs: number): IterableIterator<OctopusRange> {
