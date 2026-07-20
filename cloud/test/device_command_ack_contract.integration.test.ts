@@ -15,7 +15,7 @@ async function createCommand(): Promise<number> {
   const response = await SELF.fetch("https://homepanel.test/v1/device/commands", {
     method: "POST",
     headers: { ...authorization("test-action"), "content-type": "application/json" },
-    body: JSON.stringify({ deviceId: "ci-device", command: "reload_dashboard" }),
+    body: JSON.stringify({ deviceId: "ci-device", command: "check_update" }),
   });
   expect(response.status).toBe(202);
   return Number((await response.json<{ id: number }>()).id);
