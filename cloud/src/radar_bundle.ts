@@ -6,6 +6,9 @@ const BUNDLE_PATH = /^\/v1\/radar\/bundle\/(\d{14})\.hpb$/;
 const BUNDLE_MAGIC = new TextEncoder().encode("HPRB0001");
 const MAX_PATHS_PER_SHARD = 20;
 const MAX_TOTAL_PATHS = 256;
+const MAX_UPSTREAM_CONCURRENCY = 4;
+const MAX_SHARD_CONCURRENCY = 4;
+const MAX_BUNDLE_BYTES = 16 * 1024 * 1024;
 const PATH_ENCODER = new TextEncoder();
 
 interface BundleEnv extends Env {
@@ -16,9 +19,9 @@ interface CloudflareCacheStorage extends CacheStorage {
   default: Cache;
 }
 
-interface StreamRecord {
+interface BufferedRecord {
   header: Uint8Array;
-  body: Uint8Array | ReadableStream<Uint8Array>;
+  body: Uint8Array;
 }
 
 function defaultCache(): Cache {
@@ -57,50 +60,43 @@ function recordHeader(pathname: string, bodyLength: number): Uint8Array {
   return header;
 }
 
-async function pipeBody(
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  body: ReadableStream<Uint8Array>,
-): Promise<void> {
-  const reader = body.getReader();
-  try {
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(values.length, Math.max(1, Math.trunc(concurrency)));
+  await Promise.all(Array.from({ length: workerCount }, async () => {
     for (;;) {
-      const result = await reader.read();
-      if (result.done) return;
-      controller.enqueue(result.value);
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= values.length) return;
+      results[index] = await operation(values[index]!, index);
     }
-  } finally {
-    reader.releaseLock();
-  }
+  }));
+  return results;
 }
 
-function recordStream(prefix: Uint8Array, records: StreamRecord[]): ReadableStream<Uint8Array> {
+function byteStream(prefix: Uint8Array, bodies: readonly Uint8Array[]): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        if (prefix.length) controller.enqueue(prefix);
-        for (const record of records) {
-          controller.enqueue(record.header);
-          if (record.body instanceof Uint8Array) controller.enqueue(record.body);
-          else await pipeBody(controller, record.body);
-        }
-        controller.close();
-      } catch (error) {
-        controller.error(error);
-      }
+    start(controller) {
+      controller.enqueue(prefix);
+      for (const body of bodies) controller.enqueue(body);
+      controller.close();
     },
   });
 }
 
-function joinedStream(prefix: Uint8Array, bodies: ReadableStream<Uint8Array>[]): ReadableStream<Uint8Array> {
+function recordStream(records: readonly BufferedRecord[]): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        controller.enqueue(prefix);
-        for (const body of bodies) await pipeBody(controller, body);
-        controller.close();
-      } catch (error) {
-        controller.error(error);
+    start(controller) {
+      for (const record of records) {
+        controller.enqueue(record.header);
+        controller.enqueue(record.body);
       }
+      controller.close();
     },
   });
 }
@@ -131,13 +127,18 @@ export function radarBundlePaths(payload: unknown, baseTime: string): string[] {
   return unique.size <= MAX_TOTAL_PATHS ? [...unique] : [];
 }
 
-async function responseRecord(pathname: string, response: Response): Promise<StreamRecord> {
-  if (!response.ok || !response.body) {
-    throw new Error(`radar tile ${pathname} failed: HTTP ${response.status}`);
+async function bufferedTileRecord(pathname: string): Promise<BufferedRecord> {
+  const target = radarTileTargetForPath(pathname);
+  if (!target || !pathname.startsWith("/v1/radar/tile/jma/")) {
+    throw new Error("invalid radar tile path");
   }
-  const suppliedLength = Number(response.headers.get("Content-Length"));
-  if (Number.isSafeInteger(suppliedLength) && suppliedLength > 0 && suppliedLength <= 0xffffffff) {
-    return { header: recordHeader(pathname, suppliedLength), body: response.body };
+  const response = await fetch(target.upstream, {
+    headers: { "User-Agent": "HomePanel-Cloud/2.6" },
+    cf: { cacheEverything: true, cacheTtl: target.ttl },
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`radar tile ${pathname} failed: HTTP ${response.status}`);
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (!bytes.length) throw new Error(`radar tile ${pathname} was empty`);
@@ -145,6 +146,7 @@ async function responseRecord(pathname: string, response: Response): Promise<Str
 }
 
 export async function radarBundleShardResponse(request: Request, env: Env): Promise<Response> {
+  void env;
   let parsed: unknown;
   try {
     parsed = await request.json();
@@ -159,25 +161,38 @@ export async function radarBundleShardResponse(request: Request, env: Env): Prom
   }
 
   try {
-    const requests = paths.map(pathname => {
-      const target = radarTileTargetForPath(pathname as string);
-      if (!target || !(pathname as string).startsWith("/v1/radar/tile/jma/")) {
-        throw new Error("invalid radar tile path");
-      }
-      return fetch(target.upstream, {
-        headers: { "User-Agent": "HomePanel-Cloud/2.6" },
-        cf: { cacheEverything: true, cacheTtl: target.ttl },
-      });
-    });
-    const responses = await Promise.all(requests);
-    const records = await Promise.all(responses.map((response, index) => responseRecord(paths[index] as string, response)));
-    return new Response(recordStream(new Uint8Array(), records), {
+    const records = await mapWithConcurrency(
+      paths as string[],
+      MAX_UPSTREAM_CONCURRENCY,
+      pathname => bufferedTileRecord(pathname),
+    );
+    return new Response(recordStream(records), {
       headers: { "Content-Type": "application/octet-stream" },
     });
   } catch (error) {
     console.error("radar bundle shard failed", error instanceof Error ? error.message : String(error));
     return Response.json({ error: "tile_fetch_failed" }, { status: 502 });
   }
+}
+
+async function fetchShardBytes(
+  namespace: DurableObjectNamespace,
+  chunk: string[],
+  index: number,
+): Promise<Uint8Array> {
+  const stub = namespace.get(namespace.idFromName(`radar-bundle-${index}`));
+  const response = await stub.fetch("https://scheduler.internal/radar-bundle-shard", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths: chunk }),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`radar bundle shard ${index} failed: HTTP ${response.status}`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.length) throw new Error(`radar bundle shard ${index} was empty`);
+  return bytes;
 }
 
 export async function radarBundleResponseForPayload(
@@ -202,29 +217,33 @@ export async function radarBundleResponseForPayload(
     chunks.push(paths.slice(offset, offset + MAX_PATHS_PER_SHARD));
   }
 
-  const shardResponses = await Promise.all(chunks.map((chunk, index) => {
-    const stub = namespace.get(namespace.idFromName(`radar-bundle-${index}`));
-    return stub.fetch("https://scheduler.internal/radar-bundle-shard", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paths: chunk }),
-    });
-  }));
-  if (shardResponses.some(response => !response.ok || !response.body)) {
-    console.error("radar bundle assembly failed", shardResponses.map(response => response.status));
+  let shardBodies: Uint8Array[];
+  try {
+    shardBodies = await mapWithConcurrency(
+      chunks,
+      MAX_SHARD_CONCURRENCY,
+      (chunk, index) => fetchShardBytes(namespace, chunk, index),
+    );
+  } catch (error) {
+    console.error("radar bundle assembly failed", error instanceof Error ? error.message : String(error));
     return Response.json({ error: "radar_bundle_failed" }, { status: 502 });
   }
 
-  const response = new Response(
-    joinedStream(bundleHeader(paths.length), shardResponses.map(response => response.body!)),
-    {
-      headers: {
-        "Content-Type": "application/vnd.homepanel.radar-bundle",
-        "Cache-Control": "public, max-age=1800, immutable",
-        "X-HomePanel-Radar-Records": String(paths.length),
-      },
+  const header = bundleHeader(paths.length);
+  const totalBytes = shardBodies.reduce((total, bytes) => total + bytes.length, header.length);
+  if (totalBytes > MAX_BUNDLE_BYTES) {
+    console.error("radar bundle exceeded response limit", totalBytes);
+    return Response.json({ error: "radar_bundle_too_large" }, { status: 502 });
+  }
+
+  const response = new Response(byteStream(header, shardBodies), {
+    headers: {
+      "Content-Type": "application/vnd.homepanel.radar-bundle",
+      "Cache-Control": "public, max-age=1800, immutable",
+      "Content-Length": String(totalBytes),
+      "X-HomePanel-Radar-Records": String(paths.length),
     },
-  );
+  });
   ctx.waitUntil(cache.put(cacheKey, response.clone()).catch((error: unknown) => {
     console.error("radar bundle cache put failed", error instanceof Error ? error.message : String(error));
   }));
