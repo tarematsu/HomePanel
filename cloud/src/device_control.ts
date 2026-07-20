@@ -3,13 +3,7 @@ import { DEVICE_ID_PATTERN, deviceIdFromRequest as deviceIdFrom } from "./auth";
 import { claimPendingDeviceCommands } from "./device_command_delivery";
 import { json } from "./http";
 
-const ALLOWED_COMMANDS = new Set([
-  "restart_app",
-  "reconnect_stationhead",
-  "clear_display_cache",
-  "reload_dashboard",
-  "check_update",
-]);
+const ALLOWED_COMMANDS = new Set(["check_update"]);
 
 interface DeviceConfigRow {
   version: number;
@@ -46,16 +40,13 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
 function canonicalValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     const normalized = new Array<unknown>(value.length);
-    for (let index = 0; index < value.length; index += 1) {
-      normalized[index] = canonicalValue(value[index]);
-    }
+    for (let index = 0; index < value.length; index += 1) normalized[index] = canonicalValue(value[index]);
     return normalized;
   }
   if (value && typeof value === "object") {
     const object = value as Record<string, unknown>;
     const normalized = Object.create(null) as Record<string, unknown>;
-    const keys = Object.keys(object).sort();
-    for (const key of keys) normalized[key] = canonicalValue(object[key]);
+    for (const key of Object.keys(object).sort()) normalized[key] = canonicalValue(object[key]);
     return normalized;
   }
   return value;
@@ -79,29 +70,18 @@ export async function enqueueCommandOnce(
       `INSERT INTO device_commands(device_id, command, payload, created_at, expires_at)
        SELECT ?1, ?2, ?3, ?4, ?5
         WHERE NOT EXISTS (
-          SELECT 1
-            FROM device_commands
-           WHERE device_id=?1
-             AND command=?2
-             AND payload IS ?3
-             AND completed_at IS NULL
-             AND (expires_at IS NULL OR expires_at>?4)
-        )
-       RETURNING id`,
+          SELECT 1 FROM device_commands
+           WHERE device_id=?1 AND command=?2 AND payload IS ?3
+             AND completed_at IS NULL AND (expires_at IS NULL OR expires_at>?4)
+        ) RETURNING id`,
     ).bind(deviceId, command, serialized, now, expiresAt).all<{ id: number }>();
     const insertedId = Number(inserted.results?.[0]?.id ?? 0);
     if (insertedId > 0) return { id: insertedId, deduplicated: false };
-
     const existing = await env.DB.prepare(
-      `SELECT id
-         FROM device_commands
-        WHERE device_id=?1
-          AND command=?2
-          AND payload IS ?3
-          AND completed_at IS NULL
-          AND (expires_at IS NULL OR expires_at>?4)
-        ORDER BY id DESC
-        LIMIT 1`,
+      `SELECT id FROM device_commands
+        WHERE device_id=?1 AND command=?2 AND payload IS ?3
+          AND completed_at IS NULL AND (expires_at IS NULL OR expires_at>?4)
+        ORDER BY id DESC LIMIT 1`,
     ).bind(deviceId, command, serialized, now).first<{ id: number }>();
     const existingId = Number(existing?.id ?? 0);
     if (existingId > 0) return { id: existingId, deduplicated: true };
@@ -127,9 +107,7 @@ export async function getDeviceConfig(request: Request, env: Env): Promise<Respo
     "Cache-Control": "private, max-age=0, must-revalidate",
     ETag: etag,
   };
-  if (etagHeaderIncludes(request.headers.get("If-None-Match"), etag)) {
-    return new Response(null, { status: 304, headers });
-  }
+  if (etagHeaderIncludes(request.headers.get("If-None-Match"), etag)) return new Response(null, { status: 304, headers });
   return new Response(body, { status: 200, headers });
 }
 
@@ -141,9 +119,7 @@ export async function putDeviceConfig(request: Request, env: Env): Promise<Respo
   const config = objectOrNull(input);
   if (!config) return json({ error: "config must be an object" }, { status: 400 });
   const payload = canonicalJson(config);
-  if (payload.length > 32_000) {
-    return json({ error: "config is too large" }, { status: 413 });
-  }
+  if (payload.length > 32_000) return json({ error: "config is too large" }, { status: 413 });
 
   const existing = await env.DB.prepare(
     "SELECT version, payload, updated_at FROM device_configs WHERE device_id=?1",
@@ -152,73 +128,40 @@ export async function putDeviceConfig(request: Request, env: Env): Promise<Respo
   const currentEtag = configEtag(deviceId, currentVersion);
   const suppliedEtags = request.headers.get("If-Match");
   if (suppliedEtags === null) {
-    return json(
-      { error: "device config precondition required", deviceId, currentVersion },
-      { status: 428, headers: { ETag: currentEtag } },
-    );
+    return json({ error: "device config precondition required", deviceId, currentVersion },
+      { status: 428, headers: { ETag: currentEtag } });
   }
   if (!etagHeaderIncludes(suppliedEtags, currentEtag)) {
-    return json(
-      { error: "device config changed; reload before saving", deviceId, currentVersion },
-      { status: 412, headers: { ETag: currentEtag } },
-    );
+    return json({ error: "device config changed; reload before saving", deviceId, currentVersion },
+      { status: 412, headers: { ETag: currentEtag } });
   }
   if (existing?.payload === payload) {
-    return json(
-      { saved: true, changed: false, deviceId, version: currentVersion, updatedAt: existing.updated_at },
-      { headers: { ETag: currentEtag } },
-    );
+    return json({ saved: true, changed: false, deviceId, version: currentVersion, updatedAt: existing.updated_at },
+      { headers: { ETag: currentEtag } });
   }
 
   const now = Date.now();
   const nextVersion = currentVersion + 1;
-  const restartPayload = canonicalJson({ reason: "device_config_updated" });
-  const expiresAt = now + 3_600_000;
-  const configStatement = existing
+  const statement = existing
     ? env.DB.prepare(
-      `UPDATE device_configs
-          SET version=?2, payload=?3, updated_at=?4
+      `UPDATE device_configs SET version=?2, payload=?3, updated_at=?4
         WHERE device_id=?1 AND version=?5`,
     ).bind(deviceId, nextVersion, payload, now, currentVersion)
     : env.DB.prepare(
       `INSERT OR IGNORE INTO device_configs(device_id, version, payload, updated_at)
        VALUES(?1, 1, ?2, ?3)`,
     ).bind(deviceId, payload, now);
-  const supersedeStatement = env.DB.prepare(
-    `UPDATE device_commands
-        SET completed_at=?1, success=1, result='superseded by newer config'
-      WHERE device_id=?2 AND command='restart_app' AND completed_at IS NULL
-        AND EXISTS (
-          SELECT 1 FROM device_configs
-           WHERE device_id=?2 AND version=?3 AND payload=?4 AND updated_at=?1
-        )`,
-  ).bind(now, deviceId, nextVersion, payload);
-  const restartStatement = env.DB.prepare(
-    `INSERT INTO device_commands(device_id, command, payload, created_at, expires_at)
-     SELECT ?1, 'restart_app', ?2, ?3, ?4
-      WHERE EXISTS (
-        SELECT 1 FROM device_configs
-         WHERE device_id=?1 AND version=?5 AND payload=?6 AND updated_at=?3
-      )`,
-  ).bind(deviceId, restartPayload, now, expiresAt, nextVersion, payload);
-
-  const results = await env.DB.batch([configStatement, supersedeStatement, restartStatement]);
-  if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+  const result = await statement.run();
+  if (Number(result.meta.changes ?? 0) !== 1) {
     const latest = await env.DB.prepare(
       "SELECT version FROM device_configs WHERE device_id=?1",
     ).bind(deviceId).first<{ version: number }>();
     const latestVersion = Number(latest?.version ?? 0);
-    return json(
-      { error: "device config changed; reload before saving", deviceId, currentVersion: latestVersion },
-      { status: 412, headers: { ETag: configEtag(deviceId, latestVersion) } },
-    );
+    return json({ error: "device config changed; reload before saving", deviceId, currentVersion: latestVersion },
+      { status: 412, headers: { ETag: configEtag(deviceId, latestVersion) } });
   }
-  const commandId = Number(results[2]?.meta.last_row_id ?? 0);
-  if (!commandId) throw new Error("restart command was not created");
-  return json(
-    { saved: true, changed: true, deviceId, version: nextVersion, restartCommandId: commandId },
-    { headers: { ETag: configEtag(deviceId, nextVersion) } },
-  );
+  return json({ saved: true, changed: true, deviceId, version: nextVersion, updatedAt: now },
+    { headers: { ETag: configEtag(deviceId, nextVersion) } });
 }
 
 export async function getDeviceCommands(request: Request, env: Env): Promise<Response> {
@@ -237,9 +180,7 @@ export async function createDeviceCommand(request: Request, env: Env): Promise<R
   }
   const payload = input.payload ?? null;
   const serialized = payload === null ? null : canonicalJson(payload);
-  if (serialized && serialized.length > 8_000) {
-    return json({ error: "command payload is too large" }, { status: 413 });
-  }
+  if (serialized && serialized.length > 8_000) return json({ error: "command payload is too large" }, { status: 413 });
   const expiresInSeconds = Number(input.expiresInSeconds) || 3600;
   const queued = await enqueueCommandOnce(env, deviceId, command, serialized, expiresInSeconds);
   return json({ queued: true, ...queued, deviceId, command }, { status: 202 });
@@ -251,8 +192,7 @@ export async function acknowledgeDeviceCommand(request: Request, env: Env): Prom
   let input: Record<string, unknown>;
   try { input = objectOrNull(await request.json()) ?? {}; } catch { return json({ error: "invalid json" }, { status: 400 }); }
   const id = input.id;
-  if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0 ||
-      typeof input.success !== "boolean") {
+  if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0 || typeof input.success !== "boolean") {
     return json({ error: "valid command id and boolean success are required" }, { status: 400 });
   }
   if (input.result !== undefined && input.result !== null && typeof input.result !== "string") {
@@ -260,8 +200,7 @@ export async function acknowledgeDeviceCommand(request: Request, env: Env): Prom
   }
   const result = typeof input.result === "string" ? input.result.slice(0, 1000) : "";
   const update = await env.DB.prepare(
-    `UPDATE device_commands
-        SET completed_at=?1, success=?2, result=?3
+    `UPDATE device_commands SET completed_at=?1, success=?2, result=?3
       WHERE id=?4 AND device_id=?5 AND completed_at IS NULL`,
   ).bind(Date.now(), input.success ? 1 : 0, result || null, id, deviceId).run();
   return json({ acknowledged: (update.meta.changes ?? 0) === 1 });
