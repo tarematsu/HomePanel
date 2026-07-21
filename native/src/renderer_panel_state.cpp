@@ -68,8 +68,6 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
       nativeStationhead_.primaryAudioSelected != state.stationhead.primaryAudioSelected;
   const bool stationheadHistoryChanged =
       historyRevisions.stationhead != state.stationheadPlayHistoryRevision;
-  const bool controlsChanged =
-      nativeAppVersion_ != state.appVersion || nativeToast_ != state.toast;
   const bool newsIndexChanged = nativeNewsIndex_ != state.newsIndex;
   const bool weatherChanged =
       renderedDashboardRevisions_.weather != dashboardRevisions_.weather;
@@ -90,10 +88,6 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
     historyRevisions.stationhead = state.stationheadPlayHistoryRevision;
   }
   if (stationheadChanged) nativeStationhead_ = state.stationhead;
-  if (controlsChanged) {
-    nativeAppVersion_ = state.appVersion;
-    nativeToast_ = state.toast;
-  }
   if (newsIndexChanged) nativeNewsIndex_ = state.newsIndex;
   if (weatherChanged) {
     renderedDashboardRevisions_.weather = dashboardRevisions_.weather;
@@ -118,9 +112,6 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   }
   if (newsChanged || newsIndexChanged) {
     InvalidatePanelSection(nativeMainWindow_, PanelSection::News);
-  }
-  if (controlsChanged) {
-    InvalidatePanelSection(nativeSideWindow_, PanelSection::Clock);
   }
   if (stationheadChanged || stationheadHistoryChanged) {
     InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
