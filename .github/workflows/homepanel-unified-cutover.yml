@@ -36,6 +36,7 @@ jobs:
       OLD_VIDEO_BASE_URL: ${{ inputs.old_video_base_url }}
       VIDEO_SOURCE_D1_NAME: twivideo-swiper-db
       HOMEPANEL_D1_DATABASE_NAME: homepanel-data
+      VIDEO_QUEUE_NAME: videoscraper-manual-imports
 
     steps:
       - name: Validate cutover inputs
@@ -110,6 +111,19 @@ jobs:
           status="$(curl --silent --show-error --output "$RUNNER_TEMP/old-freeze.json" --write-out '%{http_code}' "$OLD_VIDEO_BASE_URL/api/status")"
           test "$status" = "503"
 
+      - name: Detach the legacy queue consumer
+        working-directory: video
+        shell: bash
+        run: |
+          set -euo pipefail
+          for worker in videoscraper homepanel; do
+            if npx wrangler queues consumer worker remove "$VIDEO_QUEUE_NAME" "$worker"; then
+              echo "Detached $VIDEO_QUEUE_NAME from $worker"
+            else
+              echo "No removable $VIDEO_QUEUE_NAME consumer was attached to $worker"
+            fi
+          done
+
       - name: Remove the abandoned renamed homepanel Worker
         shell: bash
         run: |
@@ -169,6 +183,12 @@ jobs:
           npx wrangler d1 execute homepanel-data --remote --config "$config" \
             --command "UPDATE video_runtime_state SET active=0, activated_at=NULL WHERE id=1;"
 
+      - name: Detach homepanel-cloud queue consumer on failure
+        if: failure()
+        working-directory: video
+        continue-on-error: true
+        run: npx wrangler queues consumer worker remove "$VIDEO_QUEUE_NAME" homepanel-cloud
+
       - name: Restore videoscraper on failure
         if: failure()
         working-directory: video
@@ -183,6 +203,7 @@ jobs:
             echo
             echo '- Unified Worker: homepanel-cloud'
             echo '- Unified D1: homepanel-data'
+            echo '- Queue consumer: transferred to homepanel-cloud'
             echo '- Existing HomePanel secrets and Durable Object namespace were preserved'
             echo '- ADMIN_TOKEN was supplied directly on homepanel-cloud'
             echo '- Legacy videoscraper remains frozen until its retirement workflow is approved'
