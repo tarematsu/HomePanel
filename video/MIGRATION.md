@@ -1,6 +1,6 @@
 # VP and HomePanel Worker consolidation
 
-This directory is the imported snapshot of `tarematsu/VP`.
+This directory is the imported snapshot of `tarematsu/VP` and is now maintained entirely inside HP.
 
 - Source commit: `9984a5db4104019a2537a3018aa7b754f9ad4228`
 - Imported into HP as: `video/`
@@ -8,6 +8,8 @@ This directory is the imported snapshot of `tarematsu/VP`.
 - Unified D1 database: `homepanel-data`
 - Retired video Worker: `videoscraper`
 - Retired video D1 database: `twivideo-swiper-db`
+
+Deleting the former VP repository does not remove any runtime source or production dependency used by HP.
 
 ## Runtime boundary
 
@@ -22,7 +24,7 @@ The unified entry point is `cloud/src/unified_worker.js`.
 - Video liveness is registered as the `video_liveness` job in HomePanel's existing `SchedulerCoordinator` Durable Object.
 - The liveness job runs every 720 seconds and checks one video URL per run.
 - No Cloudflare Cron Trigger is used for video liveness or automatic video collection.
-- A D1 activation flag keeps video fetch and queue handlers disabled unless the verified unified runtime is active.
+- A D1 activation flag keeps video fetch, queue, and liveness work disabled unless the verified unified runtime is active.
 
 ## Scheduling and free-plan budget
 
@@ -44,6 +46,8 @@ This produces at most 120 normal liveness probes per day before retries. Failure
 
 The videoscraper data migration and unified-runtime activation completed successfully. The legacy `videoscraper` Worker and `twivideo-swiper-db` database were subsequently deleted. `homepanel-cloud`, `homepanel-data`, `homepanel-updates`, existing HomePanel secrets, and the scheduler Durable Object namespace remain authoritative.
 
+The completed cutover and retirement workflows have been removed so they cannot be rerun against production. Standalone remote deploy and D1 commands in the `video` workspace fail closed; production operations must use the `cloud` workspace.
+
 No tablet URL change is required.
 
-Original VP workflows remain under `video/.github/workflows` as historical migration references. Active monorepo workflows belong under the repository root `.github/workflows/` directory.
+Original VP workflows remain under `video/.github/workflows` as historical references only. GitHub does not execute workflows outside the repository-root `.github/workflows/` directory.
