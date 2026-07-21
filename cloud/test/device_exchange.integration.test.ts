@@ -7,6 +7,8 @@ type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migratio
 beforeEach(async () => {
   const testEnv = env as TestEnv;
   await resetD1TestDatabase(testEnv.DB, testEnv.TEST_MIGRATIONS);
+  await env.DATA_BUCKET.delete("environment/v2/latest.json");
+  await env.DATA_BUCKET.delete("telemetry/v2/homepanel-device/latest.json");
 });
 
 function decodeExchange(bytes: Uint8Array): { payload: Record<string, unknown>; radar: Uint8Array } {
@@ -42,8 +44,8 @@ describe("device exchange", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns sync and telemetry receipt in one binary response", async () => {
-    const observedAt = Math.floor((Date.now() - 1000) / 300_000) * 300_000;
+  it("returns sync and compact telemetry receipt in one binary response", async () => {
+    const observedAt = Math.floor((Date.now() - 1000) / 900_000) * 900_000;
     const response = await SELF.fetch("https://homepanel.test/v1/device/exchange?deviceId=homepanel-device", {
       method: "POST",
       headers: {
@@ -54,7 +56,7 @@ describe("device exchange", () => {
         versions,
         telemetry: {
           deviceId: "homepanel-device",
-          appVersion: "2.11.0",
+          appVersion: "2.12.0",
           stationheadOk: true,
           outboxCount: 1,
           samples: [{ sequence: 1, observedAt, co2: 640 }],
@@ -73,9 +75,63 @@ describe("device exchange", () => {
         nextSequence: 2,
       },
     });
-    const bucket = await env.DB.prepare(
-      "SELECT sample_count,co2_sum FROM environment_buckets WHERE device_id=?1",
-    ).bind("homepanel-device").first<{ sample_count: number; co2_sum: number }>();
-    expect(bucket).toMatchObject({ sample_count: 1, co2_sum: 640 });
+
+    const legacySamples = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM environment_samples",
+    ).first<{ count: number }>();
+    const legacyBuckets = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM environment_buckets",
+    ).first<{ count: number }>();
+    expect(legacySamples?.count).toBe(0);
+    expect(legacyBuckets?.count).toBe(0);
+
+    const stored = await env.DATA_BUCKET.get("environment/v2/latest.json");
+    expect(stored).not.toBeNull();
+    const document = await stored!.json<{
+      lastSequences: Record<string, number>;
+      row: { payload: string };
+    }>();
+    expect(document.lastSequences["homepanel-device"]).toBe(1);
+    expect(JSON.parse(document.row.payload)).toMatchObject({
+      deviceId: "homepanel-device",
+      bucketMinutes: 15,
+      history: [{ t: observedAt, co2: 640 }],
+    });
+  });
+
+  it("acknowledges a retried telemetry batch without duplicating R2 aggregates", async () => {
+    const observedAt = Math.floor((Date.now() - 1000) / 900_000) * 900_000;
+    const request = () => SELF.fetch("https://homepanel.test/v1/device/exchange?deviceId=homepanel-device", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test-device",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        versions,
+        telemetry: {
+          deviceId: "homepanel-device",
+          appVersion: "2.12.0",
+          stationheadOk: true,
+          outboxCount: 1,
+          samples: [{ sequence: 1, observedAt, co2: 640 }],
+        },
+      }),
+    });
+
+    expect((await request()).status).toBe(200);
+    const retried = decodeExchange(new Uint8Array(await (await request()).arrayBuffer()));
+    expect(retried.payload.telemetry).toMatchObject({
+      accepted: 0,
+      acknowledgedSequences: [1],
+      nextSequence: 2,
+    });
+
+    const stored = await env.DATA_BUCKET.get("environment/v2/latest.json");
+    const document = await stored!.json<{ row: { payload: string } }>();
+    const payload = JSON.parse(document.row.payload) as {
+      history: Array<{ t: number; co2: number }>;
+    };
+    expect(payload.history).toEqual([{ t: observedAt, co2: 640, temperature: null, humidity: null }]);
   });
 });
