@@ -1,5 +1,5 @@
 import { authorizedDevice, bearerToken, DEVICE_ID_PATTERN } from "./auth";
-import { archiveLatestTelemetry, mergeR2EnvironmentTelemetry } from "./environment_r2";
+import { mergeR2EnvironmentTelemetry } from "./environment_r2";
 import { json } from "./http";
 import { unauthorized } from "./response";
 import type { Env } from "./sources";
@@ -71,7 +71,7 @@ function normalizeSample(value: unknown, now: number): TelemetrySample | null {
 export async function receiveCompactTelemetry(
   request: Request,
   env: Env,
-  ctx: ExecutionContext,
+  _ctx: ExecutionContext,
 ): Promise<Response> {
   if (!bearerToken(request)) return unauthorized();
   if (!env.DATA_BUCKET) return json({ error: "telemetry storage unavailable" }, { status: 503 });
@@ -119,16 +119,6 @@ export async function receiveCompactTelemetry(
     merged.lastSequence,
   ).first<TelemetryHeartbeatReceipt>();
   const lastSequence = Math.max(merged.lastSequence, Number(heartbeat?.last_sequence ?? 0));
-
-  ctx.waitUntil(archiveLatestTelemetry(env, deviceId, {
-    deviceId,
-    appVersion,
-    stationheadOk: Boolean(input.stationheadOk),
-    outboxCount,
-    samples,
-  }, now).catch(error => {
-    console.error("telemetry R2 archive failed", error instanceof Error ? error.message : String(error));
-  }));
 
   const response: Record<string, unknown> = {
     accepted: merged.accepted,
