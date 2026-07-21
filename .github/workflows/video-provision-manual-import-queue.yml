@@ -33,7 +33,7 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN" || { echo "Cloudflare API token is not configured"; exit 1; }
           if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then unset CLOUDFLARE_ACCOUNT_ID; fi
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Resolve account and ensure queues exist
         shell: bash
         run: |
