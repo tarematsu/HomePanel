@@ -1,0 +1,43 @@
+name: Ops diagnose video freeze failure
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/ops-diagnose-video-freeze.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract failed cutover log
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_ID: '88610825649'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/jobs/$JOB_ID/logs" \
+            -o job.log
+          {
+            echo '=== freeze and error lines ==='
+            grep -nEi 'freeze|error|failed|failure|queue|consumer|deploy|102|110|workers.dev' job.log | tail -n 180 || true
+            echo
+            echo '=== final 260 lines ==='
+            tail -n 260 job.log
+          } > diagnosis.txt
+          cat diagnosis.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-freeze-diagnosis
+          path: diagnosis.txt
+          retention-days: 7
