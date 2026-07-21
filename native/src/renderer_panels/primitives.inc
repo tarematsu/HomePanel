@@ -1,4 +1,30 @@
-// Shared drawing and layout primitives for the native dashboard.
+#include "web_renderer.h"
+#include "wic_image.h"
+
+namespace hp {
+namespace {
+constexpr int kNativeSideId = 101;
+constexpr int kNativeMainId = 102;
+constexpr int kNativeRadarId = 108;
+
+constexpr COLORREF kWidgetBackground = kNativeDashboardBackground;
+constexpr COLORREF kWidgetSurface = RGB(20, 26, 36);
+constexpr COLORREF kWidgetSurfaceAlt = RGB(31, 39, 52);
+constexpr COLORREF kWidgetOutline = RGB(43, 54, 69);
+constexpr COLORREF kWidgetText = RGB(238, 242, 248);
+constexpr COLORREF kWidgetMuted = RGB(159, 171, 189);
+constexpr COLORREF kWidgetSubtle = RGB(110, 122, 141);
+
+constexpr COLORREF kWidgetBlueMuted = RGB(100, 176, 255);
+constexpr COLORREF kWidgetGreen = RGB(48, 209, 88);
+constexpr COLORREF kWidgetOrange = RGB(255, 159, 10);
+constexpr COLORREF kWidgetCyan = RGB(50, 173, 230);
+constexpr COLORREF kWidgetBlack = RGB(0, 0, 0);
+constexpr COLORREF kWidgetTrack = RGB(42, 52, 66);
+constexpr COLORREF kWidgetWarning = RGB(255, 214, 10);
+constexpr COLORREF kWidgetDanger = RGB(255, 69, 58);
+constexpr COLORREF kWidgetDangerSurface = RGB(52, 34, 37);
+constexpr COLORREF kWidgetSuccessSurface = RGB(26, 52, 38);
 
 HBRUSH CachedSolidBrush(COLORREF color) {
   static std::map<COLORREF, HBRUSH> cache;
@@ -403,7 +429,8 @@ MusicRowRects MusicRowFromBody(const RECT& body) {
       std::clamp(rowHeight * 28 / 100, 20, 44),
       std::max(1, (rowHeight - buttonGap) / 2));
   const int buttonWidth = std::clamp(SpanX(body, 170), 64, 140);
-  const int clusterHeight = buttonHeight * 2 + buttonGap;
+  const int retiredStatusHeight = std::clamp(rowHeight * 14 / 100, 16, 30);
+  const int clusterHeight = buttonHeight * 2 + retiredStatusHeight + buttonGap * 2;
   const int clusterTop = rects.row.top + std::max(0, (rowHeight - clusterHeight) / 2);
   rects.button = RECT{rects.row.right - buttonWidth, clusterTop, rects.row.right,
                       clusterTop + buttonHeight};
@@ -474,3 +501,4 @@ HDC NativePanelMemoryDc(HDC compatibleDc) {
 
 constexpr UINT_PTR kNativePanelTickTimer = 1;
 constexpr UINT kNativePanelTickMs = 1'000;
+}  // namespace
