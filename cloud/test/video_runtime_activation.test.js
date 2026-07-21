@@ -54,7 +54,8 @@ describe('video runtime activation', () => {
     const source = await readFile(new URL('../src/unified_worker.js', import.meta.url), 'utf8');
     expect(source.match(/videoRuntimeActive\(env\)/g)).toHaveLength(3);
     expect(source).toMatch(/inactiveVideoRuntimeResponse\(\)/);
-    expect(source).toMatch(/video-runtime-inactive-queue-skipped/);
+    expect(source).toMatch(/video-runtime-inactive-queue-retried/);
+    expect(source).toMatch(/batch\.retryAll\(\)/);
     expect(source).toMatch(/video-runtime-inactive-scheduled-skipped/);
   });
 });
