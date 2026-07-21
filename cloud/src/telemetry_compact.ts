@@ -17,7 +17,7 @@ interface TelemetryInput {
   samples?: unknown[];
 }
 
-const MAX_COMPACT_TELEMETRY_SAMPLES = 120;
+const MAX_COMPACT_TELEMETRY_SAMPLES = 60;
 
 function finiteOptional(value: unknown): number | null | undefined {
   if (value === undefined || value === null) return null;
