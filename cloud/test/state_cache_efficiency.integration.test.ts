@@ -1,7 +1,7 @@
 import { applyD1Migrations, env, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invalidateStateCaches } from "../src/dashboard_cache";
-import { readState, updateState } from "../src/snapshot";
+import { readState, sha256Hex, updateState } from "../src/snapshot";
 import { resetD1TestDatabase } from "./d1_test_utils";
 
 type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1] };
@@ -71,5 +71,28 @@ describe("state cache and D1 efficiency", () => {
       status: "ok",
     });
     expect(JSON.parse(cached!.payload)).toEqual({ temperature: 20 });
+  });
+
+  it("writes the authoritative D1 version back when KV is stale", async () => {
+    const startedAt = Date.now();
+    await updateState(env, { source: "weather", observedAt: startedAt, payload: { temperature: 20 } });
+
+    const externalPayload = JSON.stringify({ temperature: 21 });
+    const externalHash = await sha256Hex(externalPayload);
+    await env.DB.prepare(
+      `UPDATE current_state SET version=3,payload=?1,observed_at=?2,fetched_at=?2,
+         last_success_at=?2,status='ok',error=NULL,content_hash=?3
+       WHERE source='weather'`,
+    ).bind(externalPayload, startedAt + 1_000, externalHash).run();
+
+    await updateState(env, {
+      source: "weather",
+      observedAt: startedAt + 2_000,
+      payload: { temperature: 22 },
+    });
+
+    const current = await readState(env, "weather");
+    expect(current?.version).toBe(4);
+    expect(JSON.parse(current!.payload)).toEqual({ temperature: 22 });
   });
 });
