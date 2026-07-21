@@ -1,0 +1,73 @@
+name: Ops inspect video automatic reset schema
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/ops-inspect-video-auto-reset.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+      HOMEPANEL_D1_DATABASE_ID: ${{ secrets.HOMEPANEL_D1_DATABASE_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: cloud
+        run: npm ci --no-audit --no-fund
+
+      - name: Resolve Cloudflare account
+        id: resolve
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+        run: node .github/scripts/resolve-cloudflare-config.mjs
+
+      - name: Inspect source and target schemas
+        working-directory: cloud
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run prepare:existing
+          config=.wrangler/generated/homepanel-existing.jsonc
+          {
+            echo '=== source table ddl ==='
+            npx wrangler d1 execute twivideo-swiper-db --remote --json \
+              --command "SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name='automatic_reset_state' OR tbl_name='automatic_reset_state' ORDER BY type,name;"
+            echo
+            echo '=== source columns ==='
+            npx wrangler d1 execute twivideo-swiper-db --remote --json \
+              --command "PRAGMA table_info(automatic_reset_state);"
+            echo
+            echo '=== source indexes ==='
+            npx wrangler d1 execute twivideo-swiper-db --remote --json \
+              --command "PRAGMA index_list(automatic_reset_state);"
+            echo
+            echo '=== source rows ==='
+            npx wrangler d1 execute twivideo-swiper-db --remote --json \
+              --command "SELECT COUNT(*) AS row_count, * FROM automatic_reset_state LIMIT 20;"
+            echo
+            echo '=== target schema ==='
+            npx wrangler d1 execute homepanel-data --remote --config "$config" --json \
+              --command "SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name='automatic_reset_state' OR tbl_name='automatic_reset_state' ORDER BY type,name;"
+          } | tee schema-inspection.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-automatic-reset-schema
+          path: cloud/schema-inspection.txt
+          retention-days: 7
