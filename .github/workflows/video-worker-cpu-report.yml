@@ -11,8 +11,6 @@ on:
         description: CPU target in milliseconds
         required: false
         default: '10'
-  schedule:
-    - cron: '17 */6 * * *'
 
 permissions:
   contents: read
