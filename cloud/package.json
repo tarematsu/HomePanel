@@ -12,8 +12,7 @@
     "deploy": "node scripts/guarded-deploy.mjs",
     "deploy:worker": "node scripts/guarded-deploy.mjs --without-migrations",
     "migrate:local": "node scripts/deploy-existing.mjs --migrate-local",
-    "migrate:remote": "node scripts/deploy-existing.mjs --migrate-only",
-    "migrate:videoscraper": "node scripts/migrate-videoscraper-d1.mjs"
+    "migrate:remote": "node scripts/deploy-existing.mjs --migrate-only"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.0",
