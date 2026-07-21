@@ -22,7 +22,7 @@ beforeEach(async () => {
 afterEach(() => vi.useRealTimers());
 
 describe("current_state checkpoint policy", () => {
-  it("keeps latest success in KV while checkpointing unchanged D1 state every six hours", async () => {
+  it("limits unchanged success KV heartbeats to thirty minutes and D1 to six hours", async () => {
     const startedAt = 1_800_000_000_000;
     vi.setSystemTime(startedAt);
     const payload = { temperature: 20 };
@@ -31,14 +31,19 @@ describe("current_state checkpoint policy", () => {
     vi.setSystemTime(startedAt + 6 * 60_000);
     await updateState(env, { source: "weather", observedAt: startedAt + 6 * 60_000, payload });
     expect((await d1State("weather"))?.fetched_at).toBe(startedAt);
-    expect((await readState(env, "weather"))?.fetched_at).toBe(startedAt + 6 * 60_000);
+    expect((await readState(env, "weather"))?.fetched_at).toBe(startedAt);
+
+    vi.setSystemTime(startedAt + 30 * 60_000);
+    await updateState(env, { source: "weather", observedAt: startedAt + 30 * 60_000, payload });
+    expect((await d1State("weather"))?.fetched_at).toBe(startedAt);
+    expect((await readState(env, "weather"))?.fetched_at).toBe(startedAt + 30 * 60_000);
 
     vi.setSystemTime(startedAt + 6 * 60 * 60_000);
     await updateState(env, { source: "weather", observedAt: startedAt + 6 * 60 * 60_000, payload });
     expect((await d1State("weather"))?.fetched_at).toBe(startedAt + 6 * 60 * 60_000);
   });
 
-  it("keeps latest repeated error in KV while checkpointing D1 every six hours", async () => {
+  it("limits repeated error KV heartbeats to thirty minutes and D1 to six hours", async () => {
     const startedAt = 1_800_000_000_000;
     vi.setSystemTime(startedAt);
     await updateState(env, { source: "news", observedAt: startedAt, payload: null }, "upstream unavailable");
@@ -46,7 +51,16 @@ describe("current_state checkpoint policy", () => {
     vi.setSystemTime(startedAt + 6 * 60_000);
     await updateState(env, { source: "news", observedAt: startedAt + 6 * 60_000, payload: null }, "upstream unavailable");
     expect((await d1State("news"))?.fetched_at).toBe(startedAt);
-    expect((await readState(env, "news"))?.fetched_at).toBe(startedAt + 6 * 60_000);
+    expect((await readState(env, "news"))?.fetched_at).toBe(startedAt);
+
+    vi.setSystemTime(startedAt + 30 * 60_000);
+    await updateState(env, {
+      source: "news",
+      observedAt: startedAt + 30 * 60_000,
+      payload: null,
+    }, "upstream unavailable");
+    expect((await d1State("news"))?.fetched_at).toBe(startedAt);
+    expect((await readState(env, "news"))?.fetched_at).toBe(startedAt + 30 * 60_000);
 
     vi.setSystemTime(startedAt + 6 * 60 * 60_000);
     await updateState(env, {
