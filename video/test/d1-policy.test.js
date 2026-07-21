@@ -16,7 +16,8 @@ const worker = await readFile(new URL('../src/worker.js', import.meta.url), 'utf
 
 test('authenticated status responses bypass shared edge cache and remain private', () => {
   assert.match(entryCore, /if \(!authorized\(request, env\)\) return unauthorized\(\)/);
-  assert.match(entry, /export default core/);
+  assert.match(entry, /return core\.fetch\(request, env, ctx\)/);
+  assert.match(entry, /migrationFreezeEnabled/);
   assert.doesNotMatch(entry, /protectPrivateStatusResponse/);
   assert.doesNotMatch(entry, /cache\.match\(/);
   assert.doesNotMatch(entry, /cache\.put\(/);
