@@ -86,16 +86,26 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
       PublishRenderStateNow();
       return 0;
     case WM_HP_PRIMARY_RELOAD_READY: {
-
-
-      if (!secondaryStationhead_) return 1;
-      if (!secondaryStationhead_->Status().playing) return 0;
+      if (!secondaryStationhead_) {
+        primaryTrackBoundaryPendingUntil_ = 0;
+        return 1;
+      }
+      if (!secondaryStationhead_->AudioPlaying()) {
+        primaryTrackBoundaryPendingUntil_ =
+            UnixMillis() + kStationheadTrackTransitionGraceMs;
+        return 0;
+      }
+      primaryTrackBoundaryPendingUntil_ = 0;
       ApplyScheduledStationheadAudioProfile(false);
       return 1;
     }
     case WM_HP_SECONDARY_RELOAD_READY: {
-
-      if (!stationhead_->Status().audioPlaying) return 0;
+      if (!stationhead_->AudioPlaying()) {
+        secondaryTrackBoundaryPendingUntil_ =
+            UnixMillis() + kStationheadTrackTransitionGraceMs;
+        return 0;
+      }
+      secondaryTrackBoundaryPendingUntil_ = 0;
       ApplyScheduledStationheadAudioProfile(true);
       return 1;
     }
@@ -105,6 +115,27 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
           ? secondaryStationhead_->ConsumeChangeFlags()
           : 0;
       const uint32_t changes = primaryChanges | secondaryChanges;
+      const int64_t now = UnixMillis();
+      if (primaryTrackBoundaryPendingUntil_ > 0) {
+        if (now >= primaryTrackBoundaryPendingUntil_) {
+          primaryTrackBoundaryPendingUntil_ = 0;
+          stationhead_->CancelPendingTrackBoundaryRefresh();
+        } else if (secondaryStationhead_ && secondaryStationhead_->AudioPlaying()) {
+          primaryTrackBoundaryPendingUntil_ = 0;
+          stationhead_->RetryPendingTrackBoundaryRefresh(now);
+        }
+      }
+      if (secondaryTrackBoundaryPendingUntil_ > 0) {
+        if (now >= secondaryTrackBoundaryPendingUntil_) {
+          secondaryTrackBoundaryPendingUntil_ = 0;
+          if (secondaryStationhead_) {
+            secondaryStationhead_->CancelPendingTrackBoundaryRefresh();
+          }
+        } else if (secondaryStationhead_ && stationhead_->AudioPlaying()) {
+          secondaryTrackBoundaryPendingUntil_ = 0;
+          secondaryStationhead_->RetryPendingTrackBoundaryRefresh(now);
+        }
+      }
       bool layoutChanged = false;
       if ((primaryChanges & StationheadChangeReleaseAuth) != 0) {
         stationhead_->ReleaseCompletedAuth();

@@ -1,3 +1,15 @@
+namespace {
+std::wstring DashboardStatusTimeText(int64_t epochMs) {
+  if (epochMs <= 0) return L"--:--";
+  const std::time_t seconds = static_cast<std::time_t>(epochMs / 1000);
+  std::tm local{};
+  if (localtime_s(&local, &seconds) != 0) return L"--:--";
+  wchar_t text[16]{};
+  if (wcsftime(text, std::size(text), L"%H:%M", &local) == 0) return L"--:--";
+  return text;
+}
+}  // namespace
+
 void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
   const RECT content = CardContentRect(card);
   const RECT body = CardBodyRect(content);
@@ -11,9 +23,10 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
       IsStationheadFallbackUrl(nativeStationhead_.url, nativeStationhead_.fallbackUrl) &&
       IsStationheadFallbackUrl(nativeStationhead_.secondaryUrl, nativeStationhead_.fallbackUrl);
   const int64_t nowMs = UnixMillis();
-  const NativePlaybackRender sharedPlayback =
-      ResolveNativePlayback(bothStationheadsOnFallback ? 1 : 0, nowMs);
-  const bool withProgress =
+  const NativePlaybackRender sharedPlayback = bothStationheadsOnFallback
+      ? NativePlaybackRender{}
+      : ResolveNativePlayback(0, nowMs);
+  const bool withProgress = !bothStationheadsOnFallback &&
       sharedPlayback.hasTrack && sharedPlayback.track.durationMs > 0;
 
   const auto drawProgress = [&] {
@@ -105,7 +118,7 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
 
   const int artworkRadius = std::max(6, rowHeight * 14 / 100);
   DrawWidgetCard(dc, rects.artwork, kWidgetSurfaceAlt, artworkRadius);
-  if (sharedPlayback.hasTrack) {
+  if (!bothStationheadsOnFallback && sharedPlayback.hasTrack) {
     const int saved = SaveDC(dc);
     HRGN artworkClip = CreateRoundRectRgn(rects.artwork.left, rects.artwork.top,
                                           rects.artwork.right + 1, rects.artwork.bottom + 1,
@@ -120,25 +133,17 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
     RestoreDC(dc, saved);
   }
 
-  const std::wstring title = sharedPlayback.hasTrack
-      ? sharedPlayback.track.title
-      : (bothStationheadsOnFallback ? L"Buddy46" : L"");
+  const std::wstring title = bothStationheadsOnFallback
+      ? L"fallback中"
+      : (sharedPlayback.hasTrack ? sharedPlayback.track.title : L"");
   const std::wstring artist = sharedPlayback.hasTrack ? sharedPlayback.track.artist : L"";
   const std::wstring detail = nativeStationhead_.loginRequired ? L"ログイン待ち"
       : nativeStationhead_.processFailed ? L"WebView再起動待ち"
       : nativeStationhead_.audioPlaying ? L"再生中"
       : nativeStationhead_.created ? L"接続中"
       : L"起動待ち";
-  std::wstring rowDetail = detail;
-  if (sharedPlayback.setupRequired) {
-    rowDetail = L"再生設定待ち";
-  } else if (sharedPlayback.ended) {
-    rowDetail = sharedPlayback.stale ? L"キュー終了・情報遅延" : L"キュー終了";
-  } else if (sharedPlayback.stale) {
-    rowDetail = L"再生情報を更新待ち";
-  } else if (sharedPlayback.available && !sharedPlayback.hasTrack) {
-    rowDetail = L"次の曲を待機中";
-  }
+  const std::wstring rowDetail =
+      sharedPlayback.available && !sharedPlayback.hasTrack ? L"次の曲を待機中" : detail;
 
   SetTextColor(dc, kWidgetText);
   SelectObject(dc, TierFont(FontTier::Medium));
@@ -147,12 +152,14 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
   DrawTextInRect(dc, title.empty() ? L"--" : title, titleRect,
                  DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
 
-  SetTextColor(dc, kWidgetMuted);
-  SelectObject(dc, TierFont(FontTier::Small));
-  RECT artistRect{textLeft, titleRect.bottom, textRight,
-                  withProgress ? rowRect.top + rowHeight * 62 / 100 : rowRect.bottom - pad};
-  DrawTextInRect(dc, artist.empty() ? rowDetail : artist, artistRect,
-                 DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
+  if (!bothStationheadsOnFallback) {
+    SetTextColor(dc, kWidgetMuted);
+    SelectObject(dc, TierFont(FontTier::Small));
+    RECT artistRect{textLeft, titleRect.bottom, textRight,
+                    withProgress ? rowRect.top + rowHeight * 62 / 100 : rowRect.bottom - pad};
+    DrawTextInRect(dc, artist.empty() ? rowDetail : artist, artistRect,
+                   DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
+  }
 
   if (withProgress) drawProgress();
 
@@ -167,6 +174,33 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
   SetTextColor(dc, kWidgetDanger);
   DrawTextInRect(dc, L"MUTE", rects.muteButton,
                  DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+
+  const NativeMinuteFactsProjection stationheadStatus = NativeMinuteFactsSnapshot();
+  std::wstring stateText = L"状態取得待ち";
+  if (stationheadStatus.available) {
+    if (stationheadStatus.isPaused) {
+      stateText = L"一時停止";
+    } else if (stationheadStatus.isBroadcasting) {
+      stateText = L"配信中 " + std::to_wstring(stationheadStatus.listenerCount);
+    } else {
+      stateText = L"停止中";
+    }
+  }
+  const std::wstring timeText =
+      L"生成" + DashboardStatusTimeText(stationheadStatus.minuteAt) +
+      L" 取得" + DashboardStatusTimeText(stationheadStatus.fetchedAt);
+  const LONG statusMiddle = rects.status.top +
+      std::max<LONG>(1, (rects.status.bottom - rects.status.top) / 2);
+  RECT stateRect = rects.status;
+  stateRect.bottom = statusMiddle;
+  RECT timeRect = rects.status;
+  timeRect.top = statusMiddle;
+  SetTextColor(dc, stationheadStatus.available ? kWidgetMuted : kWidgetSubtle);
+  DrawTextInRect(dc, stateText, stateRect,
+                 DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
+  DrawTextInRect(dc, timeText, timeRect,
+                 DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
+
   SelectObject(dc, previousFont);
 }
 

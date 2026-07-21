@@ -96,6 +96,8 @@ class App {
   bool stationheadPlaybackFallbackActive_ = false;
   bool stationheadPlaybackNoNextTrackObserved_ = false;
   uint64_t stationheadPlaybackFallbackRevision_ = 0;
+  int64_t primaryTrackBoundaryPendingUntil_ = 0;
+  int64_t secondaryTrackBoundaryPendingUntil_ = 0;
   int64_t lastTelemetryAt_ = 0;
   int64_t lastStationheadPlayStatsUpdatedAt_ = 0;
   int64_t lastStationheadPlayHistorySavedAt_ = 0;

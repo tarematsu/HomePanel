@@ -99,6 +99,12 @@ class StationheadPlayer {
     return audioPlaying_.load(std::memory_order_relaxed);
   }
   void Reconnect();
+  void RetryPendingTrackBoundaryRefresh(int64_t nowMs) {
+    HandleTrackEnded(nowMs, true);
+  }
+  void CancelPendingTrackBoundaryRefresh() noexcept {
+    trackBoundaryRefreshPending_ = false;
+  }
   void SetPlaybackFallback(bool active, const std::wstring& reason);
   void ShowForLogin();
   void ShowAfterAudioStop();
@@ -132,6 +138,7 @@ class StationheadPlayer {
   void ApplyMute() const noexcept;
   void ApplyVolume() const noexcept;
   void ApplyAudioPlaybackState(bool playing, const std::wstring& source);
+  void HandleTrackEnded(int64_t nowMs, bool retry);
   void TryStartInitialNavigation();
   void CompletePendingAuthPopupDeferral() noexcept;
   void EnsureDistinctBrowserIdentity() noexcept;
@@ -180,6 +187,7 @@ class StationheadPlayer {
   ComPtr<ICoreWebView2> authWebview_;
   ComPtr<ICoreWebView2Deferral> authPopupDeferral_;
   std::shared_ptr<std::atomic<bool>> authPopupDeferralCompleted_;
+  EventRegistrationToken navigationStartingToken_{};
   EventRegistrationToken navigationToken_{};
   EventRegistrationToken newWindowToken_{};
   EventRegistrationToken webMessageToken_{};
@@ -197,6 +205,9 @@ class StationheadPlayer {
       std::make_shared<std::atomic<bool>>(false)};
   std::atomic<bool> creating_{false};
   std::atomic<bool> recreating_{false};
+  std::atomic<uint64_t> activeNavigationId_{0};
+  std::atomic<bool> navigationInFlight_{false};
+  bool trackBoundaryRefreshPending_ = false;
   int64_t creationStartedAt_ = 0;
   int64_t recreateAt_ = 0;
   std::atomic<bool> shuttingDown_{false};

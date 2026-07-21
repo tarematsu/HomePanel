@@ -3,6 +3,8 @@
 
 namespace hp {
 
+inline constexpr int64_t kStationheadTrackTransitionGraceMs = 12'000;
+
 inline bool StationheadNeedsForeground(const StationheadStatus& status) noexcept {
   return !status.audioPlaying;
 }
@@ -34,6 +36,8 @@ class StationheadHandleBase {
   void Start();
   void Tick(int64_t nowMs);
   void Reconnect();
+  void RetryPendingTrackBoundaryRefresh(int64_t nowMs);
+  void CancelPendingTrackBoundaryRefresh() noexcept;
   void SetPlaybackFallback(bool active, const std::wstring& reason);
   void ShowAfterAudioStop();
   void ReleaseCompletedAuth();

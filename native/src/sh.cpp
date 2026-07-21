@@ -7,6 +7,7 @@ namespace {
 constexpr int64_t kDailyPlayStatsIntervalMs = 5 * 60'000;
 constexpr int64_t kAuthProbeIntervalMs = 5 * 60'000;
 constexpr int64_t kAuthProbeTimeoutMs = 30'000;
+constexpr int64_t kStationheadTrackBoundaryRefreshDelayMs = 52 * 60'000;
 
 bool CallbackAlive(const std::shared_ptr<std::atomic<bool>>& alive) {
   return alive && alive->load(std::memory_order_acquire);
@@ -63,6 +64,7 @@ StationheadStatus StationheadPlayer::Status() const {
 
 void StationheadPlayer::ResetNavigationRouteState() {
   audioPlaying_ = false;
+  trackBoundaryRefreshPending_ = false;
   nextTickAt_ = 0;
   nextAutoClickAt_ = 0;
 }
@@ -126,6 +128,47 @@ void StationheadPlayer::ApplyAudioPlaybackState(bool playing, const std::wstring
 
 void StationheadPlayer::NavigateCurrentUrl(int64_t nowMs, const std::wstring& reason) {
   NavigateStationheadUrl(nowMs, CurrentStationheadUrl(), reason, usingFallback_);
+}
+
+void StationheadPlayer::HandleTrackEnded(int64_t nowMs, bool retry) {
+  if (!retry) trackBoundaryRefreshPending_ = false;
+  if (!webview_ || spotifyAuthorization_ || loginRequired_ ||
+      recreating_.load(std::memory_order_relaxed) ||
+      navigationInFlight_.load(std::memory_order_acquire) || lastReloadAt_ <= 0) {
+    trackBoundaryRefreshPending_ = false;
+    return;
+  }
+  {
+    std::lock_guard lock(mutex_);
+    if (status_.navigating) {
+      trackBoundaryRefreshPending_ = false;
+      return;
+    }
+  }
+
+  if (retry) {
+    if (!trackBoundaryRefreshPending_) return;
+  } else {
+    if (nowMs - lastReloadAt_ < kStationheadTrackBoundaryRefreshDelayMs) return;
+    trackBoundaryRefreshPending_ = true;
+  }
+
+  if (!window_ || !IsWindow(window_)) {
+    trackBoundaryRefreshPending_ = false;
+    return;
+  }
+  const UINT readyMessage = IsSecondary()
+      ? WM_HP_SECONDARY_RELOAD_READY
+      : WM_HP_PRIMARY_RELOAD_READY;
+  if (SendMessageW(window_, readyMessage, 0, 0) == 0) {
+    log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
+              L" track-boundary refresh waiting for the other window's audio");
+    return;
+  }
+
+  trackBoundaryRefreshPending_ = false;
+  lastReloadAt_ = nowMs;
+  NavigateCurrentUrl(nowMs, L"track-boundary authentication refresh");
 }
 
 void StationheadPlayer::TryStartInitialNavigation() {
@@ -454,13 +497,6 @@ void StationheadPlayer::Tick(int64_t nowMs) {
     return;
   }
 
-  if (nowMs - lastReloadAt_ >= kStationheadSessionRefreshIntervalMs) {
-    lastReloadAt_ = nowMs;
-    NavigateCurrentUrl(nowMs, L"periodic authentication refresh");
-    nextTickAt_ = nowMs + 1'000;
-    return;
-  }
-
   int64_t next = nowMs + 30 * 60'000;
   const auto consider = [&](int64_t deadline) {
     if (deadline <= nowMs) next = nowMs + 1'000;
@@ -512,9 +548,11 @@ void StationheadPlayer::OpenSpotifyAuthorization(const std::wstring& url) {
 }
 
 void StationheadPlayer::FinishSpotifyAuthorization(const std::wstring& detail) {
+  trackBoundaryRefreshPending_ = false;
   spotifyAuthorization_ = false;
   {
     std::lock_guard lock(mutex_);
+    status_.navigating = false;
     status_.detail = detail;
   }
   if (webview_ && !stationNavigationStarted_) {
@@ -525,6 +563,7 @@ void StationheadPlayer::FinishSpotifyAuthorization(const std::wstring& detail) {
 }
 
 void StationheadPlayer::ShowForLogin() {
+  trackBoundaryRefreshPending_ = false;
   SelectTab(StationheadTabKind::Stationhead);
   log_.Warn(L"Stationhead " + std::wstring(RoleTag()) + L" login required; window visible");
 }

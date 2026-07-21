@@ -1,6 +1,7 @@
 #include "sh.h"
 #include "json_helpers.h"
 #include "sh_shared.h"
+#include "sh_track_boundary_script.h"
 #include <winrt/Windows.Data.Json.h>
 
 namespace hp {
@@ -21,6 +22,9 @@ std::wstring HResultHex(HRESULT hr) {
 
 void StationheadPlayer::ConfigureWebView() {
   const auto alive = createCallbackAlive_;
+  activeNavigationId_.store(0, std::memory_order_relaxed);
+  navigationInFlight_.store(false, std::memory_order_relaxed);
+  trackBoundaryRefreshPending_ = false;
   webViewConfigured_ = false;
   authCaptureScriptRegistrationComplete_ = false;
   startupScriptRegistrationComplete_ = false;
@@ -106,9 +110,11 @@ void StationheadPlayer::ConfigureWebView() {
     authCaptureScriptRegistrationComplete_ = true;
   }
   static const std::wstring primaryStartupScript =
-      StationheadAutoplayScript(L"__homepanelPrimaryStationhead", L"stationhead");
+      StationheadAutoplayScript(L"__homepanelPrimaryStationhead", L"stationhead") +
+      L"\n" + StationheadTrackBoundaryScript(L"stationhead");
   static const std::wstring secondaryStartupScript =
-      StationheadAutoplayScript(L"__homepanelSecondaryStationhead", L"secondary");
+      StationheadAutoplayScript(L"__homepanelSecondaryStationhead", L"secondary") +
+      L"\n" + StationheadTrackBoundaryScript(L"secondary");
   const std::wstring& startupScript = IsSecondary() ? secondaryStartupScript : primaryStartupScript;
   const HRESULT startupScriptResult = webview_->AddScriptToExecuteOnDocumentCreated(
       startupScript.c_str(),
@@ -128,6 +134,30 @@ void StationheadPlayer::ConfigureWebView() {
               L" startup script registration could not start " +
               HResultHex(startupScriptResult));
     startupScriptRegistrationComplete_ = true;
+  }
+
+  const HRESULT navigationStartingResult = webview_->add_NavigationStarting(
+      Callback<ICoreWebView2NavigationStartingEventHandler>(
+          [this, alive](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+            if (!CallbackAlive(alive) || !args) return S_OK;
+            trackBoundaryRefreshPending_ = false;
+            UINT64 navigationId = 0;
+            if (SUCCEEDED(args->get_NavigationId(&navigationId))) {
+              activeNavigationId_.store(navigationId, std::memory_order_release);
+              navigationInFlight_.store(true, std::memory_order_release);
+            } else {
+              activeNavigationId_.store(0, std::memory_order_release);
+              navigationInFlight_.store(true, std::memory_order_release);
+              log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
+                        L" navigation start omitted its ID; using legacy completion handling");
+            }
+            return S_OK;
+          }).Get(), &navigationStartingToken_);
+  if (FAILED(navigationStartingResult)) {
+    navigationStartingToken_ = {};
+    log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
+              L" navigation-start tracking unavailable " +
+              HResultHex(navigationStartingResult));
   }
 
   webview_->add_NewWindowRequested(
@@ -231,6 +261,14 @@ void StationheadPlayer::ConfigureWebView() {
               }
               if (message == prefix + L"-stopped") {
                 if (!nativeAudioTracking_) ApplyAudioPlaybackState(false, L"page heuristic");
+                return S_OK;
+              }
+              if (message == prefix + L"-track-ended") {
+                HandleTrackEnded(UnixMillis(), false);
+                return S_OK;
+              }
+              if (message == prefix + L"-track-boundary-retry") {
+                HandleTrackEnded(UnixMillis(), true);
                 return S_OK;
               }
               if (message == prefix + L"-start-visible") {
@@ -370,13 +408,29 @@ void StationheadPlayer::ConfigureWebView() {
   webview_->add_NavigationCompleted(
       Callback<ICoreWebView2NavigationCompletedEventHandler>(
           [this, alive](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
-            if (!CallbackAlive(alive)) return S_OK;
+            if (!CallbackAlive(alive) || !args) return S_OK;
+            UINT64 navigationId = 0;
+            const bool hasNavigationId =
+                SUCCEEDED(args->get_NavigationId(&navigationId));
+            const UINT64 activeNavigationId =
+                activeNavigationId_.load(std::memory_order_acquire);
+            if (hasNavigationId && activeNavigationId != 0 &&
+                navigationId != activeNavigationId) {
+              log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
+                        L" ignored stale navigation completion " +
+                        std::to_wstring(navigationId));
+              return S_OK;
+            }
+            if (!hasNavigationId) {
+              log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
+                        L" navigation completion omitted its ID; using legacy handling");
+            }
+            navigationInFlight_.store(false, std::memory_order_release);
+
             BOOL success = FALSE;
             COREWEBVIEW2_WEB_ERROR_STATUS webError{};
-            if (args) {
-              args->get_IsSuccess(&success);
-              args->get_WebErrorStatus(&webError);
-            }
+            args->get_IsSuccess(&success);
+            args->get_WebErrorStatus(&webError);
             if (spotifyAuthorization_) {
               std::lock_guard lock(mutex_);
               status_.navigating = false;
@@ -527,18 +581,22 @@ void StationheadPlayer::CloseWebView() {
         audioView->remove_IsDocumentPlayingAudioChanged(audioPlayingChangedToken_);
       }
     }
+    if (navigationStartingToken_.value) webview_->remove_NavigationStarting(navigationStartingToken_);
     if (navigationToken_.value) webview_->remove_NavigationCompleted(navigationToken_);
     if (newWindowToken_.value) webview_->remove_NewWindowRequested(newWindowToken_);
     if (webMessageToken_.value) webview_->remove_WebMessageReceived(webMessageToken_);
     if (processFailedToken_.value) webview_->remove_ProcessFailed(processFailedToken_);
     if (resourceRequestedToken_.value) webview_->remove_WebResourceRequested(resourceRequestedToken_);
   }
+  navigationStartingToken_ = {};
   navigationToken_ = {};
   newWindowToken_ = {};
   webMessageToken_ = {};
   processFailedToken_ = {};
   resourceRequestedToken_ = {};
   audioPlayingChangedToken_ = {};
+  activeNavigationId_.store(0, std::memory_order_relaxed);
+  navigationInFlight_.store(false, std::memory_order_relaxed);
   nativeAudioTracking_ = false;
   resourceBlockingArmed_ = false;
   identityWebview_ = nullptr;

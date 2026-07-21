@@ -2,7 +2,6 @@
 
 namespace hp {
 namespace {
-constexpr int64_t kTrackTransitionGraceMs = 12'000;
 
 bool RequiresInteractiveStationhead(const StationheadStatus& status) noexcept {
   return status.loginRequired || status.spotifyAuthorization || status.processFailed;
@@ -103,6 +102,14 @@ void StationheadHandleBase::Reconnect() {
   ApplyBounds();
 }
 
+void StationheadHandleBase::RetryPendingTrackBoundaryRefresh(int64_t nowMs) {
+  if (player_) player_->RetryPendingTrackBoundaryRefresh(nowMs);
+}
+
+void StationheadHandleBase::CancelPendingTrackBoundaryRefresh() noexcept {
+  if (player_) player_->CancelPendingTrackBoundaryRefresh();
+}
+
 void StationheadHandleBase::SetPlaybackFallback(
     bool active, const std::wstring& reason) {
   if (!player_) return;
@@ -181,7 +188,7 @@ bool StationheadHandleBase::SuppressTrackTransitionGap(
   }
   const int64_t now = UnixMillis();
   if (playbackMissingSinceAt_ == 0) playbackMissingSinceAt_ = now;
-  return now - playbackMissingSinceAt_ < kTrackTransitionGraceMs;
+  return now - playbackMissingSinceAt_ < kStationheadTrackTransitionGraceMs;
 }
 
 void StationheadHandleBase::ApplyAudioState() const noexcept {

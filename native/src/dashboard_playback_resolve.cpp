@@ -22,7 +22,7 @@ bool IsPlaybackFallbackUrl(const std::wstring& url, const std::wstring& fallback
          _wcsicmp(url.c_str(), fallbackUrl.c_str()) == 0;
 }
 
-bool UsesSecondaryPlaybackFeed(const StationheadStatus& state) {
+bool StationheadIsOnFallback(const StationheadStatus& state) {
   return IsPlaybackFallbackUrl(state.url, state.fallbackUrl) &&
          IsPlaybackFallbackUrl(state.secondaryUrl, state.fallbackUrl);
 }
@@ -130,13 +130,19 @@ ProjectedTrackPosition ResolveProjectedTrackPosition(const NativePlaybackProject
 bool PlaybackEndedWithoutNextTrack(const NativePlaybackProjection& projection, int64_t nowMs) {
   if (!projection.available || projection.setupRequired) return false;
   if (projection.ended) return true;
+  // The dashboard endpoint represents a completed queue with current_index=-1,
+  // playing=false and a past queue_end_at; it does not always emit `ended`.
+  // Check the absolute end before rejecting non-playing/no-current-track states.
+  if (!projection.queue.empty() && projection.queueEndAt > 0 &&
+      nowMs >= projection.queueEndAt) {
+    return true;
+  }
   if (!projection.playing || projection.queue.empty() || projection.currentIndex < 0 ||
       projection.currentIndex >= static_cast<int>(projection.queue.size())) {
     return false;
   }
   const size_t startIndex = static_cast<size_t>(projection.currentIndex);
   if (!TrackHasIdentity(projection.queue[startIndex])) return false;
-  if (projection.queueEndAt > 0 && nowMs >= projection.queueEndAt) return true;
 
   const ProjectedTrackPosition position = ResolveProjectedTrackPosition(projection, nowMs);
   if (position.index == startIndex) return false;
@@ -175,10 +181,9 @@ NativePlaybackRender Renderer::ResolveNativePlaybackLocked(size_t source, int64_
 }
 
 NativePlaybackRender Renderer::ResolveNativePlayback(size_t source, int64_t nowMs) const {
-  const size_t selectedSource = UsesSecondaryPlaybackFeed(nativeStationhead_) ? 1 : 0;
-  if (source != selectedSource) return {};
+  if (StationheadIsOnFallback(nativeStationhead_) || source != 0) return {};
   std::lock_guard lock(nativePlaybackMutex_);
-  return ResolveNativePlaybackLocked(source, nowMs);
+  return ResolveNativePlaybackLocked(0, nowMs);
 }
 
 NativePlaybackFeedStatus Renderer::NativePlaybackFeedStatusFor(size_t source,
@@ -202,11 +207,11 @@ NativePlaybackFeedStatus Renderer::NativePlaybackFeedStatusFor(size_t source,
 
 Renderer::NativePlaybackTickState Renderer::NativePlaybackTickStateFor(int64_t nowMs) const {
   NativePlaybackTickState state;
-  state.source = UsesSecondaryPlaybackFeed(nativeStationhead_) ? 1 : 0;
-  std::lock_guard lock(nativePlaybackMutex_);
-  if (state.source >= nativePlaybackUpdates_.size()) return state;
+  state.source = 0;
+  if (StationheadIsOnFallback(nativeStationhead_)) return state;
 
-  const NativePlaybackUpdate& update = nativePlaybackUpdates_[state.source];
+  std::lock_guard lock(nativePlaybackMutex_);
+  const NativePlaybackUpdate& update = nativePlaybackUpdates_[0];
   const NativePlaybackProjection& projection = update.projection;
   state.contentRevision = update.contentRevision;
   if (!projection.available || projection.queue.empty() || projection.currentIndex < 0 ||
