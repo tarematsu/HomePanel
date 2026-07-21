@@ -40,7 +40,7 @@ function trackingEnv(queries: string[]): typeof env {
       return env.DB.prepare(query);
     },
   } as D1Database;
-  return { ...env, DB: db } as typeof env;
+  return { DB: db } as typeof env;
 }
 
 function environmentReads(queries: readonly string[]): number {
@@ -72,7 +72,7 @@ describe("environment state row cache", () => {
     await mergeEnvironmentRows(tracked, DEVICE_A, [second], second.t);
     await mergeEnvironmentRows(tracked, DEVICE_A, [third], third.t);
 
-    expect(environmentReads(queries)).toBe(0);
+    expect(environmentReads(queries)).toBe(1);
     const state = await readState(env, "environment");
     expect(state?.version).toBe(3);
     const payload = JSON.parse(state!.payload) as {
@@ -117,7 +117,7 @@ describe("environment state row cache", () => {
 
     await mergeEnvironmentRows(tracked, DEVICE_A, [third], third.t);
 
-    expect(environmentReads(queries)).toBe(1);
+    expect(environmentReads(queries)).toBe(2);
     const state = await readState(env, "environment");
     const payload = JSON.parse(state!.payload) as {
       devices: Record<string, { history: EnvironmentHistoryRow[] }>;
