@@ -236,6 +236,7 @@ class Renderer {
     PlaybackProgress,
     Air,
     Weather,
+    Controls,
     Music,
     Energy,
     News
@@ -248,6 +249,7 @@ class Renderer {
   void DrawClockSection(HDC dc, const RECT& card);
   void DrawAirSection(HDC dc, const RECT& card);
   void DrawWeatherSection(HDC dc, const RECT& card);
+  void DrawControlsSection(HDC dc, const RECT& card);
   void DrawMusicSection(HDC dc, const RECT& card);
   void DrawEnergySection(HDC dc, const RECT& card);
   void DrawNewsSection(HDC dc, const RECT& card);
