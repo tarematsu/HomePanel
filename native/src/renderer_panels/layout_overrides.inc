@@ -1,7 +1,5 @@
 namespace {
 
-thread_local RECT gDashboardClockCard{};
-
 SidebarSections SplitRearrangedSidebarSections(const RECT& client) {
   const int height = std::max(1L, client.bottom - client.top);
   const int gap = std::max(6, height * 18 / 1000);
@@ -21,7 +19,6 @@ SidebarSections SplitRearrangedSidebarSections(const RECT& client) {
   // Electricity moved beside Music in the main column. Keep the legacy slot
   // outside the side client so old section plumbing cannot paint it twice.
   sections.energy = RECT{client.right, client.bottom, client.right + 1, client.bottom + 1};
-  gDashboardClockCard = sections.clock;
   return sections;
 }
 
@@ -47,32 +44,40 @@ MainSections SplitRearrangedMainSections(const RECT& client) {
   return sections;
 }
 
-RECT ClockControlsContent(const RECT& card) {
-  const RECT content = CardContentRect(card);
-  RECT controls{content.left, content.top + SpanY(content, 580), content.right, content.bottom};
-  if (controls.bottom <= controls.top) controls.bottom = controls.top + 1;
-  return controls;
-}
-
 RECT RearrangedClockTimeRectFromCard(const RECT& card) {
   const RECT content = CardContentRect(card);
-  RECT timeRect{content.left, content.top + SpanY(content, 180),
-                content.right, content.top + SpanY(content, 550)};
-  if (timeRect.right <= timeRect.left) timeRect.right = timeRect.left + 1;
-  if (timeRect.bottom <= timeRect.top) timeRect.bottom = timeRect.top + 1;
-  return timeRect;
+  // Include the footer in the clock tick invalidation so the moved status is
+  // refreshed without a separate polling or invalidation subsystem.
+  RECT dynamicRect{content.left, content.top + SpanY(content, 170),
+                   content.right, content.bottom};
+  if (dynamicRect.right <= dynamicRect.left) dynamicRect.right = dynamicRect.left + 1;
+  if (dynamicRect.bottom <= dynamicRect.top) dynamicRect.bottom = dynamicRect.top + 1;
+  return dynamicRect;
 }
 
 ControlsRects RearrangedControlsFromContent(const RECT&) {
-  return ControlsFromContent(ClockControlsContent(gDashboardClockCard));
+  // Clock-card update/restart controls were retired. Empty hit targets keep the
+  // shared side-window message plumbing inert without leaving invisible buttons.
+  return ControlsRects{};
+}
+
+std::wstring DashboardStatusTimeText(int64_t epochMs) {
+  if (epochMs <= 0) return L"--:--";
+  const std::time_t seconds = static_cast<std::time_t>(epochMs / 1000);
+  std::tm local{};
+  if (localtime_s(&local, &seconds) != 0) return L"--:--";
+  wchar_t text[16]{};
+  if (wcsftime(text, std::size(text), L"%H:%M", &local) == 0) return L"--:--";
+  return text;
 }
 
 #define HP_DRAW_CLOCK_WITH_CONTROLS(dc, card) do { \
   DrawSectionCard((dc), (card)); \
   const RECT hpClockContent = CardContentRect((card)); \
   SYSTEMTIME hpNow{}; GetLocalTime(&hpNow); \
-  RECT hpDateRect{hpClockContent.left, hpClockContent.top, hpClockContent.right, hpClockContent.top + SpanY(hpClockContent, 180)}; \
-  RECT hpTimeRect = RearrangedClockTimeRectFromCard((card)); \
+  RECT hpDateRect{hpClockContent.left, hpClockContent.top, hpClockContent.right, hpClockContent.top + SpanY(hpClockContent, 170)}; \
+  RECT hpTimeRect{hpClockContent.left, hpDateRect.bottom, hpClockContent.right, hpClockContent.top + SpanY(hpClockContent, 705)}; \
+  RECT hpStatusRect{hpClockContent.left, hpClockContent.top + SpanY(hpClockContent, 735), hpClockContent.right, hpClockContent.bottom}; \
   HGDIOBJ hpPreviousFont = SelectObject((dc), TierFont(FontTier::Medium)); \
   SetTextColor((dc), kWidgetMuted); \
   DrawTextInRect((dc), DateText(hpNow), hpDateRect, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER); \
@@ -82,31 +87,21 @@ ControlsRects RearrangedControlsFromContent(const RECT&) {
   SelectObject((dc), CachedUiFont(hpTimeFontHeight, FW_SEMIBOLD)); \
   SetTextColor((dc), kWidgetText); \
   DrawTextInRect((dc), TimeText(hpNow), hpTimeRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER); \
-  const ControlsRects hpControls = RearrangedControlsFromContent((card)); \
-  SelectObject((dc), TierFont(FontTier::Small)); \
-  DrawWidgetCard((dc), hpControls.update, kWidgetSurfaceAlt, CardRadius(hpControls.update)); \
-  DrawWidgetCard((dc), hpControls.restart, kWidgetSurfaceAlt, CardRadius(hpControls.restart)); \
-  SetTextColor((dc), kWidgetText); \
-  DrawTextInRect((dc), L"更新", hpControls.update, DT_CENTER | DT_SINGLELINE | DT_VCENTER); \
-  DrawTextInRect((dc), L"再起動", hpControls.restart, DT_CENTER | DT_SINGLELINE | DT_VCENTER); \
-  if (!nativeToast_.empty()) { \
-    SetTextColor((dc), kWidgetWarning); \
-    DrawTextInRect((dc), nativeToast_, hpControls.status, DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS); \
-  } else { \
-    std::wstring hpRadarTime; \
-    bool hpHasFrame = false; \
-    { std::lock_guard hpLock(radarFrameMutex_); hpRadarTime = radarTimeText_; hpHasFrame = radarFrameBitmap_ != nullptr; } \
-    const std::wstring hpStatus = hpHasFrame ? L"レーダー更新: " + (hpRadarTime.empty() ? L"--:--" : hpRadarTime) : L"レーダーを準備中"; \
-    const int hpStatusHeight = static_cast<int>(hpControls.status.bottom - hpControls.status.top); \
-    RECT hpFirstLine = hpControls.status; hpFirstLine.bottom = hpControls.status.top + hpStatusHeight / 2; \
-    RECT hpSecondLine = hpControls.status; hpSecondLine.top = hpFirstLine.bottom; \
-    SetTextColor((dc), kWidgetMuted); \
-    DrawTextInRect((dc), hpStatus, hpFirstLine, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER); \
-    if (!nativeAppVersion_.empty()) { \
-      SetTextColor((dc), kWidgetSubtle); \
-      DrawTextInRect((dc), L"バージョン " + nativeAppVersion_, hpSecondLine, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER); \
-    } \
+  const NativeMinuteFactsProjection hpStationheadStatus = NativeMinuteFactsSnapshot(); \
+  std::wstring hpStateText = L"状態取得待ち"; \
+  if (hpStationheadStatus.available) { \
+    if (hpStationheadStatus.isPaused) hpStateText = L"一時停止"; \
+    else if (hpStationheadStatus.isBroadcasting) hpStateText = L"配信中 " + std::to_wstring(hpStationheadStatus.listenerCount); \
+    else hpStateText = L"停止中"; \
   } \
+  const std::wstring hpStatusTime = L"生成" + DashboardStatusTimeText(hpStationheadStatus.minuteAt) + L" 取得" + DashboardStatusTimeText(hpStationheadStatus.fetchedAt); \
+  const LONG hpStatusMiddle = hpStatusRect.top + std::max<LONG>(1, (hpStatusRect.bottom - hpStatusRect.top) / 2); \
+  RECT hpStateRect = hpStatusRect; hpStateRect.bottom = hpStatusMiddle; \
+  RECT hpStatusTimeRect = hpStatusRect; hpStatusTimeRect.top = hpStatusMiddle; \
+  SelectObject((dc), TierFont(FontTier::Small)); \
+  SetTextColor((dc), hpStationheadStatus.available ? kWidgetMuted : kWidgetSubtle); \
+  DrawTextInRect((dc), hpStateText, hpStateRect, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER); \
+  DrawTextInRect((dc), hpStatusTime, hpStatusTimeRect, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER); \
   SelectObject((dc), hpPreviousFont); \
 } while (false)
 
