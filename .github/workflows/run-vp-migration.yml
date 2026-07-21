@@ -1,0 +1,208 @@
+name: Run VP workspace migration
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/run-vp-migration.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: run-vp-workspace-migration
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out migration branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/integrate-vp-video
+          fetch-depth: 0
+
+      - name: Fetch VP snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/vp
+          git clone --depth 1 https://github.com/tarematsu/VP.git /tmp/vp
+          echo "VP_SHA=$(git -C /tmp/vp rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Copy VP into video workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf video
+          mkdir -p video
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/workflows/' \
+            /tmp/vp/ video/
+          find video/.github -type d -empty -delete 2>/dev/null || true
+
+      - name: Convert VP workflows for the HP monorepo
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'ruamel.yaml>=0.18,<0.19'
+          python3 <<'PY'
+          from pathlib import Path
+          from ruamel.yaml import YAML
+          from ruamel.yaml.comments import CommentedMap, CommentedSeq
+
+          root = Path.cwd()
+          source = Path('/tmp/vp/.github/workflows')
+          destination = root / '.github' / 'workflows'
+          destination.mkdir(parents=True, exist_ok=True)
+          for stale in destination.glob('video-*.y*ml'):
+              stale.unlink()
+
+          yaml = YAML()
+          yaml.version = (1, 2)
+          yaml.preserve_quotes = True
+          yaml.width = 120
+          yaml.indent(mapping=2, sequence=4, offset=2)
+
+          def prefixed_path(value: str, workflow_name: str) -> str:
+              value = value.strip()
+              if not value:
+                  return value
+              if value.startswith('.github/workflows/'):
+                  return f'.github/workflows/{workflow_name}'
+              if value.startswith('video/'):
+                  return value
+              return f'video/{value}'
+
+          def ensure_event_paths(events, event_name: str, workflow_name: str) -> None:
+              if event_name not in events:
+                  return
+              config = events[event_name]
+              if config is None:
+                  config = CommentedMap()
+                  events[event_name] = config
+              if not isinstance(config, dict):
+                  return
+              existing = config.get('paths')
+              paths = []
+              if existing:
+                  paths.extend(prefixed_path(str(value), workflow_name) for value in existing)
+              else:
+                  paths.extend(['video/**', f'.github/workflows/{workflow_name}'])
+              deduplicated = CommentedSeq()
+              for value in paths:
+                  if value not in deduplicated:
+                      deduplicated.append(value)
+              config['paths'] = deduplicated
+
+          def prefix_artifact_path(value):
+              if not isinstance(value, str):
+                  return value
+              converted = []
+              for line in value.splitlines():
+                  stripped = line.strip()
+                  if not stripped or stripped.startswith('/') or stripped.startswith('${{') or stripped.startswith('video/'):
+                      converted.append(line)
+                  else:
+                      converted.append(f'video/{stripped}')
+              return '\n'.join(converted)
+
+          workflows = sorted(source.glob('*.y*ml'))
+          if not workflows:
+              raise RuntimeError('No VP workflows found')
+
+          for workflow in workflows:
+              target_name = f'video-{workflow.name}'
+              with workflow.open('r', encoding='utf-8') as handle:
+                  data = yaml.load(handle)
+              if not isinstance(data, dict):
+                  raise RuntimeError(f'Unexpected workflow structure: {workflow}')
+
+              data['name'] = f"Video · {data.get('name', workflow.stem)}"
+              events = data.get('on')
+              if isinstance(events, dict):
+                  ensure_event_paths(events, 'push', target_name)
+                  ensure_event_paths(events, 'pull_request', target_name)
+
+              concurrency = data.get('concurrency')
+              if isinstance(concurrency, str):
+                  data['concurrency'] = f'video-{concurrency}'
+              elif isinstance(concurrency, dict) and concurrency.get('group'):
+                  concurrency['group'] = f"video-{concurrency['group']}"
+
+              jobs = data.get('jobs') or {}
+              for job in jobs.values():
+                  if not isinstance(job, dict):
+                      continue
+                  defaults = job.setdefault('defaults', CommentedMap())
+                  run_defaults = defaults.setdefault('run', CommentedMap())
+                  run_defaults['working-directory'] = 'video'
+
+                  for step in job.get('steps') or []:
+                      if not isinstance(step, dict):
+                          continue
+                      uses = str(step.get('uses', ''))
+                      if uses.startswith('actions/upload-artifact@') or uses.startswith('actions/download-artifact@'):
+                          options = step.get('with')
+                          if isinstance(options, dict) and 'path' in options:
+                              options['path'] = prefix_artifact_path(options['path'])
+
+              target = destination / target_name
+              with target.open('w', encoding='utf-8') as handle:
+                  yaml.dump(data, handle)
+
+          for workflow in sorted(destination.glob('video-*.y*ml')):
+              with workflow.open('r', encoding='utf-8') as handle:
+                  yaml.load(handle)
+          PY
+
+      - name: Record migration boundary
+        shell: bash
+        run: |
+          cat > video/MIGRATION.md <<EOF
+          # VP migration
+
+          This directory is the imported snapshot of \`tarematsu/VP\`.
+
+          - Source commit: \`${VP_SHA}\`
+          - Imported into HP as: \`video/\`
+          - Cloudflare Worker remains: \`videoscraper\`
+          - HomePanel Worker remains: \`homepanel-cloud\`
+          - D1 databases, queues, assets, browser binding, cron, and deployment workflows remain separate.
+
+          Operational workflows live at the HP repository root as \`.github/workflows/video-*.yml\` because GitHub only executes workflows from the root workflow directory.
+          EOF
+
+      - name: Validate imported workspace
+        shell: bash
+        working-directory: video
+        run: |
+          set -euo pipefail
+          test -f package.json
+          test -f package-lock.json
+          test -f wrangler.jsonc
+          test -f src/entry.js
+          test -d public
+          test -d migrations
+          npm install --no-audit --no-fund
+          npm run check:syntax
+          npm run check:audit
+          npm test
+          npm run check:bundle
+
+      - name: Commit migrated workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -f .github/workflows/migrate-vp-into-video.yml || true
+          git add video .github/workflows/video-*.yml
+          git commit -m "Integrate VP as video workspace"
+          git push origin HEAD:agent/integrate-vp-video
