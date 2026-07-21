@@ -104,23 +104,22 @@ function shardStream(prefix: Uint8Array, responses: readonly Response[]): Readab
       try {
         for (const response of responses) {
           if (!response.body) throw new Error("radar bundle shard body is missing");
-          activeReader = response.body.getReader();
-          for (;;) {
-            const chunk = await activeReader.read();
-            if (chunk.done) break;
-            if (chunk.value?.length) controller.enqueue(chunk.value);
+          const reader = response.body.getReader();
+          activeReader = reader;
+          try {
+            for (;;) {
+              const chunk = await reader.read();
+              if (chunk.done) break;
+              if (chunk.value?.length) controller.enqueue(chunk.value);
+            }
+          } finally {
+            reader.releaseLock();
+            if (activeReader === reader) activeReader = null;
           }
-          activeReader.releaseLock();
-          activeReader = null;
         }
         controller.close();
       } catch (error) {
         controller.error(error);
-      } finally {
-        if (activeReader) {
-          activeReader.releaseLock();
-          activeReader = null;
-        }
       }
     },
     async cancel(reason) {
@@ -202,6 +201,7 @@ export async function radarBundleShardResponse(request: Request, env: Env): Prom
       headers: {
         "Content-Type": "application/octet-stream",
         "Content-Length": String(byteLength),
+        "X-HomePanel-Radar-Shard-Bytes": String(byteLength),
       },
     });
   } catch (error) {
@@ -225,7 +225,10 @@ async function fetchShardResponse(
     await response.body?.cancel();
     throw new Error(`radar bundle shard ${index} failed: HTTP ${response.status}`);
   }
-  const byteLength = Number(response.headers.get("Content-Length"));
+  const byteLength = Number(
+    response.headers.get("X-HomePanel-Radar-Shard-Bytes")
+    ?? response.headers.get("Content-Length"),
+  );
   if (!response.body || !Number.isSafeInteger(byteLength) || byteLength <= 0) {
     await response.body?.cancel();
     throw new Error(`radar bundle shard ${index} length is invalid`);
