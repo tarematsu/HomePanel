@@ -43,11 +43,28 @@ jobs:
       - name: Install video dependencies
         working-directory: video
         run: npm install --no-audit --no-fund
-      - name: Validate HomePanel code and tests
+      - name: Validate HomePanel code
         working-directory: cloud
+        shell: bash
         run: |
-          npm run check
-          npm test
+          set -o pipefail
+          npm run check 2>&1 | tee code-validation.log
+      - name: Validate HomePanel tests
+        working-directory: cloud
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-validation.log
+      - name: Upload HomePanel validation output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: homepanel-unified-validation-${{ github.run_id }}
+          path: |
+            cloud/code-validation.log
+            cloud/test-validation.log
+          if-no-files-found: warn
+          retention-days: 3
       - name: Validate video code and tests
         working-directory: video
         run: |
