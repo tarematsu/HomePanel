@@ -10,6 +10,7 @@ const MAX_UPSTREAM_CONCURRENCY = 4;
 const MAX_SHARD_CONCURRENCY = 4;
 const MAX_BUNDLE_BYTES = 16 * 1024 * 1024;
 const PATH_ENCODER = new TextEncoder();
+const R2_LATEST_BUNDLE_KEY = "radar-bundles/v1/latest.hpb";
 
 interface BundleEnv extends Env {
   SCHEDULER_COORDINATOR?: DurableObjectNamespace;
@@ -126,6 +127,66 @@ function shardStream(prefix: Uint8Array, responses: readonly Response[]): Readab
       await activeReader?.cancel(reason);
     },
   });
+}
+
+function bundleResponse(body: BodyInit, byteLength: number, recordCount: number): Response {
+  return new Response(body, {
+    headers: {
+      "Content-Type": "application/vnd.homepanel.radar-bundle",
+      "Cache-Control": "public, max-age=1800, immutable",
+      "Content-Length": String(byteLength),
+      "X-HomePanel-Radar-Records": String(recordCount),
+    },
+  });
+}
+
+async function r2BundleResponse(env: Env, baseTime: string, recordCount: number): Promise<Response | null> {
+  if (!env.DATA_BUCKET) return null;
+  try {
+    const object = await env.DATA_BUCKET.get(R2_LATEST_BUNDLE_KEY);
+    if (!object) return null;
+    const storedBaseTime = object.customMetadata?.baseTime;
+    const storedRecords = Number(object.customMetadata?.records);
+    if (storedBaseTime !== baseTime || storedRecords !== recordCount || object.size <= 0) {
+      await object.body.cancel();
+      return null;
+    }
+    return bundleResponse(object.body, object.size, recordCount);
+  } catch (error) {
+    console.error("radar bundle R2 read failed", error instanceof Error ? error.message : String(error));
+    return null;
+  }
+}
+
+async function cacheBundle(
+  cache: Cache,
+  cacheKey: Request,
+  env: Env,
+  response: Response,
+  baseTime: string,
+  recordCount: number,
+): Promise<void> {
+  const tasks: Promise<unknown>[] = [cache.put(cacheKey, response.clone())];
+  if (env.DATA_BUCKET && response.body) {
+    const r2Response = response.clone();
+    if (r2Response.body) {
+      tasks.push(env.DATA_BUCKET.put(R2_LATEST_BUNDLE_KEY, r2Response.body, {
+        httpMetadata: { contentType: "application/vnd.homepanel.radar-bundle" },
+        customMetadata: {
+          baseTime,
+          records: String(recordCount),
+        },
+      }));
+    }
+  }
+  const results = await Promise.allSettled(tasks);
+  for (const result of results) {
+    if (result.status === "rejected") {
+      console.error("radar bundle cache write failed", result.reason instanceof Error
+        ? result.reason.message
+        : String(result.reason));
+    }
+  }
 }
 
 function pathnameFromTileUrl(value: unknown): string | null {
@@ -245,13 +306,22 @@ export async function radarBundleResponseForPayload(
 ): Promise<Response> {
   const paths = radarBundlePaths(payload, baseTime);
   if (!paths.length) return Response.json({ error: "radar_bundle_unavailable" }, { status: 404 });
-  const namespace = (env as BundleEnv).SCHEDULER_COORDINATOR;
-  if (!namespace) return Response.json({ error: "radar_bundle_unavailable" }, { status: 503 });
 
   const cache = defaultCache();
   const cacheKey = new Request(requestUrl, { method: "GET" });
   const cached = await cache.match(cacheKey);
   if (cached) return cached;
+
+  const stored = await r2BundleResponse(env, baseTime, paths.length);
+  if (stored) {
+    ctx.waitUntil(cache.put(cacheKey, stored.clone()).catch((error: unknown) => {
+      console.error("radar bundle edge cache write failed", error instanceof Error ? error.message : String(error));
+    }));
+    return stored;
+  }
+
+  const namespace = (env as BundleEnv).SCHEDULER_COORDINATOR;
+  if (!namespace) return Response.json({ error: "radar_bundle_unavailable" }, { status: 503 });
 
   const chunks: string[][] = [];
   for (let offset = 0; offset < paths.length; offset += MAX_PATHS_PER_SHARD) {
@@ -278,17 +348,12 @@ export async function radarBundleResponseForPayload(
     return Response.json({ error: "radar_bundle_too_large" }, { status: 502 });
   }
 
-  const response = new Response(shardStream(header, shards.map(shard => shard.response)), {
-    headers: {
-      "Content-Type": "application/vnd.homepanel.radar-bundle",
-      "Cache-Control": "public, max-age=1800, immutable",
-      "Content-Length": String(totalBytes),
-      "X-HomePanel-Radar-Records": String(paths.length),
-    },
-  });
-  ctx.waitUntil(cache.put(cacheKey, response.clone()).catch((error: unknown) => {
-    console.error("radar bundle cache put failed", error instanceof Error ? error.message : String(error));
-  }));
+  const response = bundleResponse(
+    shardStream(header, shards.map(shard => shard.response)),
+    totalBytes,
+    paths.length,
+  );
+  ctx.waitUntil(cacheBundle(cache, cacheKey, env, response, baseTime, paths.length));
   return response;
 }
 
