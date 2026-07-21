@@ -54,7 +54,7 @@ jobs:
 
       - name: Install Wrangler
         working-directory: video
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
 
       - name: Download migration evidence
         uses: actions/download-artifact@v4
