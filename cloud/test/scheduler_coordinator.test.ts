@@ -34,6 +34,8 @@ async function alarmTime(stub: DurableObjectStub): Promise<number | null> {
 }
 
 async function runAlarm(stub: DurableObjectStub): Promise<void> {
+  // Invoke the handler directly so the test verifies scheduler behavior rather
+  // than depending on the test runtime's wall-clock alarm dispatch semantics.
   await runInDurableObject(stub, async instance => {
     await (instance as AlarmInstance).alarm();
   });
