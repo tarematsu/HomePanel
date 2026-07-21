@@ -50,6 +50,15 @@ interface CachedEnvironmentRow {
 
 const ENVIRONMENT_CACHE = new WeakMap<object, CachedEnvironmentRow>();
 
+function cacheKey(env: Env): object | null {
+  return env.DATA_BUCKET ? env.DATA_BUCKET as unknown as object : null;
+}
+
+export function invalidateR2EnvironmentCache(env: Env): void {
+  const key = cacheKey(env);
+  if (key) ENVIRONMENT_CACHE.delete(key);
+}
+
 function bucketKey(observedAt: number): number {
   return Math.floor(observedAt / ENVIRONMENT_BUCKET_MS) * ENVIRONMENT_BUCKET_MS;
 }
@@ -119,14 +128,16 @@ function parseDocument(value: unknown): EnvironmentDocument | null {
     selectedDeviceId: root.selectedDeviceId,
     lastSequences,
     devices,
-    row: { ...(root.row as StateRow) },
+    row: { ...root.row },
   };
 }
 
 async function sha256Hex(value: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", UTF8_ENCODER.encode(value)));
   let output = "";
-  for (const byte of digest) output += HEX_DIGITS[byte >>> 4] + HEX_DIGITS[byte & 0x0f];
+  for (const byte of digest) {
+    output += HEX_DIGITS.charAt(byte >>> 4) + HEX_DIGITS.charAt(byte & 0x0f);
+  }
   return output;
 }
 
@@ -161,6 +172,14 @@ function historyPoint(bucket: StoredBucket): Record<string, number | null> {
   };
 }
 
+function copyDevices(previous: EnvironmentDocument | null): Record<string, StoredDevice> {
+  const devices: Record<string, StoredDevice> = {};
+  for (const [id, device] of Object.entries(previous?.devices ?? {})) {
+    devices[id] = { deviceId: id, buckets: device.buckets.map(bucket => ({ ...bucket })) };
+  }
+  return devices;
+}
+
 async function nextDocument(
   previous: EnvironmentDocument | null,
   env: Env,
@@ -168,10 +187,7 @@ async function nextDocument(
   samples: readonly TelemetrySample[],
   now: number,
 ): Promise<EnvironmentDocument> {
-  const devices: Record<string, StoredDevice> = {};
-  for (const [id, device] of Object.entries(previous?.devices ?? {})) {
-    devices[id] = { deviceId: id, buckets: device.buckets.map(bucket => ({ ...bucket })) };
-  }
+  const devices = copyDevices(previous);
   const device = devices[deviceId] ?? { deviceId, buckets: [] };
   const byTime = new Map(device.buckets.map(bucket => [bucket.bucketAt, bucket]));
   for (const sample of samples) {
@@ -192,12 +208,12 @@ async function nextDocument(
     }
     addSample(bucket, sample);
   }
+
   const cutoff = now - ENVIRONMENT_HISTORY_MS;
   device.buckets = [...byTime.values()]
     .filter(bucket => bucket.bucketAt >= cutoff)
     .sort((left, right) => left.bucketAt - right.bucketAt);
   devices[deviceId] = device;
-
   for (const stored of Object.values(devices)) {
     stored.buckets = stored.buckets
       .filter(bucket => bucket.bucketAt >= cutoff)
@@ -205,10 +221,11 @@ async function nextDocument(
   }
 
   const configuredPrimary = env.HOMEPANEL_PRIMARY_DEVICE_ID?.trim() ?? "";
+  const previousSelected = previous?.selectedDeviceId ?? "";
   const selectedDeviceId = devices[configuredPrimary]
     ? configuredPrimary
-    : devices[previous?.selectedDeviceId ?? ""]
-      ? previous!.selectedDeviceId
+    : devices[previousSelected]
+      ? previousSelected
       : deviceId;
   const publicDevices = Object.fromEntries(Object.entries(devices).map(([id, stored]) => [
     id,
@@ -236,7 +253,10 @@ async function nextDocument(
     : 1;
   const observedAt = samples.reduce((maximum, sample) => Math.max(maximum, sample.observedAt), 0) || now;
   const lastSequences = { ...(previous?.lastSequences ?? {}) };
-  const highest = samples.reduce((maximum, sample) => Math.max(maximum, sample.sequence), lastSequences[deviceId] ?? 0);
+  const highest = samples.reduce(
+    (maximum, sample) => Math.max(maximum, sample.sequence),
+    lastSequences[deviceId] ?? 0,
+  );
   lastSequences[deviceId] = highest;
 
   return {
@@ -269,14 +289,14 @@ async function readDocument(bucket: R2Bucket): Promise<{ document: EnvironmentDo
 export async function readR2EnvironmentState(env: Env): Promise<StateRow | null> {
   const bucket = env.DATA_BUCKET;
   if (!bucket) return null;
-  const cacheKey = bucket as unknown as object;
-  const cached = ENVIRONMENT_CACHE.get(cacheKey);
+  const key = bucket as unknown as object;
+  const cached = ENVIRONMENT_CACHE.get(key);
   const now = Date.now();
   if (cached && cached.expiresAt > now) return cached.row;
   try {
     const { document } = await readDocument(bucket);
     const row = document?.row ?? null;
-    ENVIRONMENT_CACHE.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, row });
+    ENVIRONMENT_CACHE.set(key, { expiresAt: now + CACHE_TTL_MS, row });
     return row;
   } catch (error) {
     console.error("R2 environment read failed", error instanceof Error ? error.message : String(error));
