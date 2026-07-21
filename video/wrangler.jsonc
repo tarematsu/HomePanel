@@ -1,12 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "videoscraper",
+  "name": "homepanel-video-local-only",
   "main": "src/entry.js",
   "compatibility_date": "2026-06-30",
   "compatibility_flags": [
     "nodejs_compat"
   ],
-  "workers_dev": true,
+  "workers_dev": false,
   "preview_urls": false,
   "keep_vars": true,
   "placement": {
@@ -26,29 +26,11 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "twivideo-swiper-db",
-      "database_id": "99d2dea5-bfdc-4e79-b3a2-65abc4c0ea80",
+      "database_name": "homepanel-video-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
   ],
-  "queues": {
-    "producers": [
-      {
-        "binding": "MANUAL_IMPORT_QUEUE",
-        "queue": "videoscraper-manual-imports"
-      }
-    ],
-    "consumers": [
-      {
-        "queue": "videoscraper-manual-imports",
-        "max_batch_size": 1,
-        "max_batch_timeout": 0,
-        "max_retries": 5,
-        "max_concurrency": 1,
-        "dead_letter_queue": "videoscraper-manual-imports-dlq"
-      }
-    ]
-  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
