@@ -1,30 +1,4 @@
-#include "web_renderer.h"
-#include "wic_image.h"
-
-namespace hp {
-namespace {
-constexpr int kNativeSideId = 101;
-constexpr int kNativeMainId = 102;
-constexpr int kNativeRadarId = 108;
-
-constexpr COLORREF kWidgetBackground = kNativeDashboardBackground;
-constexpr COLORREF kWidgetSurface = RGB(20, 26, 36);
-constexpr COLORREF kWidgetSurfaceAlt = RGB(31, 39, 52);
-constexpr COLORREF kWidgetOutline = RGB(43, 54, 69);
-constexpr COLORREF kWidgetText = RGB(238, 242, 248);
-constexpr COLORREF kWidgetMuted = RGB(159, 171, 189);
-constexpr COLORREF kWidgetSubtle = RGB(110, 122, 141);
-
-constexpr COLORREF kWidgetBlueMuted = RGB(100, 176, 255);
-constexpr COLORREF kWidgetGreen = RGB(48, 209, 88);
-constexpr COLORREF kWidgetOrange = RGB(255, 159, 10);
-constexpr COLORREF kWidgetCyan = RGB(50, 173, 230);
-constexpr COLORREF kWidgetBlack = RGB(0, 0, 0);
-constexpr COLORREF kWidgetTrack = RGB(42, 52, 66);
-constexpr COLORREF kWidgetWarning = RGB(255, 214, 10);
-constexpr COLORREF kWidgetDanger = RGB(255, 69, 58);
-constexpr COLORREF kWidgetDangerSurface = RGB(52, 34, 37);
-constexpr COLORREF kWidgetSuccessSurface = RGB(26, 52, 38);
+// Shared drawing and layout primitives for the native dashboard.
 
 HBRUSH CachedSolidBrush(COLORREF color) {
   static std::map<COLORREF, HBRUSH> cache;
@@ -65,6 +39,7 @@ void PlaceNativeWindow(HWND hwnd, const RECT& rect, bool visible) {
 int SpanX(const RECT& rect, int permille) {
   return static_cast<int>((rect.right - rect.left) * permille / 1000);
 }
+
 int SpanY(const RECT& rect, int permille) {
   return static_cast<int>((rect.bottom - rect.top) * permille / 1000);
 }
@@ -136,8 +111,6 @@ int RecentStationheadPlayIncrease(const std::vector<StationheadPlayHistorySample
   if (baseline == history.begin()) return -1;
 
   const int delta = latest.value - std::prev(baseline)->value;
-  // The daily counter can reset at midnight; in that case the current value
-  // is the number accumulated since the reset rather than a negative delta.
   return delta >= 0 ? delta : latest.value;
 }
 
@@ -365,11 +338,6 @@ struct SidebarSections {
 SidebarSections SplitSidebarSections(const RECT& client) {
   const int height = std::max(1L, client.bottom - client.top);
   const int gap = std::max(6, height * 18 / 1000);
-
-  // The sidebar and main panel share the same inner dashboard height. Mirror
-  // SplitMainSections' radar/news proportions so the controls card lines up
-  // with the news card, then split the rest evenly across the clock,
-  // weather-forecast, and energy cards so all three share one height.
   const int radarHeight = height * 600 / 1000;
   const int mainGap = std::max(6, height * 18 / 1000);
   const int mainHeight = std::max(1, height - radarHeight - mainGap);
@@ -415,40 +383,11 @@ MainSections SplitMainSections(const RECT& client) {
   return sections;
 }
 
-struct ControlsRects {
-  RECT update{};
-  RECT restart{};
-  RECT status{};
-};
-
-ControlsRects ControlsFromContent(const RECT& content) {
-  const int height = std::max(1L, content.bottom - content.top);
-  const int width = std::max(1L, content.right - content.left);
-  const int gap = std::max(6, SpanX(content, 35));
-  const int buttonHeight = std::clamp(height * 45 / 100, 28, 54);
-  const int statusLineHeight = std::clamp(height * 20 / 100, 14, 24);
-  const int statusGap = std::max(4, statusLineHeight / 2);
-  const int statusHeight = std::min(
-      statusLineHeight * 2, std::max(1, height - buttonHeight - statusGap));
-  const int groupHeight = buttonHeight + statusGap + statusHeight;
-  const int groupTop = content.top + std::max(0, (height - groupHeight) / 2);
-  const int buttonWidth = std::max(1, (width - gap) / 2);
-  ControlsRects rects;
-  rects.update = RECT{content.left, groupTop, content.left + buttonWidth,
-                      groupTop + buttonHeight};
-  rects.restart = RECT{rects.update.right + gap, groupTop, content.right,
-                       groupTop + buttonHeight};
-  rects.status = RECT{content.left, rects.update.bottom + statusGap,
-                      content.right, rects.update.bottom + statusGap + statusHeight};
-  if (rects.status.bottom <= rects.status.top) rects.status.bottom = rects.status.top + 1;
-  return rects;}
-
 struct MusicRowRects {
   RECT row{};
   RECT artwork{};
   RECT button{};
   RECT muteButton{};
-  RECT status{};
 };
 
 MusicRowRects MusicRowFromBody(const RECT& body) {
@@ -464,15 +403,12 @@ MusicRowRects MusicRowFromBody(const RECT& body) {
       std::clamp(rowHeight * 28 / 100, 20, 44),
       std::max(1, (rowHeight - buttonGap) / 2));
   const int buttonWidth = std::clamp(SpanX(body, 170), 64, 140);
-  const int statusHeight = std::clamp(rowHeight * 14 / 100, 16, 30);
-  const int clusterHeight = buttonHeight * 2 + statusHeight + buttonGap * 2;
+  const int clusterHeight = buttonHeight * 2 + buttonGap;
   const int clusterTop = rects.row.top + std::max(0, (rowHeight - clusterHeight) / 2);
   rects.button = RECT{rects.row.right - buttonWidth, clusterTop, rects.row.right,
                       clusterTop + buttonHeight};
   rects.muteButton = RECT{rects.row.right - buttonWidth, rects.button.bottom + buttonGap,
                           rects.row.right, rects.button.bottom + buttonGap + buttonHeight};
-  rects.status = RECT{rects.row.right - buttonWidth, rects.muteButton.bottom + buttonGap,
-                      rects.row.right, rects.muteButton.bottom + buttonGap + statusHeight};
   return rects;
 }
 
@@ -538,5 +474,3 @@ HDC NativePanelMemoryDc(HDC compatibleDc) {
 
 constexpr UINT_PTR kNativePanelTickTimer = 1;
 constexpr UINT kNativePanelTickMs = 1'000;
-}
-
