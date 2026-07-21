@@ -1,5 +1,6 @@
 import { radarBundleShardResponse } from "./radar_bundle";
-import { ensureSystemJobs, runSchedulerTick } from "./scheduler";
+import { ensureSystemJobs } from "./scheduler";
+import { runSchedulerTickLowWrite } from "./scheduler_tick";
 import type { Env } from "./sources";
 
 const COORDINATOR_NAME = "global";
@@ -134,17 +135,16 @@ export class SchedulerCoordinator {
 
   async alarm(): Promise<void> {
     try {
-      // Bound each Durable Object invocation to one scheduled job. This keeps
-      // CPU predictable while preserving the existing lease and retry model.
-      await runSchedulerTick(this.env);
+      // The Durable Object serializes alarms, so a separate D1 lease write is
+      // unnecessary. One compare-and-set completion advances the selected job.
+      await runSchedulerTickLowWrite(this.env);
     } catch (error) {
       console.error("Scheduler alarm job failed", error instanceof Error ? error.message : String(error));
     }
 
     try {
       // Re-evaluate the indexed jobs table after each job. Remaining due work
-      // receives the next alarm after the one-second floor without changing
-      // per-job D1 writes or creating extra HTTP requests.
+      // receives the next alarm after the one-second floor.
       await this.scheduleNext();
     } catch (error) {
       console.error("Failed to schedule the next scheduler alarm", error instanceof Error ? error.message : String(error));
