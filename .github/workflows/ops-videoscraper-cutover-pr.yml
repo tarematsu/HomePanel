@@ -22,9 +22,9 @@ jobs:
       should_run: ${{ steps.state.outputs.should_run }}
       homepanel_url: ${{ steps.urls.outputs.homepanel_url }}
       video_url: ${{ steps.urls.outputs.video_url }}
+      account_id: ${{ steps.resolve.outputs.account_id }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_BUILDS_ACCOUNT_ID }}
       HOMEPANEL_D1_DATABASE_ID: ${{ secrets.HOMEPANEL_D1_DATABASE_ID }}
 
     steps:
@@ -38,9 +38,17 @@ jobs:
         working-directory: cloud
         run: npm ci --no-audit --no-fund
 
+      - name: Resolve Cloudflare settings
+        id: resolve
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+        run: node .github/scripts/resolve-cloudflare-config.mjs
+
       - name: Resolve Worker URLs
         id: urls
         shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
@@ -64,6 +72,8 @@ jobs:
       - name: Verify ADMIN_TOKEN name
         working-directory: cloud
         shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
         run: |
           set -euo pipefail
           secret_list="$RUNNER_TEMP/homepanel-cloud-secret-list.json"
@@ -83,6 +93,7 @@ jobs:
         working-directory: cloud
         shell: bash
         env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.resolve.outputs.account_id }}
           HOMEPANEL_BASE_URL: ${{ steps.urls.outputs.homepanel_url }}
           OLD_VIDEO_BASE_URL: ${{ steps.urls.outputs.video_url }}
         run: |
@@ -117,7 +128,7 @@ jobs:
     environment: production
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_BUILDS_ACCOUNT_ID }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ needs.preflight.outputs.account_id }}
       HOMEPANEL_D1_DATABASE_ID: ${{ secrets.HOMEPANEL_D1_DATABASE_ID }}
       HOMEPANEL_BASE_URL: ${{ needs.preflight.outputs.homepanel_url }}
       OLD_VIDEO_BASE_URL: ${{ needs.preflight.outputs.video_url }}
