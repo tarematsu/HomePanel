@@ -1,5 +1,6 @@
 import { applyD1Migrations, env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
+import { invalidateR2EnvironmentCache } from "../src/environment_r2";
 import { resetD1TestDatabase } from "./d1_test_utils";
 
 type TestEnv = typeof env & {
@@ -16,6 +17,7 @@ beforeEach(async () => {
   await resetD1TestDatabase(bindings.DB, bindings.TEST_MIGRATIONS);
   await bindings.DATA_BUCKET.delete("environment/v2/latest.json");
   await bindings.DATA_BUCKET.delete("telemetry/v2/homepanel-device/latest.json");
+  invalidateR2EnvironmentCache(bindings);
 });
 
 function decodeExchange(bytes: Uint8Array): { payload: Record<string, unknown>; radar: Uint8Array } {
