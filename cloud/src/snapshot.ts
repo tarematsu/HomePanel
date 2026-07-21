@@ -39,7 +39,6 @@ export const DASHBOARD_SOURCE_NAMES = [
   "environment",
 ] as const;
 const META_SOURCE_NAMES = [...DASHBOARD_SOURCE_NAMES, "radar"] as const;
-const META_SOURCE_PLACEHOLDERS = "?,?,?,?,?,?,?";
 const D1_STATE_CHECKPOINT_MS = 6 * 60 * 60_000;
 
 type DashboardSourceName = typeof DASHBOARD_SOURCE_NAMES[number];
@@ -56,7 +55,7 @@ export async function sha256Hex(value: string | ArrayBuffer): Promise<string> {
   return output;
 }
 
-async function readStateFromD1(env: Env, source: string): Promise<StateRow | null> {
+export async function readStateFromD1(env: Env, source: string): Promise<StateRow | null> {
   return env.DB.prepare(
     `SELECT source, version, payload, observed_at, fetched_at, last_success_at, status, error, content_hash
        FROM current_state WHERE source = ?1`,
@@ -157,16 +156,6 @@ export function dashboardVersion(rows: Record<string, Pick<StateRow, "version">>
   return version;
 }
 
-function dashboardStatus(rows: Record<string, Pick<StateRow, "status">>): StateRow["status"] {
-  let stale = false;
-  for (const source of DASHBOARD_SOURCE_NAMES) {
-    const status = rows[source]?.status;
-    if (status === "error") return "error";
-    if (status === "stale") stale = true;
-  }
-  return stale ? "stale" : "ok";
-}
-
 export async function dashboardSnapshotFromRows(rows: Record<string, StateRow>): Promise<StateRow> {
   const payload = JSON.stringify(dashboardPayload(rows));
   let fetchedAt = 0;
@@ -231,6 +220,13 @@ function shouldInvalidateState(previous: StateRow | null, next: StateRow): boole
     || previous.content_hash !== next.content_hash;
 }
 
+async function hydrateColdCache(env: Env, source: string): Promise<StateRow | null> {
+  if (!env.STATE_CACHE) return null;
+  const row = await readStateFromD1(env, source);
+  if (row) await writeCachedState(env, row);
+  return row;
+}
+
 export async function updateState(
   env: Env,
   result: SourceResult,
@@ -239,7 +235,8 @@ export async function updateState(
 ): Promise<void> {
   const now = Date.now();
   const checkpointBefore = now - D1_STATE_CHECKPOINT_MS;
-  const previous = knownPrevious === undefined ? await readState(env, result.source) : knownPrevious;
+  const previous = knownPrevious === undefined ? await readCachedState(env, result.source) : knownPrevious;
+  const forceCheckpoint = previous === null ? 1 : 0;
 
   if (error) {
     const status: StateRow["status"] = previous?.last_success_at == null ? "error" : "stale";
@@ -256,7 +253,7 @@ export async function updateState(
         error,
         content_hash: EMPTY_OBJECT_HASH,
       };
-    const persisted = await env.DB.prepare(
+    const written = await env.DB.prepare(
       `INSERT INTO current_state(
          source,version,payload,observed_at,fetched_at,last_success_at,status,error,content_hash
        ) VALUES(?1,1,'{}',NULL,?2,NULL,'error',?3,?4)
@@ -268,11 +265,13 @@ export async function updateState(
                WHEN current_state.last_success_at IS NULL THEN 'error' ELSE 'stale' END
           OR current_state.error IS NOT excluded.error
           OR current_state.fetched_at<=?5
-       RETURNING source,version,payload,observed_at,fetched_at,last_success_at,status,error,content_hash`,
-    ).bind(result.source, now, error, EMPTY_OBJECT_HASH, checkpointBefore).first<StateRow>();
-    const current = persisted ?? next;
-    if (shouldInvalidateState(previous, current)) markStateChanged(env);
-    await writeCachedState(env, current);
+          OR ?6=1`,
+    ).bind(result.source, now, error, EMPTY_OBJECT_HASH, checkpointBefore, forceCheckpoint).run();
+    const current = previous ? next : await hydrateColdCache(env, result.source);
+    if (current && (Number(written.meta.changes ?? 0) > 0 || shouldInvalidateState(previous, current))) {
+      markStateChanged(env);
+    }
+    if (previous) await writeCachedState(env, next);
     return;
   }
 
@@ -289,15 +288,15 @@ export async function updateState(
   const next: StateRow = {
     source: result.source,
     version: previous ? previous.version + (contentChanged ? 1 : 0) : 1,
-    payload,
-    observed_at: result.observedAt,
+    payload: contentChanged ? payload : previous?.payload ?? payload,
+    observed_at: contentChanged ? result.observedAt : previous?.observed_at ?? result.observedAt,
     fetched_at: now,
     last_success_at: now,
     status: "ok",
     error: null,
     content_hash: hash,
   };
-  const persisted = await env.DB.prepare(
+  const written = await env.DB.prepare(
     `INSERT INTO current_state(
        source,version,payload,observed_at,fetched_at,last_success_at,status,error,content_hash
      ) VALUES(?1,1,?2,?3,?4,?4,'ok',NULL,?5)
@@ -306,8 +305,14 @@ export async function updateState(
          WHEN current_state.content_hash IS NOT excluded.content_hash THEN current_state.version+1
          ELSE current_state.version
        END,
-       payload=excluded.payload,
-       observed_at=excluded.observed_at,
+       payload=CASE
+         WHEN current_state.content_hash IS NOT excluded.content_hash THEN excluded.payload
+         ELSE current_state.payload
+       END,
+       observed_at=CASE
+         WHEN current_state.content_hash IS NOT excluded.content_hash THEN excluded.observed_at
+         ELSE current_state.observed_at
+       END,
        fetched_at=excluded.fetched_at,
        last_success_at=excluded.last_success_at,
        status='ok',
@@ -317,11 +322,13 @@ export async function updateState(
         OR current_state.status<>'ok'
         OR current_state.error IS NOT NULL
         OR current_state.fetched_at<=?6
-     RETURNING source,version,payload,observed_at,fetched_at,last_success_at,status,error,content_hash`,
-  ).bind(result.source, payload, result.observedAt, now, hash, checkpointBefore).first<StateRow>();
-  const current = persisted ?? next;
-  if (shouldInvalidateState(previous, current)) markStateChanged(env);
-  await writeCachedState(env, current);
+        OR ?7=1`,
+  ).bind(result.source, payload, result.observedAt, now, hash, checkpointBefore, forceCheckpoint).run();
+  const current = previous ? next : await hydrateColdCache(env, result.source);
+  if (current && (Number(written.meta.changes ?? 0) > 0 || shouldInvalidateState(previous, current))) {
+    markStateChanged(env);
+  }
+  if (previous) await writeCachedState(env, next);
 }
 
 export async function ensureDashboard(env: Env): Promise<StateRow> {
@@ -336,8 +343,6 @@ export interface MetaPayload {
   status: "ok" | "stale" | "error";
   workerVersion: string;
 }
-
-type StateMetadataRow = Pick<StateRow, "source" | "version" | "fetched_at" | "status">;
 
 export async function buildMeta(env: Env): Promise<MetaPayload> {
   const rows = await readStates(env, META_SOURCE_NAMES);
