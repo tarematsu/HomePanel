@@ -7,6 +7,11 @@ import { configuredIds, loadSwitchBotSnapshot } from "./switchbot_api";
 import { fetchSwitchBotOptimized } from "./switchbot_poll";
 import { failSafeSwitchBotState } from "./switchbot_state";
 import type { SwitchBotEnv } from "./switchbot_types";
+import { runVideoLiveness } from "./video_liveness";
+import {
+  LIVENESS_INTERVAL_SECONDS,
+  LIVENESS_JOB_NAME,
+} from "../../video/src/liveness-schedule.js";
 
 export interface JobRow {
   name: string;
@@ -27,6 +32,11 @@ const SYSTEM_JOBS_CACHE_MS = 15 * 60_000;
 const DAY_MS = 86_400_000;
 const DAY_SECONDS = 86_400;
 const POWER_RETENTION_MS = 90 * DAY_MS;
+const NON_SOURCE_JOBS = new Set<string>([
+  "cleanup",
+  "update_check",
+  LIVENESS_JOB_NAME,
+]);
 const REFRESHABLE_JOBS = [
   "weather",
   "news",
@@ -51,33 +61,37 @@ export function invalidateSystemJobsCache(db: D1Database): void {
 }
 
 async function reconcileSystemJobs(env: Env, nowMs: number): Promise<void> {
-  const octopusDeadline = Math.floor(nowMs / 1000) + OCTOPUS_INTERVAL_SECONDS;
+  const nowSeconds = Math.floor(nowMs / 1000);
   const statement = env.DB.prepare(
     `INSERT INTO jobs(
        name,interval_seconds,next_run_at,lease_until,last_success_at,last_error,consecutive_failures
      ) VALUES
        ('stationhead_health',300,0,NULL,NULL,NULL,0),
-       ('octopus',?1,0,NULL,NULL,NULL,0)
+       ('octopus',?1,0,NULL,NULL,NULL,0),
+       (?3,?4,0,NULL,NULL,NULL,0)
      ON CONFLICT(name) DO UPDATE SET
        interval_seconds=CASE
          WHEN excluded.name='stationhead_health' THEN jobs.interval_seconds
          ELSE excluded.interval_seconds
        END,
        next_run_at=CASE
-         WHEN excluded.name='octopus' THEN CASE
-           WHEN jobs.next_run_at=0 THEN 0
-           WHEN jobs.next_run_at>?2 THEN ?2
-           ELSE jobs.next_run_at
-         END
+         WHEN excluded.name='stationhead_health' THEN jobs.next_run_at
+         WHEN jobs.next_run_at=0 THEN 0
+         WHEN jobs.next_run_at>?2+excluded.interval_seconds THEN ?2+excluded.interval_seconds
          ELSE jobs.next_run_at
        END
-     WHERE excluded.name='octopus' AND (
+     WHERE excluded.name<>'stationhead_health' AND (
        jobs.interval_seconds<>excluded.interval_seconds
-       OR (jobs.next_run_at<>0 AND jobs.next_run_at>?2)
+       OR (jobs.next_run_at<>0 AND jobs.next_run_at>?2+excluded.interval_seconds)
      )`,
   );
   await env.DB.batch([
-    statement.bind(OCTOPUS_INTERVAL_SECONDS, octopusDeadline),
+    statement.bind(
+      OCTOPUS_INTERVAL_SECONDS,
+      nowSeconds,
+      LIVENESS_JOB_NAME,
+      LIVENESS_INTERVAL_SECONDS,
+    ),
     env.DB.prepare("DELETE FROM jobs WHERE name='radar_dispatch'"),
   ]);
 }
@@ -233,6 +247,8 @@ async function runOne(env: Env, job: JobRow): Promise<void> {
       await refreshStationheadMonitor(env);
     } else if (job.name === "stationhead_health") {
       await runStationheadHealthMonitor(env);
+    } else if (job.name === LIVENESS_JOB_NAME) {
+      await runVideoLiveness(env);
     } else {
       const result: SourceResult = job.name === "switchbot"
         ? await fetchSwitchBotOptimized(env)
@@ -253,7 +269,7 @@ async function runOne(env: Env, job: JobRow): Promise<void> {
           payload: failSafeSwitchBotState(snapshot.state, now, controlPlugIds, message),
           observedAt: now,
         }, undefined, snapshot.row);
-      } else if (!["cleanup", "update_check"].includes(job.name) && !sourceFailureRecorded) {
+      } else if (!NON_SOURCE_JOBS.has(job.name) && !sourceFailureRecorded) {
         await updateState(env, { source: job.name, payload: null, observedAt: Date.now() }, message);
       }
     } catch (stateError) {
