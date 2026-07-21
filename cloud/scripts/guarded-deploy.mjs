@@ -27,8 +27,8 @@ function runNode(args, capture = false) {
 function ensureVideoDependencies() {
   if (existsSync(videoDependencyMarker)) return;
   const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  console.log('Installing imported video Worker dependencies before bundling.');
-  execFileSync(npmCommand, ['--prefix', videoRoot, 'install', '--no-audit', '--no-fund'], {
+  console.log('Installing imported video Worker dependencies from package-lock.json before bundling.');
+  execFileSync(npmCommand, ['--prefix', videoRoot, 'ci', '--no-audit', '--no-fund'], {
     cwd: root,
     env: { ...process.env, CI: 'true' },
     stdio: 'inherit'
@@ -56,13 +56,13 @@ function activationIsComplete() {
     return /"active"\s*:\s*1/.test(output);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.log(`Unified cutover activation could not be verified: ${message}`);
+    console.log(`Unified video runtime activation could not be verified: ${message}`);
     return false;
   }
 }
 
 if (cloudflareManagedBuild && !previewBuild && !allowInactiveDeploy && !activationIsComplete()) {
-  console.log('Skipping the Cloudflare-managed production deploy until videoscraper cutover activates homepanel-data.');
+  console.log('Skipping the Cloudflare-managed production deploy until the video runtime activation marker is active.');
   console.log('The existing homepanel-cloud Worker remains unchanged.');
   process.exit(0);
 }
