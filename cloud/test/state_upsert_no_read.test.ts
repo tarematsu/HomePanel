@@ -3,10 +3,10 @@ import { updateState } from "../src/snapshot";
 import type { Env } from "../src/sources";
 
 function fakeEnv() {
-  const run = vi.fn().mockResolvedValue({ meta: { changes: 1 } });
-  const bind = vi.fn(() => ({ run }));
+  const first = vi.fn().mockResolvedValue(null);
+  const bind = vi.fn(() => ({ first }));
   const prepare = vi.fn(() => ({ bind }));
-  return { env: { DB: { prepare } as unknown as D1Database } as Env, prepare, bind, run };
+  return { env: { DB: { prepare } as unknown as D1Database } as Env, prepare, bind, first };
 }
 
 function preparedSql(prepare: ReturnType<typeof vi.fn>): string {
@@ -14,8 +14,8 @@ function preparedSql(prepare: ReturnType<typeof vi.fn>): string {
 }
 
 describe("current_state write-through UPSERT", () => {
-  it("persists a successful source result without reading the previous row", async () => {
-    const { env, prepare, bind, run } = fakeEnv();
+  it("persists a successful source result without a separate previous-row read", async () => {
+    const { env, prepare, bind, first } = fakeEnv();
 
     await updateState(env, {
       source: "weather",
@@ -26,13 +26,14 @@ describe("current_state write-through UPSERT", () => {
     const sql = preparedSql(prepare);
     expect(prepare).toHaveBeenCalledTimes(1);
     expect(sql).toContain("INSERT INTO current_state");
+    expect(sql).toContain("RETURNING source,version");
     expect(sql).not.toContain("SELECT");
     expect(bind).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(first).toHaveBeenCalledTimes(1);
   });
 
-  it("persists an error transition without reading the previous row", async () => {
-    const { env, prepare, bind, run } = fakeEnv();
+  it("persists an error transition without a separate previous-row read", async () => {
+    const { env, prepare, bind, first } = fakeEnv();
 
     await updateState(
       env,
@@ -43,8 +44,9 @@ describe("current_state write-through UPSERT", () => {
     const sql = preparedSql(prepare);
     expect(prepare).toHaveBeenCalledTimes(1);
     expect(sql).toContain("ON CONFLICT(source) DO UPDATE");
+    expect(sql).toContain("RETURNING source,version");
     expect(sql).not.toContain("SELECT");
     expect(bind).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(first).toHaveBeenCalledTimes(1);
   });
 });
