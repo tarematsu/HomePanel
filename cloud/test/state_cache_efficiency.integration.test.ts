@@ -59,22 +59,17 @@ describe("state cache and D1 efficiency", () => {
     expect(second.status).toBe(304);
   });
 
-  it("suppresses unchanged current_state heartbeat writes for fifteen minutes", async () => {
-    const startedAt = Date.now();
-    vi.useFakeTimers();
-    vi.setSystemTime(startedAt);
-    const payload = { temperature: 20 };
-    await updateState(env, { source: "weather", observedAt: startedAt, payload });
-    const initial = await readState(env, "weather");
+  it("serves a valid state row from KV when the D1 row is unavailable", async () => {
+    const observedAt = Date.now();
+    await updateState(env, { source: "weather", observedAt, payload: { temperature: 20 } });
+    await env.DB.prepare("DELETE FROM current_state WHERE source='weather'").run();
 
-    vi.setSystemTime(startedAt + 6 * 60_000);
-    await updateState(env, { source: "weather", observedAt: startedAt + 6 * 60_000, payload });
-    const suppressed = await readState(env, "weather");
-    expect(suppressed?.fetched_at).toBe(initial?.fetched_at);
-
-    vi.setSystemTime(startedAt + 16 * 60_000);
-    await updateState(env, { source: "weather", observedAt: startedAt + 16 * 60_000, payload });
-    const written = await readState(env, "weather");
-    expect(written?.fetched_at).toBe(startedAt + 16 * 60_000);
+    const cached = await readState(env, "weather");
+    expect(cached).toMatchObject({
+      source: "weather",
+      observed_at: observedAt,
+      status: "ok",
+    });
+    expect(JSON.parse(cached!.payload)).toEqual({ temperature: 20 });
   });
 });
