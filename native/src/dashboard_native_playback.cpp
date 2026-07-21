@@ -33,6 +33,48 @@ int Integer(const JsonObject& object, const wchar_t* name, int fallback = 0) {
   return static_cast<int>(std::trunc(value));
 }
 
+bool BooleanOrNumber(const JsonObject& object, const wchar_t* name,
+                     bool fallback = false) {
+  try {
+    const auto value = object.GetNamedValue(name);
+    if (value.ValueType() == JsonValueType::Boolean) return value.GetBoolean();
+    if (value.ValueType() == JsonValueType::Number) return value.GetNumber() != 0;
+  } catch (...) {
+  }
+  return fallback;
+}
+
+NativeMinuteFactsProjection ParseDashboardStatus(const std::wstring& payload,
+                                                  int64_t fetchedAt) {
+  NativeMinuteFactsProjection projection;
+  projection.fetchedAt = fetchedAt;
+  if (payload.empty()) return projection;
+
+  try {
+    const JsonObject root = JsonObject::Parse(payload);
+    projection.ok = BooleanOrNumber(root, L"ok");
+    if (!projection.ok) return projection;
+
+    const JsonObject latest = json::Object(root, L"latest");
+    if (latest.Size() == 0) return projection;
+    const JsonObject queueStatus = json::Object(root, L"queue_status");
+
+    projection.stale = BooleanOrNumber(root, L"stale");
+    projection.isBroadcasting = BooleanOrNumber(latest, L"is_broadcasting");
+    projection.isPaused = BooleanOrNumber(queueStatus, L"is_paused");
+    projection.listenerCount = std::max(0, Integer(latest, L"listener_count"));
+    projection.onlineMemberCount =
+        std::max(0, Integer(latest, L"online_member_count"));
+    projection.minuteAt = EpochMilliseconds(json::Number(root, L"generated_at"));
+    projection.available = true;
+    return projection;
+  } catch (...) {
+    NativeMinuteFactsProjection failed;
+    failed.fetchedAt = fetchedAt;
+    return failed;
+  }
+}
+
 NativePlaybackTrack ParseDashboardTrack(const fs::path& dataDir,
                                         const JsonObject& item) {
   NativePlaybackTrack track;
@@ -66,7 +108,7 @@ NativePlaybackProjection ParseDashboardProjection(const fs::path& dataDir,
         continue;
       }
       const JsonObject item = queue.GetAt(index).GetObject();
-      if (markedCurrentIndex < 0 && json::Boolean(item, L"is_current")) {
+      if (markedCurrentIndex < 0 && BooleanOrNumber(item, L"is_current")) {
         markedCurrentIndex = static_cast<int>(index);
       }
       projection.queue.push_back(ParseDashboardTrack(dataDir, item));
@@ -82,9 +124,10 @@ NativePlaybackProjection ParseDashboardProjection(const fs::path& dataDir,
       currentIndex = -1;
     }
 
-    const bool paused = json::Boolean(status, L"is_paused");
-    const bool playing = json::Boolean(status, L"playing") && !paused &&
-        currentIndex >= 0;
+    const bool paused = BooleanOrNumber(status, L"is_paused");
+    const bool playingSignal = BooleanOrNumber(
+        status, L"playing", BooleanOrNumber(root, L"playing"));
+    const bool playing = playingSignal && !paused && currentIndex >= 0;
     const int64_t generatedAt = EpochMilliseconds(
         json::Number(root, L"generated_at"));
     const int64_t anchorAt = EpochMilliseconds(
@@ -121,6 +164,10 @@ NativePlaybackProjection ParseDashboardProjection(const fs::path& dataDir,
 
     projection.available = true;
     projection.playing = playing;
+    projection.stale = BooleanOrNumber(root, L"stale");
+    projection.ended = BooleanOrNumber(
+        status, L"ended", BooleanOrNumber(root, L"ended"));
+    projection.setupRequired = BooleanOrNumber(root, L"setup_required");
     projection.currentIndex = currentIndex;
     projection.progressMs = std::max<int64_t>(0, progressMs);
     projection.sampledAt = fetchedAt;
@@ -222,16 +269,29 @@ void Renderer::StartNativePlaybackBridge() {
   std::wstring error;
   int64_t fetchedAt = 0;
   if (LoadDashboardSnapshot(dataDir_, &payload, &error, &fetchedAt)) {
-    std::lock_guard lock(nativePlaybackMutex_);
-    NativePlaybackUpdate& update = nativePlaybackUpdates_[0];
-    update.source = kPlaybackSource;
-    update.payload = payload;
-    update.error = error;
-    update.fetchedAt = fetchedAt;
-    update.projection = ParseDashboardProjection(dataDir_, payload, fetchedAt);
-    update.hasPayload = error.empty() && !payload.empty();
-    update.contentRevision = ++nativePlaybackContentRevision_;
-    update.revision = ++nativePlaybackRevision_;
+    const bool hasValidPayload = error.empty() && !payload.empty();
+    NativePlaybackProjection playbackProjection;
+    NativeMinuteFactsProjection statusProjection;
+    if (hasValidPayload) {
+      playbackProjection = ParseDashboardProjection(dataDir_, payload, fetchedAt);
+      statusProjection = ParseDashboardStatus(payload, fetchedAt);
+    }
+    {
+      std::lock_guard lock(nativePlaybackMutex_);
+      NativePlaybackUpdate& update = nativePlaybackUpdates_[0];
+      update.source = kPlaybackSource;
+      update.payload = payload;
+      update.error = error;
+      update.fetchedAt = hasValidPayload ? fetchedAt : 0;
+      update.projection = std::move(playbackProjection);
+      update.hasPayload = hasValidPayload;
+      update.contentRevision = ++nativePlaybackContentRevision_;
+      update.revision = ++nativePlaybackRevision_;
+    }
+    if (hasValidPayload) {
+      std::lock_guard lock(nativeMinuteFactsMutex_);
+      nativeMinuteFacts_ = statusProjection;
+    }
   }
 
   nativePlaybackThread_ = std::thread([this] { NativePlaybackLoop(); });
@@ -248,19 +308,23 @@ void Renderer::NativePlaybackLoop() {
   const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   while (!nativePlaybackStopping_.load(std::memory_order_acquire)) {
     std::wstring payload;
-    const int64_t fetchedAt = UnixMillis();
     const std::wstring error = FetchDashboardJson(&payload);
-    NativePlaybackProjection projection =
-        ParseDashboardProjection(dataDir_, payload, fetchedAt);
-    SaveDashboardSnapshot(dataDir_, payload, error, fetchedAt);
+    const bool hasValidPayload = error.empty() && !payload.empty();
+    const int64_t fetchedAt = hasValidPayload ? UnixMillis() : 0;
+    NativePlaybackProjection projection;
+    NativeMinuteFactsProjection statusProjection;
+    if (hasValidPayload) {
+      projection = ParseDashboardProjection(dataDir_, payload, fetchedAt);
+      statusProjection = ParseDashboardStatus(payload, fetchedAt);
+      // Preserve the last successful snapshot across transient request errors.
+      SaveDashboardSnapshot(dataDir_, payload, {}, fetchedAt);
+    }
 
     {
       std::lock_guard lock(nativePlaybackMutex_);
       NativePlaybackUpdate& update = nativePlaybackUpdates_[0];
       update.source = kPlaybackSource;
       update.error = error;
-      update.fetchedAt = fetchedAt;
-      const bool hasValidPayload = error.empty() && !payload.empty();
       if (hasValidPayload) {
         const bool contentChanged = !update.hasPayload ||
             (!projection.queueRevision.empty()
@@ -268,12 +332,17 @@ void Renderer::NativePlaybackLoop() {
                  : update.payload != payload);
         update.payload = std::move(payload);
         update.projection = std::move(projection);
+        update.fetchedAt = fetchedAt;
         update.hasPayload = true;
         if (contentChanged) {
           update.contentRevision = ++nativePlaybackContentRevision_;
         }
       }
       update.revision = ++nativePlaybackRevision_;
+    }
+    if (hasValidPayload) {
+      std::lock_guard lock(nativeMinuteFactsMutex_);
+      nativeMinuteFacts_ = statusProjection;
     }
 
     InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
