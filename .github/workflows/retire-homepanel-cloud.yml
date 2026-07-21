@@ -1,0 +1,88 @@
+name: Retire legacy homepanel-cloud Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DELETE_HOMEPANEL_CLOUD_AFTER_ENDPOINT_MOVE
+        required: true
+        type: string
+      endpoint_moved:
+        description: Confirm every tablet and custom domain targets the new homepanel Worker
+        required: true
+        default: false
+        type: boolean
+      new_worker_base_url:
+        description: Full base URL for the active homepanel Worker
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homepanel-cloud-retirement
+  cancel-in-progress: false
+
+jobs:
+  retire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_BUILDS_ACCOUNT_ID }}
+      HOMEPANEL_RUNTIME_SECRETS_JSON: ${{ secrets.HOMEPANEL_RUNTIME_SECRETS_JSON }}
+      NEW_WORKER_BASE_URL: ${{ inputs.new_worker_base_url }}
+
+    steps:
+      - name: Validate endpoint move confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.confirmation }}" = "DELETE_HOMEPANEL_CLOUD_AFTER_ENDPOINT_MOVE"
+          test "${{ inputs.endpoint_moved }}" = "true"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$HOMEPANEL_RUNTIME_SECRETS_JSON"
+          case "$NEW_WORKER_BASE_URL" in https://*) ;; *) exit 1;; esac
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Wrangler
+        working-directory: cloud
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify device-authenticated HomePanel API
+        shell: bash
+        run: |
+          set -euo pipefail
+          secrets_file="$RUNNER_TEMP/homepanel-secrets.json"
+          printf '%s' "$HOMEPANEL_RUNTIME_SECRETS_JSON" > "$secrets_file"
+          device_token="$(node --input-type=module - "$secrets_file" <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const payload = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          let token = '';
+          try {
+            const mapped = JSON.parse(String(payload.HOMEPANEL_DEVICE_TOKENS || ''));
+            if (mapped && typeof mapped === 'object' && !Array.isArray(mapped)) {
+              token = Object.values(mapped).find((value) => typeof value === 'string' && value.length > 0) || '';
+            }
+          } catch {}
+          token ||= String(payload.HOMEPANEL_INGEST_SECRET || payload.DEVICE_TOKEN || '');
+          process.stdout.write(token);
+          NODE
+          )"
+          test -n "$device_token"
+          curl --fail --silent --show-error "$NEW_WORKER_BASE_URL/v1/health" >/dev/null
+          curl --fail --silent --show-error -H "Authorization: Bearer $device_token" \
+            "$NEW_WORKER_BASE_URL/v1/meta" >/dev/null
+
+      - name: Delete legacy homepanel-cloud Worker
+        working-directory: cloud
+        shell: bash
+        run: yes | npx wrangler delete --name homepanel-cloud
