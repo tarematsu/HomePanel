@@ -9,7 +9,10 @@ import {
   LIVENESS_INTERVAL_SECONDS,
   LIVENESS_JOB_NAME,
 } from "../../video/src/liveness-schedule.js";
-import { invalidateSystemJobsCache } from "../src/scheduler";
+import {
+  ensureSystemJobs,
+  invalidateSystemJobsCache,
+} from "../src/scheduler";
 import { resetD1TestDatabase } from "./d1_test_utils";
 
 type TestEnv = typeof env & {
@@ -33,6 +36,7 @@ beforeEach(async () => {
   const testEnv = env as TestEnv;
   await resetD1TestDatabase(testEnv.DB, testEnv.TEST_MIGRATIONS);
   invalidateSystemJobsCache(testEnv.DB);
+  await ensureSystemJobs(testEnv);
 });
 
 describe("SchedulerCoordinator Durable Object", () => {
@@ -48,6 +52,7 @@ describe("SchedulerCoordinator Durable Object", () => {
 
   it("registers video liveness in the shared alarm scheduler", async () => {
     await env.DB.prepare("DELETE FROM jobs WHERE name=?1").bind(LIVENESS_JOB_NAME).run();
+    invalidateSystemJobsCache(env.DB);
     const stub = coordinatorStub();
 
     const response = await stub.fetch("https://scheduler.internal/ensure", { method: "POST" });
