@@ -4,7 +4,7 @@
   "version": "2.5.0",
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit && node --check src/unified_worker.js && node --check src/video_runtime_activation.js && node --check scripts/deploy-existing.mjs && node --check scripts/guarded-deploy.mjs && node --check scripts/migrate-videoscraper-d1.mjs",
+    "check": "tsc --noEmit && node --check src/unified_worker.js && node --check src/video_runtime_activation.js && node --check scripts/deploy-existing.mjs && node --check scripts/guarded-deploy.mjs && node --check scripts/d1-import-utils.mjs && node --check scripts/migrate-videoscraper-d1.mjs",
     "check:unified-bundle": "wrangler deploy --dry-run --outdir=.wrangler/unified-dry-run",
     "test": "vitest run --reporter=verbose",
     "test:integration": "vitest run test/worker.integration.test.ts --reporter=verbose",

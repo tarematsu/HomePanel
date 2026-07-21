@@ -2,6 +2,12 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  buildParameterizedInsert,
+  columnNamesFromPragma,
+  oversizedSqlStatements,
+  quoteSqliteIdentifier,
+} from './d1-import-utils.mjs';
 
 const cloudRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const wranglerCli = join(cloudRoot, 'node_modules', 'wrangler', 'bin', 'wrangler.js');
@@ -44,6 +50,16 @@ function cloudflareEnvironment() {
   if (token) env.CLOUDFLARE_API_TOKEN = token;
   if (accountId) env.CLOUDFLARE_ACCOUNT_ID = accountId;
   return env;
+}
+
+function cloudflareCredentials() {
+  const token = process.env.CLOUDFLARE_API_TOKEN?.trim()
+    || process.env.CLOUDFLARE_BUILDS_API_TOKEN?.trim();
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim()
+    || process.env.CLOUDFLARE_BUILDS_ACCOUNT_ID?.trim();
+  if (!token) throw new Error('Cloudflare API token is required for parameterized D1 imports');
+  if (!accountId) throw new Error('Cloudflare account ID is required for parameterized D1 imports');
+  return { token, accountId };
 }
 
 function wrangler(args, capture = false) {
@@ -93,6 +109,85 @@ function executeTargetFile(path) {
   ]);
 }
 
+async function cloudflareApi(path, init = {}) {
+  const { token } = cloudflareCredentials();
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          ...(init.headers || {})
+        },
+        signal: AbortSignal.timeout(30_000)
+      });
+      const text = await response.text();
+      let payload;
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(`Cloudflare API returned non-JSON (${response.status})`);
+      }
+      if (!response.ok || payload?.success === false) {
+        const errors = Array.isArray(payload?.errors)
+          ? payload.errors.map((error) => `${error?.code || 'error'}: ${error?.message || 'unknown error'}`).join('; ')
+          : '';
+        const error = new Error(`Cloudflare API ${response.status}: ${errors || 'request failed'}`);
+        if (response.status < 500 && response.status !== 429) throw error;
+        lastError = error;
+      } else {
+        return payload;
+      }
+    } catch (error) {
+      lastError = error;
+      if (attempt === 3) break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1_000));
+  }
+  throw lastError || new Error('Cloudflare API request failed');
+}
+
+let targetDatabaseIdPromise;
+function targetDatabaseId() {
+  targetDatabaseIdPromise ??= (async () => {
+    const configured = process.env.HOMEPANEL_D1_DATABASE_ID?.trim();
+    if (configured) return configured;
+
+    const { accountId } = cloudflareCredentials();
+    const payload = await cloudflareApi(
+      `/accounts/${encodeURIComponent(accountId)}/d1/database?name=${encodeURIComponent(targetDatabase)}`
+    );
+    const databases = Array.isArray(payload?.result) ? payload.result : [];
+    const matches = databases.filter((database) => String(database?.name || '') === targetDatabase);
+    if (matches.length !== 1) {
+      throw new Error(`Could not resolve a unique D1 database ID for ${targetDatabase}`);
+    }
+    const id = String(matches[0]?.uuid || matches[0]?.id || '').trim();
+    if (!id) throw new Error(`Cloudflare did not return a database ID for ${targetDatabase}`);
+    return id;
+  })();
+  return targetDatabaseIdPromise;
+}
+
+async function executeTargetPrepared(sql, params) {
+  const { accountId } = cloudflareCredentials();
+  const databaseId = await targetDatabaseId();
+  const payload = await cloudflareApi(
+    `/accounts/${encodeURIComponent(accountId)}/d1/database/${encodeURIComponent(databaseId)}/query`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql, params })
+    }
+  );
+  const results = Array.isArray(payload?.result) ? payload.result : [];
+  if (!results.length || results.some((result) => result?.success === false)) {
+    throw new Error('Parameterized D1 insert did not return a successful result');
+  }
+}
+
 function tableNames(database, target = false) {
   const rows = query(database, `
     SELECT name
@@ -109,7 +204,7 @@ function tableNames(database, target = false) {
 function tableCounts(database, target = false) {
   const counts = {};
   for (const table of importOrder) {
-    const rows = query(database, `SELECT COUNT(*) AS row_count FROM "${table}";`, target);
+    const rows = query(database, `SELECT COUNT(*) AS row_count FROM ${quoteSqliteIdentifier(table)};`, target);
     const count = Number(rows[0]?.row_count);
     if (!Number.isSafeInteger(count) || count < 0) {
       throw new Error(`Invalid row count returned for ${database}.${table}: ${JSON.stringify(rows)}`);
@@ -156,6 +251,36 @@ function exportTable(table) {
   return path;
 }
 
+function oversizedStatementsInFile(path) {
+  return oversizedSqlStatements(readFileSync(path, 'utf8'));
+}
+
+async function importTableWithParameters(table, expectedRows) {
+  const pragmaRows = query(sourceDatabase, `PRAGMA table_info(${quoteSqliteIdentifier(table)});`);
+  const columns = columnNamesFromPragma(pragmaRows);
+  const primaryKeyColumns = pragmaRows
+    .filter((row) => Number(row?.pk) > 0)
+    .sort((left, right) => Number(left.pk) - Number(right.pk))
+    .map((row) => String(row.name));
+  const orderColumns = primaryKeyColumns.length ? primaryKeyColumns : [columns[0]];
+  const projection = columns.map(quoteSqliteIdentifier).join(',');
+  const orderBy = orderColumns.map(quoteSqliteIdentifier).join(',');
+
+  console.log(`Importing ${table} with bound parameters because its export contains an oversized SQL statement.`);
+  for (let offset = 0; offset < expectedRows; offset += 1) {
+    const rows = query(
+      sourceDatabase,
+      `SELECT ${projection} FROM ${quoteSqliteIdentifier(table)} ORDER BY ${orderBy} LIMIT 1 OFFSET ${offset};`
+    );
+    if (rows.length !== 1) {
+      throw new Error(`Expected one source row for ${table} at offset ${offset}, received ${rows.length}`);
+    }
+    const statement = buildParameterizedInsert(table, columns, rows[0]);
+    await executeTargetPrepared(statement.sql, statement.params);
+  }
+  console.log(`Imported ${expectedRows} row(s) into ${table} with bound parameters.`);
+}
+
 function restoreImportGuards() {
   executeTargetFile(postImportSql);
 }
@@ -200,6 +325,9 @@ const sourceNames = tableNames(sourceDatabase);
 assertSourceSchema(sourceNames);
 const sourceCountsBefore = tableCounts(sourceDatabase);
 const exports = Object.fromEntries(importOrder.map((table) => [table, exportTable(table)]));
+const oversizedImports = Object.fromEntries(
+  importOrder.map((table) => [table, oversizedStatementsInFile(exports[table])])
+);
 const sourceCountsAfter = tableCounts(sourceDatabase);
 assertCountsEqual(sourceCountsBefore, sourceCountsAfter);
 
@@ -212,7 +340,15 @@ let importError;
 try {
   resetTargetVideoData();
   guardsDropped = true;
-  for (const table of importOrder) executeTargetFile(exports[table]);
+  for (const table of importOrder) {
+    const oversized = oversizedImports[table];
+    if (oversized.length) {
+      console.log(`Detected oversized ${table} SQL statement(s): ${JSON.stringify(oversized)}`);
+      await importTableWithParameters(table, sourceCountsBefore[table]);
+    } else {
+      executeTargetFile(exports[table]);
+    }
+  }
 } catch (error) {
   importError = error;
 } finally {
@@ -267,6 +403,7 @@ const manifest = {
   sourceDatabase,
   targetDatabase,
   tables: importOrder,
+  parameterizedTables: importOrder.filter((table) => oversizedImports[table].length > 0),
   sourceCounts: sourceCountsBefore,
   targetCountsBefore,
   targetCounts: targetCountsAfter,
