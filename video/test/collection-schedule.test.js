@@ -20,8 +20,8 @@ test('deployment has no video cron and unified HomePanel owns manual import queu
   assert.equal(wrangler.triggers, undefined);
   assert.equal(unifiedWrangler.triggers, undefined);
   assert.equal(LIVENESS_JOB_NAME, 'video_liveness');
-  assert.equal(LIVENESS_INTERVAL_SECONDS, 20 * 60);
-  assert.equal(LIVENESS_SCHEDULE, 'homepanel-alarm:1200s');
+  assert.equal(LIVENESS_INTERVAL_SECONDS, 12 * 60);
+  assert.equal(LIVENESS_SCHEDULE, 'homepanel-alarm:720s');
   assert.equal(wrangler.queues, undefined);
   assert.deepEqual(unifiedWrangler.queues?.producers, [{
     binding: 'MANUAL_IMPORT_QUEUE',
