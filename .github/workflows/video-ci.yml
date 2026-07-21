@@ -35,7 +35,7 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Run syntax checks
         run: npm run check:syntax
       - name: Run repository audit
