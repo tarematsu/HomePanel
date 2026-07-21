@@ -1,6 +1,17 @@
 const ACTIVE_CACHE_TTL_MS = 5_000;
 const activeCache = new WeakMap();
 
+export async function readVideoRuntimeActive(env) {
+  const db = env?.DB;
+  if (!db || typeof db.prepare !== 'function') {
+    throw new Error('video runtime activation database is unavailable');
+  }
+  const row = await db.prepare(
+    'SELECT active FROM video_runtime_state WHERE id = 1'
+  ).first();
+  return Number(row?.active ?? 0) === 1;
+}
+
 export async function videoRuntimeActive(env, now = Date.now()) {
   const db = env?.DB;
   if (!db || typeof db.prepare !== 'function') return false;
@@ -9,10 +20,7 @@ export async function videoRuntimeActive(env, now = Date.now()) {
   if (cached && cached.expiresAt > now) return cached.active;
 
   try {
-    const row = await db.prepare(
-      'SELECT active FROM video_runtime_state WHERE id = 1'
-    ).first();
-    const active = Number(row?.active ?? 0) === 1;
+    const active = await readVideoRuntimeActive(env);
     activeCache.set(db, { active, expiresAt: now + ACTIVE_CACHE_TTL_MS });
     return active;
   } catch (error) {
@@ -44,10 +52,4 @@ export function retryInactiveVideoBatch(batch) {
     messages: batch?.messages?.length || 0
   });
   if (typeof batch?.retryAll === 'function') batch.retryAll();
-}
-
-export function skipInactiveVideoSchedule(controller) {
-  console.log('video-runtime-inactive-scheduled-skipped', {
-    cron: controller?.cron || ''
-  });
 }
