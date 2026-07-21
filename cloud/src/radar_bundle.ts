@@ -4,7 +4,7 @@ import type { Env } from "./sources";
 
 const BUNDLE_PATH = /^\/v1\/radar\/bundle\/(\d{14})\.hpb$/;
 const BUNDLE_MAGIC = new TextEncoder().encode("HPRB0001");
-const MAX_PATHS_PER_SHARD = 20;
+const MAX_PATHS_PER_SHARD = 15;
 const MAX_TOTAL_PATHS = 256;
 const MAX_UPSTREAM_CONCURRENCY = 4;
 const MAX_SHARD_CONCURRENCY = 4;
@@ -22,6 +22,11 @@ interface CloudflareCacheStorage extends CacheStorage {
 interface BufferedRecord {
   header: Uint8Array;
   body: Uint8Array;
+}
+
+interface ShardResponse {
+  response: Response;
+  byteLength: number;
 }
 
 function defaultCache(): Cache {
@@ -79,16 +84,6 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function byteStream(prefix: Uint8Array, bodies: readonly Uint8Array[]): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(prefix);
-      for (const body of bodies) controller.enqueue(body);
-      controller.close();
-    },
-  });
-}
-
 function recordStream(records: readonly BufferedRecord[]): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -97,6 +92,39 @@ function recordStream(records: readonly BufferedRecord[]): ReadableStream<Uint8A
         controller.enqueue(record.body);
       }
       controller.close();
+    },
+  });
+}
+
+function shardStream(prefix: Uint8Array, responses: readonly Response[]): ReadableStream<Uint8Array> {
+  let activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      controller.enqueue(prefix);
+      try {
+        for (const response of responses) {
+          if (!response.body) throw new Error("radar bundle shard body is missing");
+          activeReader = response.body.getReader();
+          for (;;) {
+            const chunk = await activeReader.read();
+            if (chunk.done) break;
+            if (chunk.value?.length) controller.enqueue(chunk.value);
+          }
+          activeReader.releaseLock();
+          activeReader = null;
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      } finally {
+        if (activeReader) {
+          activeReader.releaseLock();
+          activeReader = null;
+        }
+      }
+    },
+    async cancel(reason) {
+      await activeReader?.cancel(reason);
     },
   });
 }
@@ -166,8 +194,15 @@ export async function radarBundleShardResponse(request: Request, env: Env): Prom
       MAX_UPSTREAM_CONCURRENCY,
       pathname => bufferedTileRecord(pathname),
     );
+    const byteLength = records.reduce(
+      (total, record) => total + record.header.length + record.body.length,
+      0,
+    );
     return new Response(recordStream(records), {
-      headers: { "Content-Type": "application/octet-stream" },
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": String(byteLength),
+      },
     });
   } catch (error) {
     console.error("radar bundle shard failed", error instanceof Error ? error.message : String(error));
@@ -175,11 +210,11 @@ export async function radarBundleShardResponse(request: Request, env: Env): Prom
   }
 }
 
-async function fetchShardBytes(
+async function fetchShardResponse(
   namespace: DurableObjectNamespace,
   chunk: string[],
   index: number,
-): Promise<Uint8Array> {
+): Promise<ShardResponse> {
   const stub = namespace.get(namespace.idFromName(`radar-bundle-${index}`));
   const response = await stub.fetch("https://scheduler.internal/radar-bundle-shard", {
     method: "POST",
@@ -190,9 +225,12 @@ async function fetchShardBytes(
     await response.body?.cancel();
     throw new Error(`radar bundle shard ${index} failed: HTTP ${response.status}`);
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (!bytes.length) throw new Error(`radar bundle shard ${index} was empty`);
-  return bytes;
+  const byteLength = Number(response.headers.get("Content-Length"));
+  if (!response.body || !Number.isSafeInteger(byteLength) || byteLength <= 0) {
+    await response.body?.cancel();
+    throw new Error(`radar bundle shard ${index} length is invalid`);
+  }
+  return { response, byteLength };
 }
 
 export async function radarBundleResponseForPayload(
@@ -217,12 +255,12 @@ export async function radarBundleResponseForPayload(
     chunks.push(paths.slice(offset, offset + MAX_PATHS_PER_SHARD));
   }
 
-  let shardBodies: Uint8Array[];
+  let shards: ShardResponse[];
   try {
-    shardBodies = await mapWithConcurrency(
+    shards = await mapWithConcurrency(
       chunks,
       MAX_SHARD_CONCURRENCY,
-      (chunk, index) => fetchShardBytes(namespace, chunk, index),
+      (chunk, index) => fetchShardResponse(namespace, chunk, index),
     );
   } catch (error) {
     console.error("radar bundle assembly failed", error instanceof Error ? error.message : String(error));
@@ -230,13 +268,14 @@ export async function radarBundleResponseForPayload(
   }
 
   const header = bundleHeader(paths.length);
-  const totalBytes = shardBodies.reduce((total, bytes) => total + bytes.length, header.length);
+  const totalBytes = shards.reduce((total, shard) => total + shard.byteLength, header.length);
   if (totalBytes > MAX_BUNDLE_BYTES) {
+    await Promise.all(shards.map(shard => shard.response.body?.cancel()));
     console.error("radar bundle exceeded response limit", totalBytes);
     return Response.json({ error: "radar_bundle_too_large" }, { status: 502 });
   }
 
-  const response = new Response(byteStream(header, shardBodies), {
+  const response = new Response(shardStream(header, shards.map(shard => shard.response)), {
     headers: {
       "Content-Type": "application/vnd.homepanel.radar-bundle",
       "Cache-Control": "public, max-age=1800, immutable",
