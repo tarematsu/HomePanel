@@ -6,8 +6,7 @@ const cloudConfig = JSON.parse(readFileSync(new URL('../../cloud/wrangler.jsonc'
 
 const DAY_SECONDS = 86_400;
 const TARGET = 5_000;
-const KV_FREE_WRITE_TARGET = 1_000;
-const KV_HEARTBEAT_SECONDS = 30 * 60;
+const STATE_HEARTBEAT_SECONDS = 30 * 60;
 const scheduledIntervals = {
   switchbot: 300,
   stationhead: 300,
@@ -26,7 +25,7 @@ function runsPerDay(intervalSeconds) {
 }
 
 function throttledHeartbeatWrites(intervalSeconds) {
-  const effectiveInterval = Math.ceil(KV_HEARTBEAT_SECONDS / intervalSeconds) * intervalSeconds;
+  const effectiveInterval = Math.ceil(STATE_HEARTBEAT_SECONDS / intervalSeconds) * intervalSeconds;
   return runsPerDay(effectiveInterval);
 }
 
@@ -35,25 +34,27 @@ test('static assets bypass the Worker while dynamic routes remain Worker-first',
   assert.notEqual(cloudConfig.assets.run_worker_first, true);
 });
 
-test('KV and bounded R2 data cache bindings are declared', () => {
-  assert.ok(cloudConfig.kv_namespaces.some((entry) => entry.binding === 'STATE_CACHE'));
+test('Workers KV is absent while the bounded R2 data cache remains declared', () => {
+  assert.equal(cloudConfig.kv_namespaces, undefined);
   assert.ok(cloudConfig.r2_buckets.some((entry) => entry.binding === 'DATA_BUCKET'));
 });
 
-test('modeled daily D1 writes stay below the 5000-row target', () => {
+test('modeled daily D1 writes stay below the 5000-row target without KV', () => {
   const schedulerCompletionWrites = Object.values(scheduledIntervals)
     .reduce((total, interval) => total + runsPerDay(interval), 0);
   assert.equal(schedulerCompletionWrites, 1_205);
 
-  const stateCheckpointWrites = 6 * 4;
+  const stateHeartbeatWrites = stateIntervals
+    .reduce((total, interval) => total + throttledHeartbeatWrites(interval), 0);
   const telemetryWrites = 48 * 4;
   const changeAndControlReserve = 3_000;
   const modeledWrites = schedulerCompletionWrites
-    + stateCheckpointWrites
+    + stateHeartbeatWrites
     + telemetryWrites
     + changeAndControlReserve;
 
-  assert.equal(modeledWrites, 4_421);
+  assert.equal(stateHeartbeatWrites, 220);
+  assert.equal(modeledWrites, 4_617);
   assert.ok(modeledWrites < TARGET);
 });
 
@@ -70,18 +71,4 @@ test('modeled daily Worker invocations stay below the 5000-request target', () =
 
   assert.equal(modeledRequests, 4_593);
   assert.ok(modeledRequests < TARGET);
-});
-
-test('modeled daily KV writes stay within the Workers Free allowance', () => {
-  const unchangedHeartbeatWrites = stateIntervals
-    .reduce((total, interval) => total + throttledHeartbeatWrites(interval), 0);
-  const environmentStateWrites = 48;
-  const contentChangeAndCacheMissReserve = 600;
-  const modeledKvWrites = unchangedHeartbeatWrites
-    + environmentStateWrites
-    + contentChangeAndCacheMissReserve;
-
-  assert.equal(unchangedHeartbeatWrites, 220);
-  assert.equal(modeledKvWrites, 868);
-  assert.ok(modeledKvWrites < KV_FREE_WRITE_TARGET);
 });
