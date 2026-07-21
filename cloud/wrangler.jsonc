@@ -1,13 +1,28 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "homepanel-cloud",
-  "main": "src/worker_entry.ts",
-  "compatibility_date": "2026-06-20",
+  "name": "homepanel",
+  "main": "src/unified_worker.js",
+  "compatibility_date": "2026-06-30",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": true,
+  "preview_urls": false,
   "keep_vars": true,
   "logpush": true,
+  "assets": {
+    "directory": "../video/public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  },
+  "browser": {
+    "binding": "BROWSER"
+  },
   "triggers": {
-    "crons": []
+    "crons": [
+      "*/12 * * * *"
+    ]
   },
   "durable_objects": {
     "bindings": [
@@ -20,7 +35,9 @@
   "migrations": [
     {
       "tag": "scheduler-coordinator-v1",
-      "new_sqlite_classes": ["SchedulerCoordinator"]
+      "new_sqlite_classes": [
+        "SchedulerCoordinator"
+      ]
     }
   ],
   "d1_databases": [
@@ -36,5 +53,33 @@
       "binding": "UPDATE_BUCKET",
       "bucket_name": "homepanel-updates"
     }
-  ]
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "MANUAL_IMPORT_QUEUE",
+        "queue": "videoscraper-manual-imports"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "videoscraper-manual-imports",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 5,
+        "max_concurrency": 1,
+        "dead_letter_queue": "videoscraper-manual-imports-dlq"
+      }
+    ]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    }
+  }
 }
