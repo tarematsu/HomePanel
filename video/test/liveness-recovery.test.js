@@ -41,6 +41,7 @@ test('obsolete feed-dirty triggers are retired without removing error recovery',
 test('scheduled liveness delegates directly without a post-task D1 acknowledgement', () => {
   assert.doesNotMatch(entrySource, /liveness-feed-repair/);
   assert.doesNotMatch(entrySource, /createLivenessRepairContext/);
-  assert.match(entrySource, /export default core/);
-  assert.doesNotMatch(entrySource, /async scheduled\(/);
+  assert.match(entrySource, /return core\.scheduled\(controller, env, ctx\)/);
+  assert.match(entrySource, /migrationFreezeEnabled/);
+  assert.doesNotMatch(entrySource, /liveness.*acknowledg/i);
 });
