@@ -22,7 +22,7 @@ constexpr wchar_t kWebView2Arguments[] =
 
 
     L"--disable-backgrounding-occluded-windows "
-    L"--disable-features=MediaRouter,Translate,OptimizationGuideModelDownloading,AutofillServerCommunication,HardwareSecureDecryption,HardwareSecureDecryptionExperiment,HardwareSecureDecryptionFallback";
+    L"--disable-features=MediaRouter,Translate,OptimizationGuideModelDownloading,AutofillServerCommunication,HardwareSecureDecryption,HardwareSecureDecryptionExperiment";
 
 void ApplyWebView2ProcessHints() noexcept {
   static std::once_flag once;

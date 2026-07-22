@@ -139,6 +139,7 @@ class StationheadPlayer {
   void ApplyVolume() const noexcept;
   void ApplyAudioPlaybackState(bool playing, const std::wstring& source);
   void HandleTrackEnded(int64_t nowMs, bool retry);
+  void RecoverTrackBoundaryPlayback();
   void TryStartInitialNavigation();
   void CompletePendingAuthPopupDeferral() noexcept;
   void EnsureDistinctBrowserIdentity() noexcept;
@@ -208,6 +209,8 @@ class StationheadPlayer {
   std::atomic<uint64_t> activeNavigationId_{0};
   std::atomic<bool> navigationInFlight_{false};
   bool trackBoundaryRefreshPending_ = false;
+  bool trackBoundaryPlaybackRecoveryPending_ = false;
+  int64_t trackBoundaryPlaybackRecoveryDeadline_ = 0;
   int64_t creationStartedAt_ = 0;
   int64_t recreateAt_ = 0;
   std::atomic<bool> shuttingDown_{false};

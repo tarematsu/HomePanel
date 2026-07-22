@@ -3,7 +3,7 @@
 
 namespace hp {
 
-inline constexpr int64_t kStationheadTrackTransitionGraceMs = 12'000;
+inline constexpr int64_t kStationheadTrackTransitionGraceMs = 30'000;
 
 inline bool StationheadNeedsForeground(const StationheadStatus& status) noexcept {
   return !status.audioPlaying;
