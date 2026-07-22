@@ -26,7 +26,16 @@ interface ValidatedTelemetry {
   deviceId: string;
 }
 
+export interface CompactTelemetryResult {
+  status: number;
+  body: Record<string, unknown>;
+}
+
 const MAX_COMPACT_TELEMETRY_SAMPLES = 60;
+
+function result(body: Record<string, unknown>, status = 200): CompactTelemetryResult {
+  return { status, body };
+}
 
 function finiteOptional(value: unknown): number | null | undefined {
   if (value === undefined || value === null) return null;
@@ -38,9 +47,9 @@ function boundedOptional(
   minimum: number,
   maximum: number,
 ): number | null | undefined {
-  const result = finiteOptional(value);
-  if (result === null || result === undefined) return result;
-  return result >= minimum && result <= maximum ? result : undefined;
+  const parsed = finiteOptional(value);
+  if (parsed === null || parsed === undefined) return parsed;
+  return parsed >= minimum && parsed <= maximum ? parsed : undefined;
 }
 
 function normalizeSample(value: unknown, now: number): TelemetrySample | null {
@@ -92,13 +101,13 @@ async function storeCompactTelemetry(
   input: ValidatedTelemetryInput,
   env: Env,
   deviceId: string,
-): Promise<Response> {
+): Promise<CompactTelemetryResult> {
   const now = Date.now();
   const unique = new Map<number, TelemetrySample>();
   let requestDuplicates = 0;
   for (const raw of input.samples) {
     const sample = normalizeSample(raw, now);
-    if (!sample) return json({ error: "invalid telemetry sample" }, { status: 400 });
+    if (!sample) return result({ error: "invalid telemetry sample" }, 400);
     if (unique.has(sample.sequence)) {
       requestDuplicates += 1;
       continue;
@@ -123,25 +132,25 @@ async function storeCompactTelemetry(
   ).first<TelemetryHeartbeatReceipt>();
   const lastSequence = Math.max(merged.lastSequence, Number(heartbeat?.last_sequence ?? 0));
 
-  const response: Record<string, unknown> = {
+  const body: Record<string, unknown> = {
     accepted: merged.accepted,
     acknowledgedSequences: merged.acknowledgedSequences,
     nextSequence: Math.min(Number.MAX_SAFE_INTEGER, lastSequence + 1),
   };
-  if (requestDuplicates) response.duplicates = requestDuplicates;
-  return json(response);
+  if (requestDuplicates) body.duplicates = requestDuplicates;
+  return result(body);
 }
 
 export async function applyCompactTelemetryInput(
   value: unknown,
   env: Env,
   expectedDeviceId: string,
-): Promise<Response> {
-  if (!env.DATA_BUCKET) return json({ error: "telemetry storage unavailable" }, { status: 503 });
+): Promise<CompactTelemetryResult> {
+  if (!env.DATA_BUCKET) return result({ error: "telemetry storage unavailable" }, 503);
   const validated = validatedTelemetry(value);
-  if (!validated) return json({ error: "invalid telemetry" }, { status: 400 });
+  if (!validated) return result({ error: "invalid telemetry" }, 400);
   if (validated.deviceId !== expectedDeviceId) {
-    return json({ error: "telemetry device mismatch" }, { status: 400 });
+    return result({ error: "telemetry device mismatch" }, 400);
   }
   return storeCompactTelemetry(validated.input, env, validated.deviceId);
 }
@@ -164,5 +173,6 @@ export async function receiveCompactTelemetry(
   const validated = validatedTelemetry(value);
   if (!validated) return json({ error: "invalid telemetry" }, { status: 400 });
   if (!authorizedDevice(request, env, validated.deviceId)) return unauthorized();
-  return storeCompactTelemetry(validated.input, env, validated.deviceId);
+  const stored = await storeCompactTelemetry(validated.input, env, validated.deviceId);
+  return json(stored.body, { status: stored.status });
 }
