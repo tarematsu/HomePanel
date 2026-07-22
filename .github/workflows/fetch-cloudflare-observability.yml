@@ -32,45 +32,6 @@ jobs:
       LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '60' }}
 
     steps:
-      - name: Resolve Cloudflare account
-        shell: bash
-        run: |
-          set -euo pipefail
-          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
-          curl --fail-with-body --silent --show-error -H "$auth" 'https://api.cloudflare.com/client/v4/accounts?per_page=50' > /tmp/cf-accounts.json
-          jq -e '.success == true' /tmp/cf-accounts.json >/dev/null
-          account="$CLOUDFLARE_ACCOUNT_ID"
-          [[ -n "$account" ]] || account=$(jq -er 'select(.result | length == 1) | .result[0].id' /tmp/cf-accounts.json)
-          echo "::add-mask::$account"
-          echo "RESOLVED_CF_ACCOUNT_ID=$account" >> "$GITHUB_ENV"
-          echo "account: ok"
-
-      - name: Verify GraphQL Analytics API
-        shell: bash
-        run: |
-          set -euo pipefail
-          end=$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')
-          start=$(date -u -d '1 hour ago' +'%Y-%m-%dT%H:%M:%S.000Z')
-          jq -n --arg account "$RESOLVED_CF_ACCOUNT_ID" --arg worker homepanel-cloud --arg start "$start" --arg end "$end" '{query:"query Q($accountTag: string, $datetimeStart: string, $datetimeEnd: string, $scriptName: string) { viewer { accounts(filter: {accountTag: $accountTag}) { workersInvocationsAdaptive(limit: 1, filter: {scriptName: $scriptName, datetime_geq: $datetimeStart, datetime_leq: $datetimeEnd}) { sum { requests errors subrequests } quantiles { cpuTimeP50 cpuTimeP99 } } } } }",variables:{accountTag:$account,scriptName:$worker,datetimeStart:$start,datetimeEnd:$end}}' > /tmp/graphql.json
-          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data @/tmp/graphql.json https://api.cloudflare.com/client/v4/graphql > /tmp/graphql-response.json
-          jq -e '.errors == null' /tmp/graphql-response.json >/dev/null || { jq -c '.errors' /tmp/graphql-response.json; exit 1; }
-          echo "graphql: ok"
-
-      - name: Verify Workers Observability API
-        shell: bash
-        run: |
-          set -euo pipefail
-          now=$(date -u +%s000)
-          start=$((now - 3600000))
-          jq -n --argjson from "$start" --argjson to "$now" '{queryId:"github-actions-preflight",timeframe:{from:$from,to:$to},view:"events",limit:1,datasets:[],filterCombination:"and",filters:[{kind:"filter",key:"$metadata.error",operation:"exists",type:"string"}]}' > /tmp/telemetry.json
-          status=$(curl --silent --show-error --output /tmp/telemetry-response.json --write-out '%{http_code}' -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data @/tmp/telemetry.json "https://api.cloudflare.com/client/v4/accounts/$RESOLVED_CF_ACCOUNT_ID/workers/observability/telemetry/query")
-          if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
-            jq -c . /tmp/telemetry-response.json || cat /tmp/telemetry-response.json
-            exit 1
-          fi
-          jq -e '.success == true and (.errors | length == 0)' /tmp/telemetry-response.json >/dev/null || { jq -c '{success,errors}' /tmp/telemetry-response.json; exit 1; }
-          echo "telemetry: ok"
-
       - uses: actions/checkout@v4
         with:
           show-progress: false
