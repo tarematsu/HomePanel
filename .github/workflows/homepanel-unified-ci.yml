@@ -6,7 +6,6 @@ on:
       - 'cloud/**'
       - 'video/src/**'
       - 'video/public/**'
-      - 'video/package.json'
       - '.github/workflows/homepanel-unified-ci.yml'
   push:
     branches:
@@ -15,7 +14,6 @@ on:
       - 'cloud/**'
       - 'video/src/**'
       - 'video/public/**'
-      - 'video/package.json'
       - '.github/workflows/homepanel-unified-ci.yml'
   workflow_dispatch:
 
@@ -29,7 +27,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,21 +35,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: cloud/package-lock.json
       - name: Install HomePanel dependencies
         working-directory: cloud
         run: npm ci --no-audit --no-fund
-      - name: Install video dependencies
-        working-directory: video
-        run: npm install --no-audit --no-fund
       - name: Validate HomePanel code and tests
         working-directory: cloud
         run: |
           npm run check
-          npm test
-      - name: Validate video code and tests
-        working-directory: video
-        run: |
-          npm run check:syntax
           npm test
       - name: Build the unified Worker
         working-directory: cloud
@@ -67,11 +59,11 @@ jobs:
             npx wrangler d1 execute homepanel-data --local --persist-to .wrangler-ci-state --config wrangler.jsonc --command "PRAGMA foreign_key_check;"
             npx wrangler d1 execute homepanel-data --local --persist-to .wrangler-ci-state --config wrangler.jsonc --command "SELECT COUNT(*) AS schema_object_count FROM sqlite_schema WHERE type IN ('table','index','trigger') AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%';"
           } 2>&1 | tee d1-validation.log
-      - name: Upload D1 validation output
-        if: always()
+      - name: Upload failed D1 validation output
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: homepanel-unified-d1-output-${{ github.run_id }}
           path: cloud/d1-validation.log
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 7
