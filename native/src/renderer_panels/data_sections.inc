@@ -62,7 +62,6 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& card) {
     RECT legend{chart.left, chart.top, chart.right, chart.top + legendHeight};
     SelectObject(dc, TierFont(FontTier::Small));
 
-    const int legendHalf = (static_cast<int>(legend.right - legend.left)) / 2;
     const int swatchWidth = std::max(14, SpanX(body, 45));
     const int swatchHeight = std::max(3, legendHeight * 20 / 100);
     const auto drawPreviousOverlay = [&](const RECT& rect) {
@@ -75,25 +74,64 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& card) {
       SelectObject(dc, previousPen);
       DeleteObject(dottedPen);
     };
-    RECT currentSwatch{legend.left, legend.top + (legendHeight - swatchHeight) / 2,
-                       legend.left + swatchWidth,
-                       legend.top + (legendHeight - swatchHeight) / 2 + swatchHeight};
-    RECT previousSwatch{legend.left + legendHalf, currentSwatch.top,
-                        legend.left + legendHalf + swatchWidth, currentSwatch.bottom};
+
+    double currentWeekUsage = 0.0;
+    double previousWeekUsage = 0.0;
+    bool currentWeekComplete = nativeDashboard_.octopusProfile.size() == 7;
+    bool previousWeekComplete = currentWeekComplete;
+    for (const auto& item : nativeDashboard_.octopusProfile) {
+      if (item.currentComplete && std::isfinite(item.currentTotal)) {
+        currentWeekUsage += item.currentTotal;
+      } else {
+        currentWeekComplete = false;
+      }
+      if (item.previousComplete && std::isfinite(item.previousTotal)) {
+        previousWeekUsage += item.previousTotal;
+      } else {
+        previousWeekComplete = false;
+      }
+    }
+    const auto weeklyUsageText = [](double value, bool complete) {
+      return complete ? Fixed(value, 1) : std::wstring(L"--.-");
+    };
+    const std::wstring currentLegend =
+        nativeDashboard_.currentEnergyLabel + L" " +
+        weeklyUsageText(currentWeekUsage, currentWeekComplete);
+    const std::wstring previousLegend =
+        nativeDashboard_.previousEnergyLabel + L" " +
+        weeklyUsageText(previousWeekUsage, previousWeekComplete);
+
+    SIZE currentTextSize{};
+    SIZE previousTextSize{};
+    GetTextExtentPoint32W(dc, currentLegend.c_str(), static_cast<int>(currentLegend.size()),
+                          &currentTextSize);
+    GetTextExtentPoint32W(dc, previousLegend.c_str(), static_cast<int>(previousLegend.size()),
+                          &previousTextSize);
+    const int swatchGap = std::max(4, SpanX(body, 15));
+    const int groupGap = std::max(12, SpanX(body, 45));
+    const int currentGroupWidth = swatchWidth + swatchGap + currentTextSize.cx;
+    const int previousGroupWidth = swatchWidth + swatchGap + previousTextSize.cx;
+    const int groupWidth = currentGroupWidth + groupGap + previousGroupWidth;
+    const int groupLeft =
+        legend.left + std::max(0, (static_cast<int>(legend.right - legend.left) - groupWidth) / 2);
+    const int swatchTop = legend.top + (legendHeight - swatchHeight) / 2;
+    RECT currentSwatch{groupLeft, swatchTop, groupLeft + swatchWidth,
+                       swatchTop + swatchHeight};
+    RECT currentLegendRect{currentSwatch.right + swatchGap, legend.top,
+                           currentSwatch.right + swatchGap + currentTextSize.cx, legend.bottom};
+    RECT previousSwatch{currentLegendRect.right + groupGap, swatchTop,
+                        currentLegendRect.right + groupGap + swatchWidth,
+                        swatchTop + swatchHeight};
+    RECT previousLegendRect{previousSwatch.right + swatchGap, legend.top,
+                            previousSwatch.right + swatchGap + previousTextSize.cx, legend.bottom};
     DrawWidgetCard(dc, currentSwatch, kWidgetCyan, 2, 220);
     drawPreviousOverlay(previousSwatch);
 
-    std::wstring currentLegend = nativeDashboard_.currentEnergyLabel;
-    std::wstring previousLegend = nativeDashboard_.previousEnergyLabel;
     SetTextColor(dc, kWidgetMuted);
-    RECT currentLegendRect{currentSwatch.right + SpanX(body, 15), legend.top,
-                           legend.left + legendHalf - SpanX(body, 10), legend.bottom};
-    RECT previousLegendRect{previousSwatch.right + SpanX(body, 15), legend.top,
-                            legend.right, legend.bottom};
     DrawTextInRect(dc, currentLegend, currentLegendRect,
-                   DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+                   DT_LEFT | DT_SINGLELINE | DT_VCENTER);
     DrawTextInRect(dc, previousLegend, previousLegendRect,
-                   DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+                   DT_LEFT | DT_SINGLELINE | DT_VCENTER);
 
     RECT plot{chart.left + yLabelWidth, legend.bottom + SpanY(body, 15),
               chart.right - SpanX(body, 10), chart.bottom - axisHeight};
