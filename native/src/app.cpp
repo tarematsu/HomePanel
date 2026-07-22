@@ -8,7 +8,6 @@ namespace {
 constexpr wchar_t kWindowClass[] = L"HomePanelNativeWindow";
 constexpr UINT_PTR kCentralTimer = 1;
 constexpr uint32_t kFastTickMs = 2000;
-constexpr uint32_t kSteadyDashboardTickMs = 5000;
 constexpr uint32_t kMaxIdleTickMs = 30'000;
 constexpr int64_t kDashboardStartupFallbackMs = 30'000;
 constexpr int64_t kDashboardAudioStabilityMs = 1'500;
@@ -142,8 +141,6 @@ void App::StartServices() {
   }
   newsCount_ = renderer_->NewsCount();
   newsIndex_ = 0;
-
-
 
   // A and B share one WebView2 user-data folder and browser environment, while
   // controller profiles keep cookies, cache, storage, and service workers isolated.
@@ -393,6 +390,7 @@ void App::Tick() {
   PublishRenderState();
   if (rendererStarted_) renderer_->TickNativePanels(now);
   UpdateStationheadPlaybackFallback(now);
+
   uint32_t nextTickMs = kMaxIdleTickMs;
   const bool stationheadNeedsFastTick =
       !rendererStarted_ ||
@@ -400,16 +398,32 @@ void App::Tick() {
       (secondaryStationhead_ && StationheadNeedsForeground(secondaryStatus));
   if (stationheadNeedsFastTick) {
     nextTickMs = kFastTickMs;
-  } else if (selectedTab_ == WorkspaceTab::Main) {
-    nextTickMs = kSteadyDashboardTickMs;
   } else {
-    nextTickMs = std::min(nextTickMs, NextDelayFromDeadline(now, stationhead_->NextWakeAt(), kMaxIdleTickMs));
+    nextTickMs = std::min(
+        nextTickMs,
+        NextDelayFromDeadline(now, stationhead_->NextWakeAt(), kMaxIdleTickMs));
     if (secondaryStarted_ && secondaryStationhead_) {
-      nextTickMs = std::min(nextTickMs, NextDelayFromDeadline(now, secondaryStationhead_->NextWakeAt(), kMaxIdleTickMs));
+      nextTickMs = std::min(
+          nextTickMs,
+          NextDelayFromDeadline(
+              now, secondaryStationhead_->NextWakeAt(), kMaxIdleTickMs));
     }
-    if (toastUntil_ > 0) nextTickMs = std::min(nextTickMs, NextDelayFromDeadline(now, toastUntil_, kMaxIdleTickMs));
+    if (toastUntil_ > 0) {
+      nextTickMs = std::min(
+          nextTickMs,
+          NextDelayFromDeadline(now, toastUntil_, kMaxIdleTickMs));
+    }
     if (newsCount_ > 1 && lastNewsRotateAt_ > 0) {
-      nextTickMs = std::min(nextTickMs, NextDelayFromDeadline(now, lastNewsRotateAt_ + 30'000, kMaxIdleTickMs));
+      nextTickMs = std::min(
+          nextTickMs,
+          NextDelayFromDeadline(
+              now, lastNewsRotateAt_ + 30'000, kMaxIdleTickMs));
+    }
+    if (!config_.stationhead.fallbackUrl.empty()) {
+      nextTickMs = std::min(
+          nextTickMs,
+          NextDelayFromDeadline(
+              now, renderer_->NativePlaybackNextWakeAt(now), kMaxIdleTickMs));
     }
   }
   ScheduleNextTick(nextTickMs);
@@ -555,7 +569,6 @@ void App::InvalidateAll() {
   ::InvalidateRect(window_, nullptr, FALSE);
 }
 
-
 void App::HandleAction(UiAction action) {
   switch (action) {
     case UiAction::AppUpdate:
@@ -584,4 +597,4 @@ void App::LogUnhandled(DWORD code, void* address) {
     logger_->Error(text.str());
   }
 }
-}
+}  // namespace hp
