@@ -9,7 +9,6 @@
   "workers_dev": true,
   "preview_urls": false,
   "keep_vars": true,
-  "logpush": true,
   "assets": {
     "directory": "../video/public",
     "binding": "ASSETS",
