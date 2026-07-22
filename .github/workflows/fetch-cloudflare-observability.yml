@@ -32,79 +32,21 @@ jobs:
       LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '60' }}
 
     steps:
-      - name: Cloudflare API preflight
+      - name: Cloudflare account preflight
         shell: bash
         run: |
-          python3 - <<'PY'
-          import datetime as dt
-          import json
-          import os
-          import urllib.error
-          import urllib.request
-
-          token = os.environ['CLOUDFLARE_API_TOKEN']
-          worker = os.environ['CLOUDFLARE_WORKERS'].split(',')[0]
-          base = 'https://api.cloudflare.com/client/v4'
-
-          def call(label, url, payload=None):
-              request = urllib.request.Request(
-                  url,
-                  data=None if payload is None else json.dumps(payload).encode(),
-                  method='GET' if payload is None else 'POST',
-                  headers={
-                      'Authorization': f'Bearer {token}',
-                      'Content-Type': 'application/json',
-                      'Accept': 'application/json',
-                  },
-              )
-              try:
-                  with urllib.request.urlopen(request, timeout=30) as response:
-                      data = json.load(response)
-              except urllib.error.HTTPError as error:
-                  detail = error.read().decode('utf-8', errors='replace')[:1500]
-                  raise SystemExit(f'{label} HTTP {error.code}: {detail}')
-              if data.get('success') is False or data.get('errors'):
-                  raise SystemExit(f'{label} API error: {json.dumps(data.get("errors"), ensure_ascii=False)[:1500]}')
-              print(f'{label}: ok')
-              return data
-
-          call('token', f'{base}/user/tokens/verify')
-          accounts = call('accounts', f'{base}/accounts?per_page=50').get('result') or []
-          account = os.environ.get('CLOUDFLARE_ACCOUNT_ID', '').strip()
-          if not account:
-              if len(accounts) != 1:
-                  raise SystemExit(f'account selection: expected one visible account, got {len(accounts)}')
-              account = accounts[0]['id']
-
-          end = dt.datetime.now(dt.timezone.utc)
-          start = end - dt.timedelta(minutes=60)
-          iso = lambda value: value.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
-          call('graphql', f'{base}/graphql', {
-              'query': '''query WorkerMetrics($accountTag: string, $datetimeStart: string, $datetimeEnd: string, $scriptName: string) {
-                viewer { accounts(filter: {accountTag: $accountTag}) {
-                  workersInvocationsAdaptive(limit: 1, filter: {scriptName: $scriptName, datetime_geq: $datetimeStart, datetime_leq: $datetimeEnd}) {
-                    sum { requests errors subrequests }
-                    quantiles { cpuTimeP50 cpuTimeP99 }
-                  }
-                }}
-              }''',
-              'variables': {
-                  'accountTag': account,
-                  'datetimeStart': iso(start),
-                  'datetimeEnd': iso(end),
-                  'scriptName': worker,
-              },
-          })
-          call('telemetry', f'{base}/accounts/{account}/workers/observability/telemetry/query', {
-              'queryId': 'github-actions-preflight',
-              'timeframe': {'from': int(start.timestamp() * 1000), 'to': int(end.timestamp() * 1000)},
-              'view': 'events',
-              'limit': 1,
-              'datasets': [],
-              'filterCombination': 'and',
-              'filters': [{'kind': 'filter', 'key': '$metadata.error', 'operation': 'exists', 'type': 'string'}],
-          })
-          PY
+          set -euo pipefail
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          curl --fail-with-body --silent --show-error -H "$auth" https://api.cloudflare.com/client/v4/user/tokens/verify | jq -e '.success == true' >/dev/null
+          echo "token: ok"
+          curl --fail-with-body --silent --show-error -H "$auth" 'https://api.cloudflare.com/client/v4/accounts?per_page=50' > /tmp/cf-accounts.json
+          jq -e '.success == true' /tmp/cf-accounts.json >/dev/null
+          count=$(jq '.result | length' /tmp/cf-accounts.json)
+          echo "visible accounts: $count"
+          if [[ -z "$CLOUDFLARE_ACCOUNT_ID" && "$count" -ne 1 ]]; then
+            echo "Set repository variable CLOUDFLARE_ACCOUNT_ID because the token sees $count accounts" >&2
+            exit 1
+          fi
 
       - uses: actions/checkout@v4
         with:
