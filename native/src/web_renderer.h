@@ -134,14 +134,13 @@ class Renderer {
  private:
   struct NativePlaybackUpdate {
     NativePlaybackProjection projection;
-    uint64_t revision = 0;
+    uint64_t payloadSignature = 0;
     uint64_t contentRevision = 0;
     bool hasPayload = false;
   };
 
   struct NativePlaybackTickState {
     bool active = false;
-    size_t source = 0;
     size_t trackIndex = 0;
     uint64_t contentRevision = 0;
 
@@ -318,7 +317,7 @@ class Renderer {
   std::condition_variable nativePlaybackWake_;
   std::mutex nativePlaybackWakeMutex_;
   mutable std::mutex nativePlaybackMutex_;
-  std::array<NativePlaybackUpdate, 2> nativePlaybackUpdates_{};
+  NativePlaybackUpdate nativePlaybackUpdate_{};
   uint64_t nativePlaybackContentRevision_ = 0;
   NativePlaybackTickState nativePlaybackTickState_{};
   std::map<std::wstring, BitmapCacheEntry> nativeImageBitmaps_;
