@@ -95,6 +95,7 @@ class StationheadPlayer {
   void Stop();
   void Tick(int64_t nowMs);
   [[nodiscard]] int64_t NextWakeAt() const noexcept { return nextTickAt_; }
+  void RequestImmediateTick() noexcept { nextTickAt_ = 0; }
   [[nodiscard]] bool AudioPlaying() const noexcept {
     return audioPlaying_.load(std::memory_order_relaxed);
   }

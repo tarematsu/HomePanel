@@ -5,16 +5,81 @@
 // with native-application implementations.
 #define ApplyStationheadResourceBlocking ApplyStationheadResourceBlockingBase
 #define StationheadAutoplayScript StationheadAutoplayScriptBase
+#define StationheadVolumeScript StationheadVolumeScriptWithMutationObserver
 #define StationheadApiPlayStatsScript StationheadApiPlayStatsScriptUnthrottled
 #define StationheadAuthProbeScript StationheadAuthProbeScriptNetwork
 #include "sh_shared.h"
 #undef StationheadAuthProbeScript
 #undef StationheadApiPlayStatsScript
+#undef StationheadVolumeScript
 #undef StationheadAutoplayScript
 #undef ApplyStationheadResourceBlocking
 #include "sh_script_blocking_extension.h"
 
 namespace hp {
+
+// Media elements already emit play/loadedmetadata when they become relevant.
+// Use those events instead of retaining a document-wide MutationObserver that
+// scans every Stationhead DOM insertion in both long-lived WebViews.
+inline std::wstring StationheadVolumeScript(int percent) {
+  std::wostringstream script;
+  script << LR"JS(
+(() => {
+  const v = )JS"
+         << percent
+         << LR"JS( / 100;
+  window.__homepanelStationheadVolume = v;
+
+  // Disconnect the observer installed by older builds if this page survives an
+  // in-place update/reload. New builds never create it.
+  const legacyObserver = window.__homepanelStationheadVolumeObserver;
+  if (legacyObserver) {
+    try { legacyObserver.disconnect(); } catch (_) {}
+    window.__homepanelStationheadVolumeObserver = null;
+  }
+
+  const apply = element => {
+    if (!element?.matches?.('audio,video')) return;
+    const current = Number(window.__homepanelStationheadVolume);
+    if (!Number.isFinite(current) || element.__homepanelVolume === current) return;
+    try {
+      element.volume = current;
+      element.defaultMuted = current <= 0;
+      element.muted = current <= 0;
+      element.__homepanelVolume = current;
+    } catch (_) {}
+  };
+  const applyAll = () => {
+    for (const element of document.querySelectorAll('audio,video')) apply(element);
+  };
+  window.__homepanelStationheadVolumeApply = applyAll;
+  applyAll();
+
+  // Keep one removable handler per page. Returning to the default 100% volume
+  // now removes the listeners instead of leaving both long-lived WebViews with
+  // callbacks that no longer perform useful work.
+  let mediaEventHandler = window.__homepanelStationheadVolumeEventHandler;
+  if (v !== 1) {
+    if (!mediaEventHandler) {
+      mediaEventHandler = event => apply(event.target);
+      window.__homepanelStationheadVolumeEventHandler = mediaEventHandler;
+    }
+    if (!window.__homepanelStationheadVolumeEventsInstalled) {
+      window.__homepanelStationheadVolumeEventsInstalled = true;
+      document.addEventListener('play', mediaEventHandler, true);
+      document.addEventListener('loadedmetadata', mediaEventHandler, true);
+    }
+  } else if (mediaEventHandler &&
+             window.__homepanelStationheadVolumeEventsInstalled) {
+    document.removeEventListener('play', mediaEventHandler, true);
+    document.removeEventListener('loadedmetadata', mediaEventHandler, true);
+    window.__homepanelStationheadVolumeEventsInstalled = false;
+  }
+  return true;
+})()
+)JS";
+  return script.str();
+}
 
 // Block independently named social/UI JavaScript chunks before WebView2 sends
 // their network requests. Keep the match limited to .js/.mjs resources so API
@@ -126,6 +191,8 @@ inline std::wstring StationheadAudioOnlyUiScript() {
   if (window.__homepanelStationheadAudioOnlyUi) return;
   window.__homepanelStationheadAudioOnlyUi = true;
 
+  const nativeTimeout = window.setTimeout.bind(window);
+  const nativeClearTimeout = window.clearTimeout.bind(window);
   const hiddenAttribute = 'data-homepanel-audio-only-hidden';
   const styleId = 'homepanel-stationhead-audio-only';
   const safeSelector = [
@@ -198,42 +265,98 @@ inline std::wstring StationheadAudioOnlyUiScript() {
     root.appendChild(style);
     return true;
   };
+
   const pending = new Set();
-  let queued = false;
+  let flushTimer = 0;
+  let observer = null;
+  let rescanOnVisible = false;
+  const pageHidden = () => document.visibilityState === 'hidden';
   const flush = () => {
-    queued = false;
-    for (const root of pending) scan(root);
+    flushTimer = 0;
+    if (pageHidden()) {
+      pending.clear();
+      rescanOnVisible = true;
+      return;
+    }
+    for (const root of pending) {
+      if (root === document || root?.isConnected) scan(root);
+    }
     pending.clear();
   };
   const schedule = root => {
-    if (root) pending.add(root);
-    if (queued) return;
-    queued = true;
-    Promise.resolve().then(flush);
+    if (pageHidden()) {
+      rescanOnVisible = true;
+      return;
+    }
+    if (root && !pending.has(document)) {
+      if (pending.size >= 24) {
+        pending.clear();
+        pending.add(document);
+      } else {
+        pending.add(root);
+      }
+    }
+    if (flushTimer) return;
+    flushTimer = nativeTimeout(flush, 80);
   };
-  const start = () => {
-    if (!document.documentElement) return;
-    installStyle();
-    scan(document);
-    const observer = new MutationObserver(records => {
+  const detachObserver = () => {
+    observer?.disconnect?.();
+    observer = null;
+    window.__homepanelStationheadAudioOnlyUiObserver = null;
+    pending.clear();
+    if (flushTimer) {
+      nativeClearTimeout(flushTimer);
+      flushTimer = 0;
+    }
+  };
+  const attachObserver = () => {
+    if (observer || pageHidden() || !document.documentElement) return;
+    observer = new MutationObserver(records => {
       for (const record of records) {
-        if (record.type === 'characterData') {
-          schedule(record.target?.parentElement);
+        if (record.type === 'attributes') {
+          schedule(record.target);
           continue;
         }
-        schedule(record.target);
-        for (const node of record.addedNodes || []) schedule(node);
+        for (const node of record.addedNodes || []) {
+          if (node instanceof Element) schedule(node);
+        }
       }
     });
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
-      characterData: true,
       attributes: true,
       attributeFilter: ['id', 'data-testid', 'aria-label', 'role', 'href'],
     });
     window.__homepanelStationheadAudioOnlyUiObserver = observer;
   };
+  const resumeObserver = () => {
+    if (pageHidden() || !document.documentElement) return;
+    installStyle();
+    if (rescanOnVisible) {
+      rescanOnVisible = false;
+      scan(document);
+    }
+    attachObserver();
+  };
+  const pauseObserver = () => {
+    rescanOnVisible = true;
+    detachObserver();
+  };
+  const start = () => {
+    if (!document.documentElement) return;
+    installStyle();
+    scan(document);
+    if (pageHidden()) {
+      rescanOnVisible = true;
+      return;
+    }
+    attachObserver();
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (pageHidden()) pauseObserver();
+    else resumeObserver();
+  });
   if (document.documentElement) start();
   else document.addEventListener('DOMContentLoaded', start, { once: true });
 })()

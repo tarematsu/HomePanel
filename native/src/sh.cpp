@@ -10,6 +10,7 @@ constexpr int64_t kAuthProbeTimeoutMs = 30'000;
 constexpr int64_t kStationheadTrackBoundaryRefreshDelayMs = 52 * 60'000;
 constexpr int64_t kStationheadTrackBoundaryNavigationTimeoutMs = 30'000;
 constexpr int64_t kStationheadTrackBoundaryPlaybackRecoveryTimeoutMs = 30'000;
+constexpr size_t kStationheadDiagnosticsMaxCharacters = 2'048;
 
 bool CallbackAlive(const std::shared_ptr<std::atomic<bool>>& alive) {
   return alive && alive->load(std::memory_order_acquire);
@@ -246,33 +247,52 @@ void StationheadPlayer::RecoverTrackBoundaryPlayback() {
       return '';
     }
   };
-  const media = Array.from(document.querySelectorAll('audio,video')).map((element, index) => ({
-    index,
-    tag: element.tagName,
-    paused: element.paused,
-    ended: element.ended,
-    readyState: element.readyState,
-    networkState: element.networkState,
-    currentTime: Number.isFinite(element.currentTime) ? element.currentTime : null,
-    duration: Number.isFinite(element.duration) ? element.duration : null,
-    muted: element.muted,
-    volume: element.volume,
-    hasMediaKeys: Boolean(element.mediaKeys),
-    error: element.error ? {
-      code: element.error.code,
-      message: String(element.error.message || ''),
-    } : null,
-    sourceHost: sourceHost(element),
-  }));
-  return {
+  // Failure diagnostics have a strict observability budget: sampling a bounded
+  // number of media elements avoids allocating and serializing an unbounded DOM
+  // snapshot immediately before the WebView is rebuilt.
+  const elements = document.querySelectorAll('audio,video');
+  const sampledCount = Math.min(elements.length, 8);
+  const media = [];
+  for (let index = 0; index < sampledCount; index += 1) {
+    const element = elements[index];
+    media.push({
+      index,
+      tag: element.tagName,
+      paused: element.paused,
+      ended: element.ended,
+      readyState: element.readyState,
+      networkState: element.networkState,
+      currentTime: Number.isFinite(element.currentTime) ? element.currentTime : null,
+      duration: Number.isFinite(element.duration) ? element.duration : null,
+      muted: element.muted,
+      volume: element.volume,
+      hasMediaKeys: Boolean(element.mediaKeys),
+      error: element.error ? {
+        code: element.error.code,
+        message: String(element.error.message || '').slice(0, 160),
+      } : null,
+      sourceHost: sourceHost(element),
+    });
+  }
+  const diagnostics = {
     locationHost: String(location.hostname || ''),
-    locationPath: String(location.pathname || ''),
+    locationPath: String(location.pathname || '').slice(0, 256),
     visibility: document.visibilityState,
     focused: document.hasFocus(),
     mediaSession: navigator.mediaSession?.playbackState || '',
     audioFlag: window.__homepanelAudioPlaying,
+    mediaCount: elements.length,
+    omittedMediaCount: Math.max(0, elements.length - sampledCount),
     media,
   };
+  // Leave headroom for WebView2's result encoding and the native log prefix.
+  // Preserve the first elements and exact total/omitted counts when trimming.
+  while (diagnostics.media.length > 1 &&
+         JSON.stringify(diagnostics).length > 1_800) {
+    diagnostics.media.pop();
+    diagnostics.omittedMediaCount += 1;
+  }
+  return diagnostics;
 })()
 )JS";
   const HRESULT diagnosticStarted = view->ExecuteScript(
@@ -287,7 +307,9 @@ void StationheadPlayer::RecoverTrackBoundaryPlayback() {
               return S_OK;
             }
             std::wstring diagnostic = resultJson ? resultJson : L"null";
-            if (diagnostic.size() > 2'048) diagnostic.resize(2'048);
+            if (diagnostic.size() > kStationheadDiagnosticsMaxCharacters) {
+              diagnostic.resize(kStationheadDiagnosticsMaxCharacters);
+            }
             log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
                       L" track-boundary playback diagnostics: " + diagnostic);
             return S_OK;

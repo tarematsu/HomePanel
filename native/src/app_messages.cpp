@@ -323,8 +323,11 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         showPlayer = true;
       }
       if (showPlayer) {
-        if (selectedTab_ != WorkspaceTab::Stationhead) {
-          selectedTab_ = WorkspaceTab::Stationhead;
+        // Keep the shared workspace in Main placement mode. It evaluates A and B
+        // independently, so a request from B remains in B's half instead of the
+        // legacy Stationhead workspace selecting A full-screen over it.
+        if (selectedTab_ != WorkspaceTab::Main) {
+          selectedTab_ = WorkspaceTab::Main;
           layoutChanged = true;
         }
       } else if (ShouldReturnMainForStationheadChanges(changes) &&

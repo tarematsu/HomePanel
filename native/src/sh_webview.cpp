@@ -236,6 +236,10 @@ void StationheadPlayer::ConfigureWebView() {
                     return S_OK;
                   }
                   ConfigureAuthWebView();
+                  if (!spotifyAuthorization_ || !CallbackAlive(authAlive)) {
+                    CompletePendingAuthPopupDeferral();
+                    return S_OK;
+                  }
                   if (SUCCEEDED(popupArgs->put_NewWindow(authWebview_.Get()))) {
                     popupArgs->put_Handled(TRUE);
                     SelectTab(StationheadTabKind::Auth);
@@ -419,7 +423,7 @@ void StationheadPlayer::ConfigureWebView() {
             return S_OK;
           }).Get(), &webMessageToken_);
 
-  webview_->add_NavigationCompleted(
+  const HRESULT navigationCompletedResult = webview_->add_NavigationCompleted(
       Callback<ICoreWebView2NavigationCompletedEventHandler>(
           [this, alive](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
             if (!CallbackAlive(alive) || !args) return S_OK;
@@ -445,13 +449,10 @@ void StationheadPlayer::ConfigureWebView() {
             COREWEBVIEW2_WEB_ERROR_STATUS webError{};
             args->get_IsSuccess(&success);
             args->get_WebErrorStatus(&webError);
-            if (spotifyAuthorization_) {
-              std::lock_guard lock(mutex_);
-              status_.navigating = false;
-              status_.detail = success ? L"Spotify login ready" : L"Spotify authentication navigation failed";
-              PostChange();
-              return S_OK;
-            }
+            // This callback belongs to the Stationhead playback WebView. Spotify
+            // authorization always runs in authWebview_; an overlapping auth
+            // session must not reclassify this completion and suppress playback
+            // failure recovery or lastReloadAt_ updates.
             const int64_t now = UnixMillis();
             {
               std::lock_guard lock(mutex_);
@@ -468,6 +469,14 @@ void StationheadPlayer::ConfigureWebView() {
             PostChange();
             return S_OK;
           }).Get(), &navigationToken_);
+  if (FAILED(navigationCompletedResult)) {
+    navigationToken_ = {};
+    ScheduleRecreate(
+        L"navigation-completed handler registration failed " +
+            HResultHex(navigationCompletedResult),
+        1'000);
+    return;
+  }
 
   webview_->add_ProcessFailed(
       Callback<ICoreWebView2ProcessFailedEventHandler>(
@@ -523,29 +532,62 @@ void StationheadPlayer::ConfigureAuthWebView() {
   if (config_.lowMemoryMode && SUCCEEDED(authWebview_.As(&authV19)) && authV19) {
     authV19->put_MemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW);
   }
-  authWebview_->add_NavigationCompleted(
+
+  const HRESULT authNavigationResult = authWebview_->add_NavigationCompleted(
       Callback<ICoreWebView2NavigationCompletedEventHandler>(
           [this, alive](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
-            if (!CallbackAlive(alive)) return S_OK;
-            BOOL success = FALSE;
-            if (args) args->get_IsSuccess(&success);
-            if (success) {
-              SelectTab(StationheadTabKind::Auth);
-              if (authWebview_) authWebview_->PostWebMessageAsJson(L"{\"type\":\"auth-tab-ready\"}");
+            if (!CallbackAlive(alive) || !spotifyAuthorization_) return S_OK;
+            if (!args) {
+              FinishSpotifyAuthorization(L"Spotify auth navigation returned no completion result");
+              return S_OK;
             }
+            BOOL success = FALSE;
+            COREWEBVIEW2_WEB_ERROR_STATUS webError{};
+            args->get_IsSuccess(&success);
+            args->get_WebErrorStatus(&webError);
+            if (!success) {
+              FinishSpotifyAuthorization(
+                  L"Spotify auth navigation failed " +
+                  std::to_wstring(static_cast<int>(webError)));
+              return S_OK;
+            }
+            {
+              std::lock_guard lock(mutex_);
+              status_.navigating = false;
+              status_.detail = L"Spotify login ready";
+            }
+            SelectTab(StationheadTabKind::Auth);
+            if (authWebview_) authWebview_->PostWebMessageAsJson(L"{\"type\":\"auth-tab-ready\"}");
+            PostChange();
             return S_OK;
           }).Get(), &authNavigationToken_);
-  authWebview_->add_WindowCloseRequested(
+  if (FAILED(authNavigationResult)) {
+    authNavigationToken_ = {};
+    FinishSpotifyAuthorization(
+        L"Spotify auth navigation handler registration failed " +
+        HResultHex(authNavigationResult));
+    return;
+  }
+
+  const HRESULT authCloseResult = authWebview_->add_WindowCloseRequested(
       Callback<ICoreWebView2WindowCloseRequestedEventHandler>(
           [this, alive](ICoreWebView2*, IUnknown*) -> HRESULT {
-            if (!CallbackAlive(alive)) return S_OK;
+            if (!CallbackAlive(alive) || !spotifyAuthorization_) return S_OK;
             FinishSpotifyAuthorization(L"Spotify login closed; returning to Stationhead");
             return S_OK;
           }).Get(), &authCloseToken_);
-  authWebview_->add_WebMessageReceived(
+  if (FAILED(authCloseResult)) {
+    authCloseToken_ = {};
+    FinishSpotifyAuthorization(
+        L"Spotify auth close handler registration failed " +
+        HResultHex(authCloseResult));
+    return;
+  }
+
+  const HRESULT authMessageResult = authWebview_->add_WebMessageReceived(
       Callback<ICoreWebView2WebMessageReceivedEventHandler>(
           [this, alive](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
-            if (!CallbackAlive(alive)) return S_OK;
+            if (!CallbackAlive(alive) || !spotifyAuthorization_) return S_OK;
             LPWSTR messageRaw = nullptr;
             if (!args || FAILED(args->get_WebMessageAsJson(&messageRaw)) || !messageRaw) return S_OK;
             const std::wstring messageJson = messageRaw;
@@ -563,16 +605,34 @@ void StationheadPlayer::ConfigureAuthWebView() {
                   ? L"Spotify authentication completed"
                   : L"Spotify authentication failed or cancelled");
             } catch (...) {
+              log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
+                        L" Spotify auth WebView returned an invalid message");
             }
             return S_OK;
           }).Get(), &authMessageToken_);
-  authWebview_->add_ProcessFailed(
+  if (FAILED(authMessageResult)) {
+    authMessageToken_ = {};
+    FinishSpotifyAuthorization(
+        L"Spotify auth message handler registration failed " +
+        HResultHex(authMessageResult));
+    return;
+  }
+
+  const HRESULT authProcessFailedResult = authWebview_->add_ProcessFailed(
       Callback<ICoreWebView2ProcessFailedEventHandler>(
           [this, alive](ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs*) -> HRESULT {
-            if (!CallbackAlive(alive)) return S_OK;
+            if (!CallbackAlive(alive) || !spotifyAuthorization_) return S_OK;
             FinishSpotifyAuthorization(L"Spotify login WebView failed");
             return S_OK;
           }).Get(), &authProcessFailedToken_);
+  if (FAILED(authProcessFailedResult)) {
+    authProcessFailedToken_ = {};
+    FinishSpotifyAuthorization(
+        L"Spotify auth process-failure handler registration failed " +
+        HResultHex(authProcessFailedResult));
+    return;
+  }
+
   ApplyMute();
   if (!authPendingUrl_.empty()) {
     const HRESULT navigationResult = authWebview_->Navigate(authPendingUrl_.c_str());

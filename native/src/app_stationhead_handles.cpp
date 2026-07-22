@@ -92,7 +92,15 @@ void StationheadHandleBase::Start() {
 }
 
 void StationheadHandleBase::Tick(int64_t nowMs) {
-  if (player_) player_->Tick(nowMs);
+  if (!player_) return;
+  // Authorization can begin while the steady-state scheduler still carries a
+  // much later background deadline. Wake only that interactive state so the
+  // auth-controller watchdog is evaluated near its intended 20-second limit
+  // without turning normal A/B playback into a permanently fast polling loop.
+  if (player_->Status().spotifyAuthorization) {
+    player_->RequestImmediateTick();
+  }
+  player_->Tick(nowMs);
 }
 
 void StationheadHandleBase::Reconnect() {
@@ -172,7 +180,7 @@ bool StationheadHandleBase::IsInteractive(
     const StationheadStatus& status) const noexcept {
   if (RequiresInteractiveStationhead(status)) return true;
   return !status.audioPlaying &&
-         !SuppressTrackTransitionGap(status.audioPlaying, false);
+          !SuppressTrackTransitionGap(status.audioPlaying, false);
 }
 
 bool StationheadHandleBase::SuppressTrackTransitionGap(
@@ -228,8 +236,12 @@ void StationheadHandleBase::RaiseActiveHost() const {
 
 void StationheadHandleBase::ApplyInteractiveBounds() {
   if (!player_) return;
-  player_->ClearStartupPreviewBounds();
-  player_->SetBounds(workspaceBounds_);
+  // The handle is the sole owner of the startup-preview lifetime. Interactive
+  // transitions (login, Spotify auth, reconnect, audio-stop recovery) must not
+  // clear the player's preview state and then immediately reapply it, because
+  // that exposes a transient workspace-sized or hidden surface between the two
+  // calls. Reuse the same atomic placement path as every other bounds update.
+  ApplyBounds();
 }
 
 void StationheadHandleBase::ApplyBounds() {

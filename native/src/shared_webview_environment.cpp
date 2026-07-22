@@ -11,7 +11,6 @@ namespace {
 
 
 
-
 constexpr wchar_t kWebView2Arguments[] =
     L"--disable-domain-reliability "
     L"--disable-breakpad "
@@ -124,9 +123,14 @@ void SharedWebViewEnvironment::Invalidate(const fs::path& userDataFolder) {
     auto iterator = entries_.find(key);
     if (iterator == entries_.end()) return;
     Entry& entry = iterator->second;
+    // A and B share this environment but create independent profile
+    // controllers. A timeout after the environment is already ready belongs to
+    // that one controller; clearing the shared cache here can make the healthy
+    // peer create a second environment against the same user-data folder.
+    // Invalidate only an environment creation that is still genuinely pending.
+    if (entry.environment) return;
     ++entry.generation;
     entry.creating = false;
-    entry.environment.Reset();
     callbacks.swap(entry.pending);
   }
   const HRESULT timeout = HRESULT_FROM_WIN32(ERROR_TIMEOUT);
@@ -156,4 +160,4 @@ void SharedWebViewEnvironment::Complete(const std::wstring& key,
     callback(result, readyEnvironment.Get());
   }
 }
-}
+}  // namespace hp
