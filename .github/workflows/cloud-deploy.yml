@@ -124,8 +124,7 @@ jobs:
             cloud/scripts/deploy-existing.mjs \
             cloud/wrangler.jsonc \
             cloud/package.json \
-            cloud/package-lock.json \
-            .github/workflows/d1-migrations.yml; then
+            cloud/package-lock.json; then
             npm run deploy:worker
           else
             echo "Migration-sensitive files changed; applying pending migrations before deployment."
