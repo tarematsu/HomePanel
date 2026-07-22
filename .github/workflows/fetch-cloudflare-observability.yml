@@ -1,13 +1,21 @@
-name: Cloudflare Observability
+name: Cloudflare Diagnostics
 
 on:
   workflow_run:
     workflows: ["Deploy unified homepanel-cloud Worker"]
     types: [completed]
+  schedule:
+    - cron: "30 1 * * *"
   workflow_dispatch:
     inputs:
+      mode:
+        description: Diagnostic scope
+        required: true
+        default: all
+        type: choice
+        options: [all, runtime, d1]
       lookback_minutes:
-        description: Minutes of Cloudflare metrics and persisted errors to inspect
+        description: Runtime telemetry lookback for manual runs
         required: false
         default: "60"
         type: string
@@ -16,14 +24,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: cloudflare-observability-hp-${{ github.event.workflow_run.id || github.ref }}
+  group: cloudflare-diagnostics-hp-${{ github.event.workflow_run.id || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  observability:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+  diagnostics:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 8
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -31,6 +39,12 @@ jobs:
       LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '60' }}
       CPU_BUDGET_MS: "10"
       DURABLE_OBJECT_CPU_BUDGET_MS: "30000"
+      LIVE_TAIL_WORKER: homepanel-cloud
+      LIVE_TAIL_SECONDS: "75"
+      LIVE_TAIL_PROBES: /v1/health,/
+      D1_DAILY_READ_BUDGET: "50000"
+      D1_WRANGLER_FILES: cloud/wrangler.jsonc
+      DIAGNOSTICS_OUTPUT_DIR: cloudflare-diagnostics
 
     steps:
       - uses: actions/checkout@v4
@@ -38,40 +52,61 @@ jobs:
           show-progress: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Start post-deployment audit window
+      - name: Set post-deployment audit boundary
+        if: github.event_name == 'workflow_run'
         shell: bash
-        run: echo "AUDIT_FROM=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+        run: echo "AUDIT_FROM=${{ github.event.workflow_run.updated_at }}" >> "$GITHUB_ENV"
 
-      - name: Capture live HomePanel events
-        continue-on-error: true
-        env:
-          LIVE_TAIL_WORKER: homepanel-cloud
-          LIVE_TAIL_SECONDS: "180"
-          LIVE_TAIL_PROBES: /v1/health,/
-        shell: bash
-        run: node .github/scripts/capture-cloudflare-live-tail.mjs 2>&1 | tee live-tail.log
-
-      - name: Query Cloudflare metrics and persisted errors
+      - name: Capture runtime events and query aggregate metrics in parallel
+        if: ${{ github.event_name != 'schedule' && inputs.mode != 'd1' }}
         shell: bash
         run: |
+          set -uo pipefail
+          mkdir -p "$DIAGNOSTICS_OUTPUT_DIR"
           actual_summary="$GITHUB_STEP_SUMMARY"
-          GITHUB_STEP_SUMMARY=observability-summary.md python3 .github/scripts/query-cloudflare-observability.py
-          cat observability-summary.md >> "$actual_summary"
+          (
+            GITHUB_STEP_SUMMARY="$DIAGNOSTICS_OUTPUT_DIR/metrics.md" \
+              python3 .github/scripts/query-cloudflare-observability.py
+          ) > "$DIAGNOSTICS_OUTPUT_DIR/metrics.log" 2>&1 &
+          metrics_pid=$!
+
+          node .github/scripts/capture-cloudflare-live-tail.mjs \
+            2>&1 | tee "$DIAGNOSTICS_OUTPUT_DIR/live-tail.log"
+          live_status=${PIPESTATUS[0]}
+          wait "$metrics_pid"
+          metrics_status=$?
+
+          cat "$DIAGNOSTICS_OUTPUT_DIR/metrics.log"
+          test ! -f "$DIAGNOSTICS_OUTPUT_DIR/metrics.md" || cat "$DIAGNOSTICS_OUTPUT_DIR/metrics.md" >> "$actual_summary"
+          if [ "$live_status" -ne 0 ]; then
+            echo "::warning title=Cloudflare live tail unavailable::persisted telemetry will still be audited"
+          fi
+          exit "$metrics_status"
 
       - name: Enforce deployed Worker CPU and error policy
+        if: ${{ !cancelled() && github.event_name != 'schedule' && inputs.mode != 'd1' }}
         env:
-          LIVE_TAIL_LOG: live-tail.log
+          LIVE_TAIL_LOG: cloudflare-diagnostics/live-tail.log
         shell: bash
-        run: python3 .github/scripts/audit-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
+        run: |
+          set -o pipefail
+          actual_summary="$GITHUB_STEP_SUMMARY"
+          GITHUB_STEP_SUMMARY="$DIAGNOSTICS_OUTPUT_DIR/runtime-audit.md" \
+            python3 .github/scripts/audit-cloudflare-telemetry.py \
+            2>&1 | tee "$DIAGNOSTICS_OUTPUT_DIR/runtime-audit.log"
+          status=${PIPESTATUS[0]}
+          test ! -f "$DIAGNOSTICS_OUTPUT_DIR/runtime-audit.md" || cat "$DIAGNOSTICS_OUTPUT_DIR/runtime-audit.md" >> "$actual_summary"
+          exit "$status"
 
-      - name: Upload sanitized observability report
-        if: always()
+      - name: Enforce 50,000-row daily D1 read budget
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.mode != 'runtime') }}
+        run: node .github/scripts/check-d1-daily-budget.mjs
+
+      - name: Upload diagnostics on failure or manual request
+        if: ${{ failure() || github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@v4
         with:
-          name: cloudflare-observability-report-hp-${{ github.run_id }}
-          path: |
-            observability-summary.md
-            telemetry-audit.log
-            live-tail.log
+          name: cloudflare-diagnostics-hp-${{ github.run_id }}
+          path: cloudflare-diagnostics/
           if-no-files-found: warn
           retention-days: 1
