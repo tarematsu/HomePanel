@@ -22,6 +22,11 @@ class App {
   void MuteStationheadAudio();
 
  private:
+  struct HistoryFlushGuard {
+    App* owner = nullptr;
+    ~HistoryFlushGuard();
+  };
+
   static constexpr UINT kUpdateResultMessage = WM_APP + 20;
   static constexpr int kRestartExitCode = 42;
   static void EnrichRenderStationheadState(
@@ -50,10 +55,10 @@ class App {
   void PublishRenderStateNow();
   void InvalidateAll();
   void LoadAirHistory();
-  void SaveAirHistory() const;
+  bool SaveAirHistory() const;
   void UpdateAirHistory(const SensorSnapshot& sensors);
   void LoadStationheadPlayHistory();
-  void SaveStationheadPlayHistory() const;
+  bool SaveStationheadPlayHistory() const;
   void UpdateStationheadPlayHistory(const StationheadStatus& status);
   void HandleAction(UiAction action);
   void LayoutWorkspace();
@@ -102,6 +107,7 @@ class App {
   int64_t primaryTrackBoundaryHandoffReadyAt_ = 0;
   int64_t secondaryTrackBoundaryHandoffReadyAt_ = 0;
   int64_t lastTelemetryAt_ = 0;
+  int64_t lastAirHistorySavedAt_ = 0;
   int64_t lastStationheadPlayStatsUpdatedAt_ = 0;
   int64_t lastStationheadPlayHistorySavedAt_ = 0;
   int64_t toastUntil_ = 0;
@@ -109,6 +115,8 @@ class App {
   int newsIndex_ = 0;
   int newsCount_ = 0;
   int64_t lastNewsRotateAt_ = 0;
+  bool airHistoryDirty_ = false;
+  bool stationheadPlayHistoryDirty_ = false;
   bool renderStateDirty_ = true;
   bool stationheadPlacementDirty_ = true;
   bool placedPrimaryPending_ = false;
@@ -118,6 +126,7 @@ class App {
   bool stationheadAudioMuted_ = false;
   WorkspaceTab selectedTab_ = WorkspaceTab::Main;
   RECT workspaceBounds_{0, 0, 1, 1};
+  HistoryFlushGuard historyFlushGuard_{this};
   inline static App* current_ = nullptr;
 };
 

@@ -5,6 +5,7 @@ namespace hp {
 namespace {
 constexpr int64_t kAirHistoryWindowMs = 24LL * 60 * 60 * 1000;
 constexpr int64_t kAirHistoryBucketMs = 5LL * 60 * 1000;
+constexpr int64_t kAirHistoryPersistIntervalMs = 30LL * 60 * 1000;
 constexpr int64_t kAirHistoryFutureToleranceMs = kAirHistoryBucketMs;
 constexpr size_t kAirHistoryMaxSamples =
     static_cast<size_t>(kAirHistoryWindowMs / kAirHistoryBucketMs) + 1;
@@ -25,6 +26,20 @@ bool AirHistoryBeforeTimestamp(const AirHistorySample& sample,
   return sample.timestamp < timestamp;
 }
 }  // namespace
+
+App::HistoryFlushGuard::~HistoryFlushGuard() {
+  if (!owner) return;
+  const int64_t now = UnixMillis();
+  if (owner->airHistoryDirty_ && owner->SaveAirHistory()) {
+    owner->airHistoryDirty_ = false;
+    owner->lastAirHistorySavedAt_ = now;
+  }
+  if (owner->stationheadPlayHistoryDirty_ &&
+      owner->SaveStationheadPlayHistory()) {
+    owner->stationheadPlayHistoryDirty_ = false;
+    owner->lastStationheadPlayHistorySavedAt_ = now;
+  }
+}
 
 void App::LoadAirHistory() {
   const fs::path path = dataDir_ / L"air-history.json";
@@ -77,7 +92,9 @@ void App::LoadAirHistory() {
     }
     renderState_.airHistory = std::move(history);
     ++renderState_.airHistoryRevision;
-    if (normalized) SaveAirHistory();
+    airHistoryDirty_ = normalized;
+    if (airHistoryDirty_ && SaveAirHistory()) airHistoryDirty_ = false;
+    lastAirHistorySavedAt_ = airHistoryDirty_ ? 0 : now;
   } catch (const std::exception& error) {
     if (logger_) logger_->Warn(L"Air history load failed: " + Utf8ToWide(error.what()));
   } catch (...) {
@@ -85,7 +102,7 @@ void App::LoadAirHistory() {
   }
 }
 
-void App::SaveAirHistory() const {
+bool App::SaveAirHistory() const {
   try {
     std::ostringstream output;
     output << "[";
@@ -99,14 +116,17 @@ void App::SaveAirHistory() const {
              << ",\"humidity\":" << sample.humidity << "}";
     }
     output << "]";
-    if (!AtomicWriteText(dataDir_ / L"air-history.json", output.str()) && logger_) {
-      logger_->Warn(L"Air history atomic write failed");
+    if (!AtomicWriteText(dataDir_ / L"air-history.json", output.str())) {
+      if (logger_) logger_->Warn(L"Air history atomic write failed");
+      return false;
     }
+    return true;
   } catch (const std::exception& error) {
     if (logger_) logger_->Warn(L"Air history save failed: " + Utf8ToWide(error.what()));
   } catch (...) {
     if (logger_) logger_->Warn(L"Air history save failed with an unknown error");
   }
+  return false;
 }
 
 void App::UpdateAirHistory(const SensorSnapshot& sensors) {
@@ -142,7 +162,14 @@ void App::UpdateAirHistory(const SensorSnapshot& sensors) {
     history.erase(history.begin(), history.end() - kAirHistoryMaxSamples);
   }
   ++renderState_.airHistoryRevision;
-  SaveAirHistory();
+  airHistoryDirty_ = true;
+  if (lastAirHistorySavedAt_ <= 0 ||
+      now - lastAirHistorySavedAt_ >= kAirHistoryPersistIntervalMs) {
+    if (SaveAirHistory()) {
+      airHistoryDirty_ = false;
+      lastAirHistorySavedAt_ = now;
+    }
+  }
   MarkRenderStateDirty();
 }
 

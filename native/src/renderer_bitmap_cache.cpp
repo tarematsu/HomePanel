@@ -3,8 +3,8 @@
 
 namespace hp {
 namespace {
-constexpr size_t kNativeImageBitmapCacheLimit = 24;
-constexpr size_t kRadarBitmapCacheLimit = 16;
+constexpr size_t kNativeImageBitmapCacheLimit = 16;
+constexpr size_t kRadarBitmapCacheLimit = 12;
 constexpr int64_t kNativeImageDecodeRetryMs = 60'000;
 
 struct CachedBitmapMemoryDc {

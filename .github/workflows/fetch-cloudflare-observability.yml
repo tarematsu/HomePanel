@@ -4,6 +4,15 @@ on:
   workflow_run:
     workflows: ["Deploy unified homepanel-cloud Worker"]
     types: [completed]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fetch-cloudflare-observability.yml'
+      - '.github/scripts/audit-cloudflare-daily-usage.py'
+      - '.github/scripts/audit-cloudflare-telemetry.py'
+      - '.github/scripts/query-cloudflare-observability.py'
+      - '.github/scripts/capture-cloudflare-live-tail.mjs'
+      - '.github/scripts/publish-homepanel-observability-status.mjs'
   schedule:
     - cron: "23 * * * *"
     - cron: "47 2 * * *"
@@ -18,6 +27,8 @@ on:
 permissions:
   actions: read
   contents: read
+  issues: write
+  statuses: write
 
 concurrency:
   group: cloudflare-observability-hp-${{ github.event.workflow_run.id || github.ref }}
@@ -89,11 +100,15 @@ jobs:
           PY
 
       - name: Validate observability policy code
+        id: policy-self-test
         run: |
           python3 .github/scripts/audit-cloudflare-daily-usage.py --self-test
           python3 .github/scripts/audit-cloudflare-telemetry.py --self-test
+          node .github/scripts/publish-homepanel-observability-status.mjs --self-test
 
       - name: Enforce UTC daily request and D1 budgets
+        id: daily-budget
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -109,6 +124,8 @@ jobs:
         run: echo "AUDIT_FROM=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
 
       - name: Collect metrics and live events in parallel
+        id: observability-query
+        continue-on-error: true
         if: ${{ (github.event_name != 'schedule' || github.event.schedule == '47 2 * * *') && (github.event_name != 'workflow_run' || steps.deployment.outputs.deployed == 'true') }}
         env:
           LIVE_TAIL_WORKER: homepanel-cloud
@@ -141,16 +158,40 @@ jobs:
           exit "$query_status"
 
       - name: Enforce current-version persisted and live CPU policy
+        id: telemetry-policy
+        continue-on-error: true
         if: ${{ (github.event_name != 'schedule' || github.event.schedule == '47 2 * * *') && (github.event_name != 'workflow_run' || steps.deployment.outputs.deployed == 'true') }}
         env:
           LIVE_TAIL_LOG: live-tail.log
         shell: bash
         run: |
           set -o pipefail
-          python3 .github/scripts/audit-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
+          actual_summary="$GITHUB_STEP_SUMMARY"
+          GITHUB_STEP_SUMMARY=telemetry-summary.md \
+            python3 .github/scripts/audit-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
+          status=${PIPESTATUS[0]}
+          if [[ -f telemetry-summary.md ]]; then
+            cat telemetry-summary.md >> "$actual_summary"
+          fi
+          exit "$status"
+
+      - name: Publish persistent observability status
+        id: publish-status
+        if: always()
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OBSERVABILITY_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          OBSERVABILITY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OBSERVABILITY_TRIGGER: ${{ github.event_name }}
+          POLICY_OUTCOME: ${{ steps.policy-self-test.outcome }}
+          DAILY_BUDGET_OUTCOME: ${{ steps.daily-budget.outcome }}
+          OBSERVABILITY_QUERY_OUTCOME: ${{ steps.observability-query.outcome }}
+          TELEMETRY_POLICY_OUTCOME: ${{ steps.telemetry-policy.outcome }}
+        run: node .github/scripts/publish-homepanel-observability-status.mjs
 
       - name: Upload sanitized observability report
-        if: ${{ failure() || github.event_name != 'schedule' || github.event.schedule == '47 2 * * *' }}
+        if: ${{ always() && (github.event_name != 'schedule' || github.event.schedule == '47 2 * * *' || steps.daily-budget.outcome == 'failure' || steps.observability-query.outcome == 'failure' || steps.telemetry-policy.outcome == 'failure') }}
         uses: actions/upload-artifact@v4
         with:
           name: cloudflare-observability-report-hp-${{ github.run_id }}
@@ -159,7 +200,12 @@ jobs:
             daily-usage-audit.log
             observability-summary.md
             observability-query.log
+            telemetry-summary.md
             telemetry-audit.log
             live-tail.log
           if-no-files-found: warn
           retention-days: 1
+
+      - name: Fail when an observability gate failed
+        if: ${{ always() && (steps.policy-self-test.outcome == 'failure' || steps.daily-budget.outcome == 'failure' || steps.observability-query.outcome == 'failure' || steps.telemetry-policy.outcome == 'failure' || steps.publish-status.outcome == 'failure') }}
+        run: exit 1

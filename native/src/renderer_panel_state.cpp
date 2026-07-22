@@ -68,13 +68,10 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
       nativeStationhead_.primaryAudioSelected != state.stationhead.primaryAudioSelected;
   const bool stationheadHistoryChanged =
       historyRevisions.stationhead != state.stationheadPlayHistoryRevision;
-  const bool newsIndexChanged = nativeNewsIndex_ != state.newsIndex;
   const bool weatherChanged =
       renderedDashboardRevisions_.weather != dashboardRevisions_.weather;
   const bool energyChanged =
       renderedDashboardRevisions_.energy != dashboardRevisions_.energy;
-  const bool newsChanged =
-      renderedDashboardRevisions_.news != dashboardRevisions_.news;
 
   if (sensorsChanged) nativeSensors_ = state.sensors;
   if (historyChanged) {
@@ -88,17 +85,12 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
     historyRevisions.stationhead = state.stationheadPlayHistoryRevision;
   }
   if (stationheadChanged) nativeStationhead_ = state.stationhead;
-  if (newsIndexChanged) nativeNewsIndex_ = state.newsIndex;
   if (weatherChanged) {
     renderedDashboardRevisions_.weather = dashboardRevisions_.weather;
   }
   if (energyChanged) {
     renderedDashboardRevisions_.energy = dashboardRevisions_.energy;
   }
-  if (newsChanged) {
-    renderedDashboardRevisions_.news = dashboardRevisions_.news;
-  }
-  if (newsChanged || newsIndexChanged) ++nativeNewsRenderRevision_;
 
   if (!EnsureNativeStaticWindows()) return;
   if (sensorsChanged || historyChanged) {
@@ -109,9 +101,6 @@ void Renderer::UpdateNativeStaticPanels(const RenderState& state) {
   }
   if (energyChanged) {
     InvalidatePanelSection(nativeMainWindow_, PanelSection::Energy);
-  }
-  if (newsChanged || newsIndexChanged) {
-    InvalidatePanelSection(nativeMainWindow_, PanelSection::News);
   }
   if (stationheadChanged || stationheadHistoryChanged) {
     InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
@@ -141,20 +130,29 @@ void Renderer::TickNativePanels(int64_t nowMs, bool timerDriven) {
   const int64_t clockSecondKey =
       (((static_cast<int64_t>(clockDayKey) * 24 + localTime.wHour) * 60 +
         localTime.wMinute) * 60 + localTime.wSecond);
-  const bool clockSecondChanged = clockSecondKey != nativeClockSecondKey_;
+  const int64_t previousClockSecondKey = nativeClockSecondKey_;
+  const bool clockSecondChanged = clockSecondKey != previousClockSecondKey;
+  const bool clockMinuteChanged = previousClockSecondKey < 0 ||
+      clockSecondKey / 60 != previousClockSecondKey / 60;
   nativeClockDayKey_ = clockDayKey;
   nativeClockSecondKey_ = clockSecondKey;
 
-  const NativePlaybackTickState playbackState = NativePlaybackTickStateFor(nowMs);
-  const bool playbackChanged = playbackState != nativePlaybackTickState_;
-  nativePlaybackTickState_ = playbackState;
   if (nativeSideWindow_ && IsWindow(nativeSideWindow_) &&
       IsWindowVisible(nativeSideWindow_) && clockSecondChanged) {
-    InvalidatePanelSection(nativeSideWindow_,
-                           clockDayChanged ? PanelSection::Clock : PanelSection::ClockTime);
+    InvalidatePanelSection(
+        nativeSideWindow_,
+        clockDayChanged || clockMinuteChanged
+            ? PanelSection::Clock
+            : PanelSection::ClockTime);
   }
+
+  // Resolving projected playback takes the playback mutex and advances a queue
+  // cursor. Skip that work when the main native surface is absent or hidden.
   if (nativeMainWindow_ && IsWindow(nativeMainWindow_) &&
       IsWindowVisible(nativeMainWindow_)) {
+    const NativePlaybackTickState playbackState = NativePlaybackTickStateFor(nowMs);
+    const bool playbackChanged = playbackState != nativePlaybackTickState_;
+    nativePlaybackTickState_ = playbackState;
     if (playbackChanged) {
       InvalidatePanelSection(nativeMainWindow_, PanelSection::Music);
     } else if (playbackState.active) {

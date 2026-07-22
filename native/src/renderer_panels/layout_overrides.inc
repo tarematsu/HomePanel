@@ -24,19 +24,15 @@ SidebarSections SplitRearrangedSidebarSections(const RECT& client) {
 
 MainSections SplitRearrangedMainSections(const RECT& client) {
   const int width = std::max(1L, client.right - client.left);
-  const int height = std::max(1L, client.bottom - client.top);
   const int gapX = std::max(8, width * 16 / 1000);
-  const int gapY = std::max(6, height * 45 / 1000);
-  const int newsHeight = height * 47 / 100;
   const int rowWidth = std::max(2, width - gapX);
   const int musicWidth = std::max(1, rowWidth * 65 / 100);
+  const LONG rowBottom = std::max(client.top + 1, client.bottom);
 
   MainSections sections;
-  sections.news = RECT{client.left, client.bottom - newsHeight, client.right, client.bottom};
-  const LONG rowBottom = std::max(client.top + 1, sections.news.top - gapY);
   sections.music = RECT{client.left, client.top, client.left + musicWidth, rowBottom};
-  // MainSections::air is the right-hand top-row slot. The rearranged dashboard
-  // uses it for Electricity while Air occupies the expanded side-card slot.
+  // MainSections::air is the right-hand slot. The rearranged dashboard uses it
+  // for Electricity while Air occupies the expanded side-card slot.
   sections.air = RECT{sections.music.right + gapX, client.top, client.right, rowBottom};
   if (sections.air.right <= sections.air.left) {
     sections.air.right = sections.air.left + 1;
@@ -46,13 +42,13 @@ MainSections SplitRearrangedMainSections(const RECT& client) {
 
 RECT RearrangedClockTimeRectFromCard(const RECT& card) {
   const RECT content = CardContentRect(card);
-  // Include the footer in the clock tick invalidation so the moved status is
-  // refreshed without a separate polling or invalidation subsystem.
-  RECT dynamicRect{content.left, content.top + SpanY(content, 170),
-                   content.right, content.bottom};
-  if (dynamicRect.right <= dynamicRect.left) dynamicRect.right = dynamicRect.left + 1;
-  if (dynamicRect.bottom <= dynamicRect.top) dynamicRect.bottom = dynamicRect.top + 1;
-  return dynamicRect;
+  // The one-second tick changes only the large time text. The monitor footer
+  // displays minute precision and is refreshed by the minute boundary tick.
+  RECT timeRect{content.left, content.top + SpanY(content, 170),
+                content.right, content.top + SpanY(content, 705)};
+  if (timeRect.right <= timeRect.left) timeRect.right = timeRect.left + 1;
+  if (timeRect.bottom <= timeRect.top) timeRect.bottom = timeRect.top + 1;
+  return timeRect;
 }
 
 std::wstring DashboardStatusTimeText(int64_t epochMs) {
@@ -99,4 +95,4 @@ std::wstring DashboardStatusTimeText(int64_t epochMs) {
   SelectObject((dc), hpPreviousFont); \
 } while (false)
 
-}  // namespace
+}  // namespace hp

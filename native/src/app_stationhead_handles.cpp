@@ -96,8 +96,8 @@ void StationheadHandleBase::Tick(int64_t nowMs) {
   // Authorization can begin while the steady-state scheduler still carries a
   // much later background deadline. Wake only that interactive state so the
   // auth-controller watchdog is evaluated near its intended 20-second limit
-  // without turning normal A/B playback into a permanently fast polling loop.
-  if (player_->Status().spotifyAuthorization) {
+  // without copying the full status strings and history on every App tick.
+  if (player_->SpotifyAuthorizationActive()) {
     player_->RequestImmediateTick();
   }
   player_->Tick(nowMs);

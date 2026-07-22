@@ -53,7 +53,8 @@ void App::LoadStationheadPlayHistory() {
     if (text.empty()) return;
     const auto array = winrt::Windows::Data::Json::JsonArray::Parse(Utf8ToWide(text));
     std::vector<StationheadPlayHistorySample> history;
-    const int64_t cutoff = UnixMillis() - kHistoryWindowMs;
+    const int64_t now = UnixMillis();
+    const int64_t cutoff = now - kHistoryWindowMs;
     for (auto value : array) {
       if (value.ValueType() != winrt::Windows::Data::Json::JsonValueType::Object) continue;
       const auto item = value.GetObject();
@@ -74,8 +75,8 @@ void App::LoadStationheadPlayHistory() {
     if (history.size() > kMaxHistorySamples) {
       history.erase(history.begin(), history.end() - kMaxHistorySamples);
     }
-    lastStationheadPlayHistorySavedAt_ =
-        history.empty() ? 0 : history.back().timestamp;
+    lastStationheadPlayHistorySavedAt_ = history.empty() ? 0 : now;
+    stationheadPlayHistoryDirty_ = false;
     renderState_.stationheadPlayHistory = std::move(history);
     ++renderState_.stationheadPlayHistoryRevision;
   } catch (const std::exception& error) {
@@ -85,7 +86,7 @@ void App::LoadStationheadPlayHistory() {
   }
 }
 
-void App::SaveStationheadPlayHistory() const {
+bool App::SaveStationheadPlayHistory() const {
   try {
     std::ostringstream output;
     output << "[";
@@ -96,14 +97,17 @@ void App::SaveStationheadPlayHistory() const {
       output << "{\"t\":" << sample.timestamp << ",\"v\":" << sample.value << "}";
     }
     output << "]";
-    if (!AtomicWriteText(dataDir_ / L"stationhead-play-history.json", output.str()) && logger_) {
-      logger_->Warn(L"Stationhead play history atomic write failed");
+    if (!AtomicWriteText(dataDir_ / L"stationhead-play-history.json", output.str())) {
+      if (logger_) logger_->Warn(L"Stationhead play history atomic write failed");
+      return false;
     }
+    return true;
   } catch (const std::exception& error) {
     if (logger_) logger_->Warn(L"Stationhead play history save failed: " + Utf8ToWide(error.what()));
   } catch (...) {
     if (logger_) logger_->Warn(L"Stationhead play history save failed with an unknown error");
   }
+  return false;
 }
 
 void App::UpdateStationheadPlayHistory(const StationheadStatus& status) {
@@ -127,11 +131,11 @@ void App::UpdateStationheadPlayHistory(const StationheadStatus& status) {
   const int64_t bucket =
       status.dailyPlayStatsUpdatedAt / kSampleBucketMs * kSampleBucketMs;
   const int value = todayPoint->value;
-  const int64_t cutoff = UnixMillis() - kHistoryWindowMs;
+  const int64_t now = UnixMillis();
+  const int64_t cutoff = now - kHistoryWindowMs;
   if (bucket < cutoff) return;
 
   auto& history = renderState_.stationheadPlayHistory;
-  const bool currentValueChanged = history.empty() || history.back().value != value;
   const auto position = std::lower_bound(
       history.begin(), history.end(), bucket,
       [](const StationheadPlayHistorySample& sample, int64_t timestamp) {
@@ -156,10 +160,15 @@ void App::UpdateStationheadPlayHistory(const StationheadStatus& status) {
   }
 
   ++renderState_.stationheadPlayHistoryRevision;
-  if (currentValueChanged ||
-      bucket - lastStationheadPlayHistorySavedAt_ >= kPersistIntervalMs) {
-    SaveStationheadPlayHistory();
-    lastStationheadPlayHistorySavedAt_ = bucket;
+  stationheadPlayHistoryDirty_ = true;
+  // Do not restore `bucket - lastStationheadPlayHistorySavedAt_ >= kPersistIntervalMs`:
+  // source timestamps can lag or be bucket-rounded, so wall-clock time controls persistence.
+  if (lastStationheadPlayHistorySavedAt_ <= 0 ||
+      now - lastStationheadPlayHistorySavedAt_ >= kPersistIntervalMs) {
+    if (SaveStationheadPlayHistory()) {
+      stationheadPlayHistoryDirty_ = false;
+      lastStationheadPlayHistorySavedAt_ = now;
+    }
   }
   MarkRenderStateDirty();
 }

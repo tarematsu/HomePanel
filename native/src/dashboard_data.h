@@ -11,11 +11,6 @@ struct WeatherHourData {
   double rainMm = std::numeric_limits<double>::quiet_NaN();
 };
 
-struct NewsItemData {
-  std::wstring title;
-  std::wstring description;
-};
-
 struct OctopusProfileData {
   std::wstring day;
   double currentTotal = std::numeric_limits<double>::quiet_NaN();
@@ -32,16 +27,12 @@ struct SwitchBotDeviceData {
 struct DashboardSectionRevisions {
   uint64_t weather = 0;
   uint64_t energy = 0;
-  uint64_t news = 0;
 };
 
 struct DashboardSnapshot {
   bool loaded = false;
 
   std::vector<WeatherHourData> weatherHours;
-
-  std::vector<NewsItemData> newsItems;
-  int newsItemCount = 0;
 
   double lastMonthUsage = std::numeric_limits<double>::quiet_NaN();
   double projectedUsage = std::numeric_limits<double>::quiet_NaN();

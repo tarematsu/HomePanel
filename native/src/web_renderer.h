@@ -121,31 +121,27 @@ class Renderer {
   void SetBounds(const RECT& bounds);
   void SetVisible(bool visible);
   bool LoadDashboard(const fs::path& jsonPath, bool* changed = nullptr);
-  int NewsCount() const { return newsCount_; }
+  int NewsCount() const { return 0; }
   void Render();
   void UpdateState(const RenderState& state);
   void TickNativePanels(int64_t nowMs, bool timerDriven = false);
   NativePlaybackFeedStatus NativePlaybackFeedStatusFor(
       size_t source, int64_t nowMs) const;
+  int64_t NativePlaybackNextWakeAt(int64_t nowMs) const;
   NativeMinuteFactsProjection NativeMinuteFactsSnapshot() const;
   void NotifyRadarUpdated();
   UiAction TakePendingAction();
 
  private:
   struct NativePlaybackUpdate {
-    std::wstring source;
-    std::wstring payload;
     NativePlaybackProjection projection;
-    std::wstring error;
-    int64_t fetchedAt = 0;
-    uint64_t revision = 0;
+    uint64_t payloadSignature = 0;
     uint64_t contentRevision = 0;
     bool hasPayload = false;
   };
 
   struct NativePlaybackTickState {
     bool active = false;
-    size_t source = 0;
     size_t trackIndex = 0;
     uint64_t contentRevision = 0;
 
@@ -238,8 +234,7 @@ class Renderer {
     Weather,
     Controls,
     Music,
-    Energy,
-    News
+    Energy
   };
 
   void InvalidatePanelSection(HWND window, PanelSection section);
@@ -252,7 +247,6 @@ class Renderer {
   void DrawControlsSection(HDC dc, const RECT& card);
   void DrawMusicSection(HDC dc, const RECT& card);
   void DrawEnergySection(HDC dc, const RECT& card);
-  void DrawNewsSection(HDC dc, const RECT& card);
   void RebuildNativeAirGraph(int64_t nowMs);
   void DrawCachedPanelSection(
       HDC dc, const RECT& card, PanelSection section, uint64_t revision,
@@ -301,10 +295,8 @@ class Renderer {
   std::vector<StationheadPlayHistorySample> nativeStationheadPlayHistory_;
   StationheadStatus nativeStationhead_{};
   DashboardSnapshot nativeDashboard_{};
-  int nativeNewsIndex_ = 0;
   DashboardSectionRevisions renderedDashboardRevisions_{};
   uint64_t nativeAirRenderRevision_ = 0;
-  uint64_t nativeNewsRenderRevision_ = 0;
   uint64_t nativeLayoutRevision_ = 1;
   int width_ = 0;
   int height_ = 0;
@@ -320,21 +312,19 @@ class Renderer {
   DashboardSourceStamp dashboardSourceStamp_{};
   DashboardSectionRevisions dashboardRevisions_{};
   uint64_t spotifySourceRevision_ = 0;
-  int newsCount_ = 0;
   mutable std::mutex actionMutex_;
   UiAction pendingAction_ = UiAction::None;
   std::thread nativePlaybackThread_;
   std::condition_variable nativePlaybackWake_;
   std::mutex nativePlaybackWakeMutex_;
   mutable std::mutex nativePlaybackMutex_;
-  std::array<NativePlaybackUpdate, 2> nativePlaybackUpdates_{};
+  NativePlaybackUpdate nativePlaybackUpdate_{};
   uint64_t nativePlaybackContentRevision_ = 0;
   NativePlaybackTickState nativePlaybackTickState_{};
   std::map<std::wstring, BitmapCacheEntry> nativeImageBitmaps_;
   uint64_t nativeImageUseCounter_ = 0;
   std::map<HWND, PanelBackBuffer> nativeBackBuffers_;
   std::map<PanelSection, PanelBitmapCache> nativeSectionBitmaps_;
-  std::atomic<uint64_t> nativePlaybackRevision_{0};
   std::atomic<bool> nativePlaybackStarted_{false};
   std::atomic<bool> nativePlaybackStopping_{false};
   mutable std::mutex nativeMinuteFactsMutex_;

@@ -121,26 +121,26 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& card) {
         std::min(static_cast<int>(previousTextSize.cx), textWidth - currentTextWidth);
     const int currentGroupWidth = swatchWidth + swatchGap + currentTextWidth;
     const int previousGroupWidth = swatchWidth + swatchGap + previousTextWidth;
-    const int comparisonWidth = currentGroupWidth + groupGap + previousGroupWidth;
+    const int comparisonWidth = previousGroupWidth + groupGap + currentGroupWidth;
     const int comparisonLeft =
         legend.left + std::max(legendPadding, (legendWidth - comparisonWidth) / 2);
     const int swatchTop = legend.top + (legendHeight - swatchHeight) / 2;
-    RECT currentSwatch{comparisonLeft, swatchTop, comparisonLeft + swatchWidth,
-                       swatchTop + swatchHeight};
-    RECT currentLegendRect{currentSwatch.right + swatchGap, legend.top,
-                           currentSwatch.right + swatchGap + currentTextWidth, legend.bottom};
-    RECT previousSwatch{currentLegendRect.right + groupGap, swatchTop,
-                        currentLegendRect.right + groupGap + swatchWidth,
+    RECT previousSwatch{comparisonLeft, swatchTop, comparisonLeft + swatchWidth,
                         swatchTop + swatchHeight};
     RECT previousLegendRect{previousSwatch.right + swatchGap, legend.top,
                             previousSwatch.right + swatchGap + previousTextWidth, legend.bottom};
-    DrawWidgetCard(dc, currentSwatch, kWidgetCyan, 2, 220);
+    RECT currentSwatch{previousLegendRect.right + groupGap, swatchTop,
+                       previousLegendRect.right + groupGap + swatchWidth,
+                       swatchTop + swatchHeight};
+    RECT currentLegendRect{currentSwatch.right + swatchGap, legend.top,
+                           currentSwatch.right + swatchGap + currentTextWidth, legend.bottom};
     drawPreviousOverlay(previousSwatch);
+    DrawWidgetCard(dc, currentSwatch, kWidgetCyan, 2, 220);
 
     SetTextColor(dc, kWidgetMuted);
-    DrawTextInRect(dc, currentLegend, currentLegendRect,
-                   DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     DrawTextInRect(dc, previousLegend, previousLegendRect,
+                   DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    DrawTextInRect(dc, currentLegend, currentLegendRect,
                    DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
     RECT plot{chart.left + yLabelWidth, legend.bottom + SpanY(body, 15),
@@ -212,38 +212,6 @@ void Renderer::DrawEnergySection(HDC dc, const RECT& card) {
     }
   }
   DrawTextInRect(dc, plugs, plugRect, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
-  SelectObject(dc, previousFont);
-}
-
-void Renderer::DrawNewsSection(HDC dc, const RECT& card) {
-  DrawSectionCard(dc, card);
-  const RECT content = CardContentRect(card);
-  const NewsItemData* item = nullptr;
-  if (!nativeDashboard_.newsItems.empty()) {
-    const size_t index = static_cast<size_t>(std::max(0, nativeNewsIndex_)) %
-                         nativeDashboard_.newsItems.size();
-    item = &nativeDashboard_.newsItems[index];
-  }
-  const std::wstring title = item ? item->title : L"ニュース取得待ち";
-  const std::wstring description = item ? item->description : L"";
-
-  const int contentHeight = std::max(1L, content.bottom - content.top);
-  RECT titleRow{content.left, content.top, content.right,
-                content.top + contentHeight * 55 / 100};
-  RECT descRow{content.left, titleRow.bottom, content.right, content.bottom};
-
-  HGDIOBJ previousFont = SelectObject(dc, TierFont(FontTier::Small));
-  RECT titleRect{titleRow.left, titleRow.top, titleRow.right, titleRow.bottom};
-  SetTextColor(dc, kWidgetText);
-  SelectObject(dc, TierFont(FontTier::Medium));
-  DrawTextInRect(dc, title, titleRect, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
-
-  if (!description.empty()) {
-    SetTextColor(dc, kWidgetMuted);
-    SelectObject(dc, TierFont(FontTier::Small));
-    RECT descPad{descRow.left, descRow.top + SpanY(content, 20), descRow.right, descRow.bottom};
-    DrawTextInRect(dc, description, descPad, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
-  }
   SelectObject(dc, previousFont);
 }
 

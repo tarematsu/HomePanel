@@ -1,11 +1,10 @@
-
-
-
-
-
 #include "sensors.h"
 
 namespace hp {
+namespace {
+constexpr auto kSerialRetryInitial = std::chrono::seconds(10);
+constexpr auto kSerialRetryMaximum = std::chrono::seconds(60);
+}
 
 std::wstring SensorHub::FindSerialPort() {
   if (!config_.serialPort.empty()) return config_.serialPort;
@@ -37,6 +36,12 @@ std::wstring SensorHub::FindSerialPort() {
 
 void SensorHub::SerialLoop() {
   winrt::init_apartment(winrt::apartment_type::multi_threaded);
+  auto retryDelay = kSerialRetryInitial;
+  const auto waitForRetry = [this, &retryDelay] {
+    std::unique_lock lock(stopMutex_);
+    stopWake_.wait_for(lock, retryDelay, [this] { return stopping_.load(); });
+    retryDelay = std::min(retryDelay * 2, kSerialRetryMaximum);
+  };
   while (!stopping_) {
     const std::wstring port = FindSerialPort();
     if (port.empty()) {
@@ -48,8 +53,7 @@ void SensorHub::SerialLoop() {
         state_.lastError = L"UD-CO2S not found";
       }
       if (changed) PostMessageW(window_, WM_HP_SENSOR_UPDATED, 0, 0);
-      std::unique_lock lock(stopMutex_);
-      stopWake_.wait_for(lock, std::chrono::seconds(10), [this] { return stopping_.load(); });
+      waitForRetry();
       continue;
     }
 
@@ -57,37 +61,42 @@ void SensorHub::SerialLoop() {
     HANDLE serial = CreateFileW(serialPath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (serial == INVALID_HANDLE_VALUE) {
+      bool changed = false;
       {
         std::lock_guard lock(mutex_);
+        changed = state_.co2Connected || state_.lastError != L"UD-CO2S port open failed";
         state_.co2Connected = false;
         state_.lastError = L"UD-CO2S port open failed";
       }
-      PostMessageW(window_, WM_HP_SENSOR_UPDATED, 0, 0);
-      std::unique_lock lock(stopMutex_);
-      stopWake_.wait_for(lock, std::chrono::seconds(10), [this] { return stopping_.load(); });
+      if (changed) PostMessageW(window_, WM_HP_SENSOR_UPDATED, 0, 0);
+      waitForRetry();
       continue;
     }
 
     std::string buffer;
     if (!ConfigurePort(serial) || !PrepareSensor(serial, buffer, stopping_, log_)) {
       CloseHandle(serial);
+      bool changed = false;
       {
         std::lock_guard lock(mutex_);
+        changed = state_.co2Connected || state_.lastError != L"UD-CO2S initialization failed";
         state_.co2Connected = false;
         state_.lastError = L"UD-CO2S initialization failed";
       }
-      PostMessageW(window_, WM_HP_SENSOR_UPDATED, 0, 0);
-      std::unique_lock lock(stopMutex_);
-      stopWake_.wait_for(lock, std::chrono::seconds(10), [this] { return stopping_.load(); });
+      if (changed) PostMessageW(window_, WM_HP_SENSOR_UPDATED, 0, 0);
+      waitForRetry();
       continue;
     }
 
+    retryDelay = kSerialRetryInitial;
+    bool waitingChanged = false;
     {
       std::lock_guard lock(mutex_);
+      waitingChanged = state_.co2Connected || state_.lastError != L"UD-CO2S waiting for data";
       state_.co2Connected = false;
       state_.lastError = L"UD-CO2S waiting for data";
     }
-    PostMessageW(window_, WM_HP_SENSOR_UPDATED, 0, 0);
+    if (waitingChanged) PostMessageW(window_, WM_HP_SENSOR_UPDATED, 0, 0);
 
     auto validSampleDeadline = std::chrono::steady_clock::now() + kSampleTimeout;
     while (!stopping_) {
@@ -147,8 +156,6 @@ void SensorHub::SerialLoop() {
       const bool historyBucketAdvanced = bucket != lastPersistedBucket_;
       if (historyBucketAdvanced && AppendOutbox(sample)) lastPersistedBucket_ = bucket;
 
-
-
       if (visibleChanged || historyBucketAdvanced) {
         PostMessageW(window_, WM_HP_SENSOR_UPDATED, 0, 0);
       }
@@ -156,12 +163,14 @@ void SensorHub::SerialLoop() {
 
     WriteCommand(serial, "STP");
     CloseHandle(serial);
+    bool disconnectedChanged = false;
     {
       std::lock_guard lock(mutex_);
+      disconnectedChanged = state_.co2Connected || state_.lastError != L"UD-CO2S disconnected";
       state_.co2Connected = false;
       state_.lastError = L"UD-CO2S disconnected";
     }
-    PostMessageW(window_, WM_HP_SENSOR_UPDATED, 0, 0);
+    if (disconnectedChanged) PostMessageW(window_, WM_HP_SENSOR_UPDATED, 0, 0);
     if (!stopping_) {
       std::unique_lock lock(stopMutex_);
       stopWake_.wait_for(lock, std::chrono::seconds(5), [this] { return stopping_.load(); });
@@ -169,4 +178,4 @@ void SensorHub::SerialLoop() {
   }
 }
 
-}
+}  // namespace hp

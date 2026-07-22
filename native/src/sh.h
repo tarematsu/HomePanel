@@ -102,6 +102,10 @@ class StationheadPlayer {
   [[nodiscard]] int64_t AudioPlayingSince() const noexcept {
     return audioPlayingSinceAt_.load(std::memory_order_relaxed);
   }
+  [[nodiscard]] bool SpotifyAuthorizationActive() const {
+    std::lock_guard lock(mutex_);
+    return spotifyAuthorization_;
+  }
   void Reconnect();
   void RetryPendingTrackBoundaryRefresh(int64_t nowMs) {
     HandleTrackEnded(nowMs, true);

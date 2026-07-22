@@ -33,7 +33,13 @@ bool Renderer::LoadDashboard(const fs::path& jsonPath, bool* changed) {
 
     const DashboardSourceStamp nextStamp{
         normalizedPath, sourceSize, modifiedAt, true};
-    if (text == dashboardUtf8_) {
+    // dashboardUtf8_ is retained as a compatibility field name, but now stores
+    // only a small content signature instead of a second persistent copy of
+    // dashboard.json. Size is included so differently sized input cannot be
+    // treated as equal solely because of the 64-bit hash.
+    const std::string contentSignature =
+        std::to_string(sourceSize) + ":" + std::to_string(Fnv1a64(text));
+    if (dashboardSourceStamp_.valid && dashboardUtf8_ == contentSignature) {
       dashboardSourceStamp_ = nextStamp;
       return true;
     }
@@ -45,17 +51,13 @@ bool Renderer::LoadDashboard(const fs::path& jsonPath, bool* changed) {
         snapshot.revisions.weather != nativeDashboard_.revisions.weather;
     const bool energyChanged = firstSnapshot ||
         snapshot.revisions.energy != nativeDashboard_.revisions.energy;
-    const bool newsChanged = firstSnapshot ||
-        snapshot.revisions.news != nativeDashboard_.revisions.news;
-    const bool contentChanged = weatherChanged || energyChanged || newsChanged;
+    const bool contentChanged = weatherChanged || energyChanged;
 
-    newsCount_ = snapshot.newsItemCount;
     nativeDashboard_ = std::move(snapshot);
-    dashboardUtf8_ = std::move(text);
+    dashboardUtf8_ = contentSignature;
     dashboardSourceStamp_ = nextStamp;
     if (weatherChanged) ++dashboardRevisions_.weather;
     if (energyChanged) ++dashboardRevisions_.energy;
-    if (newsChanged) ++dashboardRevisions_.news;
     if (changed) *changed = contentChanged;
     return true;
   } catch (...) {

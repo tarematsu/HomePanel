@@ -153,8 +153,8 @@ bool PlaybackEndedWithoutNextTrack(const NativePlaybackProjection& projection, i
 
 NativePlaybackRender Renderer::ResolveNativePlaybackLocked(size_t source, int64_t nowMs) const {
   NativePlaybackRender render;
-  if (source >= nativePlaybackUpdates_.size()) return render;
-  const NativePlaybackProjection& projection = nativePlaybackUpdates_[source].projection;
+  if (source != 0) return render;
+  const NativePlaybackProjection& projection = nativePlaybackUpdate_.projection;
   render.available = projection.available;
   render.playing = projection.playing;
   render.stale = projection.stale;
@@ -188,10 +188,10 @@ NativePlaybackRender Renderer::ResolveNativePlayback(size_t source, int64_t nowM
 
 NativePlaybackFeedStatus Renderer::NativePlaybackFeedStatusFor(size_t source,
                                                                int64_t nowMs) const {
-  std::lock_guard lock(nativePlaybackMutex_);
   NativePlaybackFeedStatus status;
-  if (source >= nativePlaybackUpdates_.size()) return status;
-  const NativePlaybackUpdate& update = nativePlaybackUpdates_[source];
+  if (source != 0) return status;
+  std::lock_guard lock(nativePlaybackMutex_);
+  const NativePlaybackUpdate& update = nativePlaybackUpdate_;
   const NativePlaybackProjection& projection = update.projection;
   status.available = projection.available;
   status.playing = projection.playing;
@@ -205,13 +205,38 @@ NativePlaybackFeedStatus Renderer::NativePlaybackFeedStatusFor(size_t source,
   return status;
 }
 
+int64_t Renderer::NativePlaybackNextWakeAt(int64_t nowMs) const {
+  if (StationheadIsOnFallback(nativeStationhead_)) return 0;
+  std::lock_guard lock(nativePlaybackMutex_);
+  const NativePlaybackProjection& projection = nativePlaybackUpdate_.projection;
+  if (!projection.available || projection.setupRequired) return 0;
+  if (projection.ended) return nowMs;
+  if (projection.queueEndAt > 0) {
+    return projection.queueEndAt <= nowMs ? nowMs : projection.queueEndAt;
+  }
+  if (!projection.playing || projection.queue.empty() || projection.currentIndex < 0 ||
+      projection.currentIndex >= static_cast<int>(projection.queue.size())) {
+    return 0;
+  }
+
+  const ProjectedTrackPosition position = ResolveProjectedTrackPosition(projection, nowMs);
+  if (position.index >= projection.queue.size()) return nowMs;
+  const int64_t duration = projection.queue[position.index].durationMs;
+  if (duration <= 0 ||
+      duration > std::numeric_limits<int64_t>::max() - kPlaybackRenderTransitionHoldMs) {
+    return 0;
+  }
+  const int64_t remaining =
+      duration + kPlaybackRenderTransitionHoldMs - position.elapsedMs;
+  return remaining <= 0 ? nowMs : nowMs + remaining;
+}
+
 Renderer::NativePlaybackTickState Renderer::NativePlaybackTickStateFor(int64_t nowMs) const {
   NativePlaybackTickState state;
-  state.source = 0;
   if (StationheadIsOnFallback(nativeStationhead_)) return state;
 
   std::lock_guard lock(nativePlaybackMutex_);
-  const NativePlaybackUpdate& update = nativePlaybackUpdates_[0];
+  const NativePlaybackUpdate& update = nativePlaybackUpdate_;
   const NativePlaybackProjection& projection = update.projection;
   state.contentRevision = update.contentRevision;
   if (!projection.available || projection.queue.empty() || projection.currentIndex < 0 ||

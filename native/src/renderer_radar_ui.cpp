@@ -19,6 +19,41 @@ struct RadarTile {
   std::string fileStamp;
 };
 
+struct CachedRadarSourceDc {
+  HDC value = nullptr;
+  ~CachedRadarSourceDc() {
+    if (value) DeleteDC(value);
+  }
+};
+
+HDC RadarSourceDc(HDC compatibleDc) {
+  thread_local CachedRadarSourceDc cached;
+  if (!cached.value) cached.value = CreateCompatibleDC(compatibleDc);
+  return cached.value;
+}
+
+int64_t RadarAnimationIntervalFromSignature(const std::wstring& signature) noexcept {
+  static constexpr wchar_t kMarker[] = L"|animate:";
+  size_t position = signature.find(kMarker);
+  if (position == std::wstring::npos) return 0;
+  position += std::size(kMarker) - 1;
+  int64_t value = 0;
+  bool hasDigit = false;
+  while (position < signature.size()) {
+    const wchar_t character = signature[position++];
+    if (character < L'0' || character > L'9') break;
+    hasDigit = true;
+    value = std::min<int64_t>(60'000, value * 10 + (character - L'0'));
+  }
+  return hasDigit && value >= 1'000 ? value : 0;
+}
+
+void InvalidateRadarWindow(HWND window) {
+  if (window && IsWindow(window) && IsWindowVisible(window)) {
+    InvalidateRect(window, nullptr, FALSE);
+  }
+}
+
 std::wstring RadarTimeFromMillis(int64_t milliseconds) {
   if (milliseconds <= 0) return {};
   const time_t seconds = static_cast<time_t>(milliseconds / 1000);
@@ -81,13 +116,12 @@ bool SaveBitmapAsBmp(HBITMAP bitmap, const fs::path& path, int width, int height
 
 void BlendBitmap(HDC dc, HBITMAP bitmap, int left, int top, int width, int height) {
   if (!bitmap || width <= 0 || height <= 0) return;
-  HDC sourceDc = CreateCompatibleDC(dc);
+  HDC sourceDc = RadarSourceDc(dc);
   if (!sourceDc) return;
   HGDIOBJ previous = SelectObject(sourceDc, bitmap);
   const BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
   AlphaBlend(dc, left, top, width, height, sourceDc, 0, 0, width, height, blend);
   SelectObject(sourceDc, previous);
-  DeleteDC(sourceDc);
 }
 }  // namespace
 
@@ -120,12 +154,23 @@ void Renderer::StopRadarCompose() noexcept {
 void Renderer::RadarComposeLoop() {
   const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   while (!radarComposeStopping_.load(std::memory_order_acquire)) {
+    int64_t animationIntervalMs = 0;
+    {
+      std::lock_guard lock(radarFrameMutex_);
+      animationIntervalMs = RadarAnimationIntervalFromSignature(radarSignature_);
+    }
     {
       std::unique_lock waitLock(radarComposeWakeMutex_);
-      radarComposeWake_.wait_for(waitLock, std::chrono::milliseconds(kDefaultRadarFrameIntervalMs), [this] {
+      const auto wakeRequested = [this] {
         return radarComposePending_ ||
                radarComposeStopping_.load(std::memory_order_acquire);
-      });
+      };
+      if (animationIntervalMs > 0) {
+        radarComposeWake_.wait_for(
+            waitLock, std::chrono::milliseconds(animationIntervalMs), wakeRequested);
+      } else {
+        radarComposeWake_.wait(waitLock, wakeRequested);
+      }
       if (radarComposeStopping_.load(std::memory_order_acquire)) break;
       radarComposePending_ = false;
     }
@@ -151,6 +196,7 @@ void Renderer::ComposeRadarFrame() {
   int sourceWidth = 480;
   int sourceHeight = 320;
   int64_t validAt = 0;
+  int64_t animationIntervalMs = 0;
   bool precomposed = false;
   std::wstring signature;
   std::vector<RadarTile> tiles;
@@ -173,13 +219,15 @@ void Renderer::ComposeRadarFrame() {
         const uint32_t selectedIndex = static_cast<uint32_t>(
             (UnixMillis() / frameIntervalMs) % static_cast<int64_t>(frames.Size()));
         if (frames.GetAt(selectedIndex).ValueType() == JsonValueType::Object) {
+          animationIntervalMs = frames.Size() > 1 ? frameIntervalMs : 0;
           const JsonObject frame = frames.GetAt(selectedIndex).GetObject();
           validAt = static_cast<int64_t>(std::max(0.0, json::Number(frame, L"validAt")));
           const JsonArray frameTiles = json::Array(frame, L"tiles");
           std::wostringstream signatureStream;
-          signatureStream << L"native-radar-v7|" << kRadarCanvasWidth << L'x' << kRadarCanvasHeight
+          signatureStream << L"native-radar-v8|" << kRadarCanvasWidth << L'x' << kRadarCanvasHeight
                           << L"|source:" << sourceWidth << L'x' << sourceHeight
                           << L"|precomposed:" << (precomposed ? 1 : 0)
+                          << L"|animate:" << animationIntervalMs
                           << L"|frame:" << selectedIndex << L'/' << frames.Size()
                           << L"|" << json::Text(frame, L"baseTime")
                           << L"|" << json::Text(frame, L"validTime")
@@ -211,6 +259,7 @@ void Renderer::ComposeRadarFrame() {
       tiles.clear();
       signature.clear();
       validAt = 0;
+      animationIntervalMs = 0;
       precomposed = false;
     }
   }
@@ -223,7 +272,8 @@ void Renderer::ComposeRadarFrame() {
   const std::string signatureUtf8 = WideToUtf8(signature);
   const fs::path cachedFrame = dataDir_ / L"radar-frame.bmp";
   const fs::path cachedSignature = dataDir_ / L"radar-frame.signature";
-  if (!signature.empty() && file::MatchesText(cachedSignature, signatureUtf8)) {
+  if (animationIntervalMs == 0 && !signature.empty() &&
+      file::MatchesText(cachedSignature, signatureUtf8)) {
     HBITMAP cached = DecodeImageFileToBitmap(cachedFrame, kRadarCanvasWidth, kRadarCanvasHeight);
     if (cached) {
       std::wstring timeText = RadarTimeFromMillis(validAt);
@@ -241,7 +291,7 @@ void Renderer::ComposeRadarFrame() {
         radarSignature_ = signature;
       }
       if (previousFrame) DeleteObject(previousFrame);
-      InvalidateAllNativePanels();
+      InvalidateRadarWindow(nativeRadarWindow_);
       return;
     }
   }
@@ -324,7 +374,11 @@ void Renderer::ComposeRadarFrame() {
   std::wstring timeText = RadarTimeFromMillis(validAt);
   if (timeText.empty()) timeText = tiles.empty() ? L"待機中" : L"--:--";
 
-  if (!signature.empty() && SaveBitmapAsBmp(composed, cachedFrame, kRadarCanvasWidth, kRadarCanvasHeight)) {
+  // Persist only static radar frames. Serializing the 1920x1280 bitmap for every
+  // animation step allocates and writes roughly 10 MB without improving restart
+  // recovery because the selected frame changes again on the next interval.
+  if (animationIntervalMs == 0 && !signature.empty() &&
+      SaveBitmapAsBmp(composed, cachedFrame, kRadarCanvasWidth, kRadarCanvasHeight)) {
     AtomicWriteText(cachedSignature, signatureUtf8);
   }
 
@@ -337,6 +391,6 @@ void Renderer::ComposeRadarFrame() {
     radarSignature_ = signature;
   }
   if (previousFrame) DeleteObject(previousFrame);
-  InvalidateAllNativePanels();
+  InvalidateRadarWindow(nativeRadarWindow_);
 }
 }  // namespace hp

@@ -9,6 +9,7 @@ on:
       - 'video/package.json'
       - '.github/scripts/audit-cloudflare-daily-usage.py'
       - '.github/scripts/audit-cloudflare-telemetry.py'
+      - '.github/scripts/publish-homepanel-observability-status.mjs'
       - '.github/workflows/cloud-deploy.yml'
       - '.github/workflows/fetch-cloudflare-observability.yml'
       - '.github/workflows/homepanel-unified-ci.yml'
@@ -22,6 +23,7 @@ on:
       - 'video/package.json'
       - '.github/scripts/audit-cloudflare-daily-usage.py'
       - '.github/scripts/audit-cloudflare-telemetry.py'
+      - '.github/scripts/publish-homepanel-observability-status.mjs'
       - '.github/workflows/cloud-deploy.yml'
       - '.github/workflows/fetch-cloudflare-observability.yml'
       - '.github/workflows/homepanel-unified-ci.yml'
@@ -48,18 +50,22 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/audit-cloudflare-daily-usage.py --self-test
           python3 .github/scripts/audit-cloudflare-telemetry.py --self-test
+          node .github/scripts/publish-homepanel-observability-status.mjs --self-test
           python3 - <<'PY'
           from pathlib import Path
 
           workflow = Path('.github/workflows/fetch-cloudflare-observability.yml').read_text()
           deploy_workflow = Path('.github/workflows/cloud-deploy.yml').read_text()
           telemetry = Path('.github/scripts/audit-cloudflare-telemetry.py').read_text()
+          publisher = Path('.github/scripts/publish-homepanel-observability-status.mjs').read_text()
           deploy_step = 'Deploy Worker with migration discovery only when required'
           required_workflow = (
               'workflows: ["Deploy unified homepanel-cloud Worker"]',
               'cron: "23 * * * *"',
               'cron: "47 2 * * *"',
               'actions: read',
+              'issues: write',
+              'statuses: write',
               'Determine whether upstream run deployed the Worker',
               '/actions/runs/$UPSTREAM_RUN_ID/jobs?per_page=100',
               deploy_step,
@@ -70,6 +76,10 @@ jobs:
               'DAILY_D1_WRITE_BUDGET: "3000"',
               'LIVE_TAIL_SECONDS: "90"',
               'LIVE_TAIL_LOG: live-tail.log',
+              'telemetry-summary.md',
+              'Publish persistent observability status',
+              'publish-homepanel-observability-status.mjs',
+              'steps.publish-status.outcome',
               "github.event.schedule == '47 2 * * *'",
               'set -o pipefail',
               'retention-days: 1',
@@ -82,14 +92,28 @@ jobs:
               'missing_workers',
               'DURABLE_OBJECT_CPU_BUDGET_MS',
           )
+          required_publisher = (
+              'HomePanel Observability Status',
+              '<!-- homepanel-observability-status -->',
+              'MAX_SECTION_CHARS = 12_000',
+              'MAX_ISSUE_BODY_CHARS = 60_000',
+              'observability/overall',
+              'upsertStatusIssue',
+              "statusState('skipped')",
+              'Bearer [redacted]',
+          )
           for marker in required_workflow:
               assert marker in workflow, marker
           for marker in required_telemetry:
               assert marker in telemetry, marker
+          for marker in required_publisher:
+              assert marker in publisher, marker
           assert deploy_step in deploy_workflow
           assert "if: steps.activation.outputs.active == 'true'" in deploy_workflow
           assert '\n  pull_request:' not in workflow
-          assert '\n  push:' not in workflow
+          assert '\n  push:' in workflow
+          assert 'branches: [main]' in workflow
+          assert ".github/scripts/publish-homepanel-observability-status.mjs" in workflow
           assert 'R2_BUCKET' not in workflow + telemetry
           print('observability workflow policy check passed')
           PY

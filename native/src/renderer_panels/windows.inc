@@ -139,7 +139,6 @@ void Renderer::InvalidatePanelSection(HWND window, PanelSection section) {
         rect = MusicProgressRectFromBody(CardBodyRect(CardContentRect(sections.music)));
         break;
       case PanelSection::Energy: rect = sections.air; break;
-      case PanelSection::News: rect = sections.news; break;
       default: break;
     }
   }
@@ -244,10 +243,6 @@ void Renderer::PaintNativeMain(HWND hwnd) {
   if (IntersectRect(&overlap, &scope.dirty, &sections.air)) {
     DrawCachedPanelSection(scope.dc, sections.air, PanelSection::Energy,
                            dashboardRevisions_.energy, &Renderer::DrawEnergySection);
-  }
-  if (IntersectRect(&overlap, &scope.dirty, &sections.news)) {
-    DrawCachedPanelSection(scope.dc, sections.news, PanelSection::News,
-                           nativeNewsRenderRevision_, &Renderer::DrawNewsSection);
   }
 }
 
