@@ -10,6 +10,10 @@ const dashboardLoader = readFileSync(
   new URL('../../native/src/renderer_dashboard.cpp', import.meta.url),
   'utf8',
 );
+const panelState = readFileSync(
+  new URL('../../native/src/renderer_panel_state.cpp', import.meta.url),
+  'utf8',
+);
 const layout = readFileSync(
   new URL('../../native/src/renderer_panels/layout_overrides.inc', import.meta.url),
   'utf8',
@@ -32,6 +36,18 @@ test('dashboard loader retains a compact signature instead of the full JSON copy
   assert.match(dashboardLoader, /std::to_string\(sourceSize\).*Fnv1a64\(text\)/s);
   assert.match(dashboardLoader, /dashboardUtf8_ = contentSignature;/);
   assert.doesNotMatch(dashboardLoader, /dashboardUtf8_ = std::move\(text\)/);
+});
+
+test('native panel state no longer compares or invalidates News revisions', () => {
+  assert.doesNotMatch(panelState, /newsIndexChanged|newsChanged|nativeNewsRenderRevision_/);
+  assert.doesNotMatch(panelState, /PanelSection::News/);
+});
+
+test('playback projection work is guarded by visible main-panel state', () => {
+  assert.match(
+    panelState,
+    /if \(nativeMainWindow_ && IsWindow\(nativeMainWindow_\) &&\s*IsWindowVisible\(nativeMainWindow_\)\) \{\s*const NativePlaybackTickState playbackState = NativePlaybackTickStateFor\(nowMs\);/s,
+  );
 });
 
 test('legacy News rectangle remains outside the visible main client', () => {
