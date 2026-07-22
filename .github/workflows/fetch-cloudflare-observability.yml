@@ -24,7 +24,7 @@ jobs:
   observability:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -44,6 +44,15 @@ jobs:
           GITHUB_STEP_SUMMARY=observability-summary.md python3 .github/scripts/query-cloudflare-observability.py
           cat observability-summary.md >> "$actual_summary"
 
+      - name: Capture live HomePanel events
+        continue-on-error: true
+        env:
+          LIVE_TAIL_WORKER: homepanel-cloud
+          LIVE_TAIL_SECONDS: "300"
+          LIVE_TAIL_PROBES: /v1/health,/
+        shell: bash
+        run: node .github/scripts/capture-cloudflare-live-tail.mjs 2>&1 | tee live-tail.log
+
       - name: Enforce per-invocation 10 ms CPU policy
         shell: bash
         run: python3 .github/scripts/audit-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
@@ -56,5 +65,6 @@ jobs:
           path: |
             observability-summary.md
             telemetry-audit.log
+            live-tail.log
           if-no-files-found: warn
           retention-days: 1
