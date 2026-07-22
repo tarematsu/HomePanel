@@ -5,6 +5,7 @@ import { fetchStationhead } from "./spotify_source";
 
 export interface Env {
   DB: D1Database;
+  DATA_BUCKET?: R2Bucket;
   UPDATE_BUCKET?: R2Bucket;
   HOMEPANEL_INGEST_SECRET?: string;
   HOMEPANEL_DEVICE_TOKENS?: string;

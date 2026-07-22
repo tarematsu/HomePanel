@@ -32,6 +32,10 @@
     {
       "binding": "UPDATE_BUCKET",
       "bucket_name": "homepanel-test-updates"
+    },
+    {
+      "binding": "DATA_BUCKET",
+      "bucket_name": "homepanel-test-data"
     }
   ]
 }

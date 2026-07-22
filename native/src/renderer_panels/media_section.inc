@@ -1,15 +1,3 @@
-namespace {
-std::wstring DashboardStatusTimeText(int64_t epochMs) {
-  if (epochMs <= 0) return L"--:--";
-  const std::time_t seconds = static_cast<std::time_t>(epochMs / 1000);
-  std::tm local{};
-  if (localtime_s(&local, &seconds) != 0) return L"--:--";
-  wchar_t text[16]{};
-  if (wcsftime(text, std::size(text), L"%H:%M", &local) == 0) return L"--:--";
-  return text;
-}
-}  // namespace
-
 void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
   const RECT content = CardContentRect(card);
   const RECT body = CardBodyRect(content);
@@ -174,32 +162,6 @@ void Renderer::DrawMusicSection(HDC dc, const RECT& card) {
   SetTextColor(dc, kWidgetDanger);
   DrawTextInRect(dc, L"MUTE", rects.muteButton,
                  DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-
-  const NativeMinuteFactsProjection stationheadStatus = NativeMinuteFactsSnapshot();
-  std::wstring stateText = L"状態取得待ち";
-  if (stationheadStatus.available) {
-    if (stationheadStatus.isPaused) {
-      stateText = L"一時停止";
-    } else if (stationheadStatus.isBroadcasting) {
-      stateText = L"配信中 " + std::to_wstring(stationheadStatus.listenerCount);
-    } else {
-      stateText = L"停止中";
-    }
-  }
-  const std::wstring timeText =
-      L"生成" + DashboardStatusTimeText(stationheadStatus.minuteAt) +
-      L" 取得" + DashboardStatusTimeText(stationheadStatus.fetchedAt);
-  const LONG statusMiddle = rects.status.top +
-      std::max<LONG>(1, (rects.status.bottom - rects.status.top) / 2);
-  RECT stateRect = rects.status;
-  stateRect.bottom = statusMiddle;
-  RECT timeRect = rects.status;
-  timeRect.top = statusMiddle;
-  SetTextColor(dc, stationheadStatus.available ? kWidgetMuted : kWidgetSubtle);
-  DrawTextInRect(dc, stateText, stateRect,
-                 DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
-  DrawTextInRect(dc, timeText, timeRect,
-                 DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER);
 
   SelectObject(dc, previousFont);
 }

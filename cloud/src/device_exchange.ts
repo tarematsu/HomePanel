@@ -2,7 +2,7 @@ import { authorizedDevice, deviceIdFromRequest } from "./auth";
 import { buildDeviceSyncPayload } from "./device_sync";
 import { radarBundleResponseForPayload } from "./radar_bundle";
 import type { Env } from "./sources";
-import { receiveTelemetryOptimized } from "./telemetry_route";
+import { receiveCompactTelemetry } from "./telemetry_compact";
 
 const EXCHANGE_MAGIC = new TextEncoder().encode("HPEX0001");
 const ENCODER = new TextEncoder();
@@ -85,17 +85,18 @@ function syncRequest(request: Request, deviceId: string, versions: Record<string
 async function applyTelemetry(
   request: Request,
   env: Env,
+  ctx: ExecutionContext,
   telemetry: unknown,
   payload: Record<string, unknown>,
 ): Promise<void> {
   const headers = new Headers({ "Content-Type": "application/json" });
   const authorization = request.headers.get("Authorization");
   if (authorization) headers.set("Authorization", authorization);
-  const telemetryResponse = await receiveTelemetryOptimized(new Request("https://exchange.internal/v1/telemetry", {
+  const telemetryResponse = await receiveCompactTelemetry(new Request("https://exchange.internal/v1/telemetry/compact", {
     method: "POST",
     headers,
     body: JSON.stringify(telemetry),
-  }), env);
+  }), env, ctx);
   if (telemetryResponse.status === 200) {
     payload.telemetry = await telemetryResponse.json<unknown>();
     return;
@@ -174,7 +175,7 @@ export async function deviceExchangeResponse(
     : {};
 
   const payload = await buildDeviceSyncPayload(syncRequest(request, deviceId, versions), env);
-  if (input.telemetry !== undefined) await applyTelemetry(request, env, input.telemetry, payload);
+  if (input.telemetry !== undefined) await applyTelemetry(request, env, ctx, input.telemetry, payload);
   const radarBundle = await embeddedRadarBundle(request, env, ctx, payload);
   const jsonBytes = ENCODER.encode(JSON.stringify(payload));
   const responseBytes = EXCHANGE_MAGIC.length + 4 + jsonBytes.length + radarBundle.byteLength;

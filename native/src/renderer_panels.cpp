@@ -6,15 +6,13 @@
 
 #define SplitSidebarSections SplitRearrangedSidebarSections
 #define SplitMainSections SplitRearrangedMainSections
-#define ControlsFromContent RearrangedControlsFromContent
 #define ClockTimeRectFromCard RearrangedClockTimeRectFromCard
-#define DrawClockSection HP_DRAW_CLOCK_WITH_CONTROLS
+#define DrawClockSection HP_DRAW_CLOCK_WITH_STATUS
 #define DrawControlsSection DrawAirSection
 #include "renderer_panels/windows.inc"
 #undef DrawControlsSection
 #undef DrawClockSection
 #undef ClockTimeRectFromCard
-#undef ControlsFromContent
 #undef SplitMainSections
 #undef SplitSidebarSections
 

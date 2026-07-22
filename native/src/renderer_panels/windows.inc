@@ -178,17 +178,11 @@ LRESULT Renderer::HandleNativeStaticMessage(HWND hwnd, UINT message, WPARAM wpar
       break;
     case WM_LBUTTONUP: {
       const int id = GetDlgCtrlID(hwnd);
-      RECT client{};
-      GetClientRect(hwnd, &client);
-      const POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-      if (id == kNativeSideId) {
-        const SidebarSections sections = SplitSidebarSections(client);
-        const ControlsRects controls = ControlsFromContent(CardContentRect(sections.controls));
-        if (PtInRect(&controls.update, point)) QueueAction(UiAction::AppUpdate);
-        else if (PtInRect(&controls.restart, point)) QueueAction(UiAction::Restart);
-        return 0;
-      }
+      if (id == kNativeSideId) return 0;
       if (id == kNativeMainId) {
+        RECT client{};
+        GetClientRect(hwnd, &client);
+        const POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
         const MainSections sections = SplitMainSections(client);
         const RECT musicBody = CardBodyRect(CardContentRect(sections.music));
         const MusicRowRects musicRects = MusicRowFromBody(musicBody);
@@ -301,4 +295,5 @@ void Renderer::PaintNativeRadar(HWND hwnd) {
   SelectObject(scope.dc, previousFont);
 
   SelectClipRgn(scope.dc, nullptr);
-  DrawCardOutline(scope.dc, bounds, radius);}
+  DrawCardOutline(scope.dc, bounds, radius);
+}

@@ -67,7 +67,7 @@ describe("D1 meta and command optimizations", () => {
       dashboardVersion: 27,
       radarVersion: 7,
       status: "stale",
-      workerVersion: "2.11.0",
+      workerVersion: "2.12.0",
     });
   });
 
@@ -118,13 +118,13 @@ describe("D1 meta and command optimizations", () => {
     const configUpdatedAt = Date.now();
     await env.DB.prepare(
       "INSERT INTO device_configs(device_id,version,payload,updated_at) VALUES(?1,?2,?3,?4)",
-    ).bind("homepanel-device", 9, JSON.stringify({ cloudPollSeconds: 300 }), configUpdatedAt).run();
+    ).bind("homepanel-device", 9, JSON.stringify({ cloudPollSeconds: 900 }), configUpdatedAt).run();
 
     const baseUrl = "https://homepanel.test/v1/device/sync?deviceId=homepanel-device&dashboardVersion=27&radarVersion=8&switchbotVersion=5&stationheadVersion=6&stationheadHealthVersion=10&configVersion=9";
     const matching = await SELF.fetch(baseUrl, { headers: auth("test-device") });
     expect(matching.status).toBe(200);
     await expect(matching.json()).resolves.toEqual({
-      workerVersion: "2.11.0",
+      workerVersion: "2.12.0",
       versions: { dashboard: 27, radar: 8, switchbot: 5, stationhead: 6, stationheadHealth: 10, config: 9 },
       commands: [],
     });
@@ -138,7 +138,7 @@ describe("D1 meta and command optimizations", () => {
     );
     expect(stale.status).toBe(200);
     await expect(stale.json()).resolves.toEqual({
-      workerVersion: "2.11.0",
+      workerVersion: "2.12.0",
       versions: { dashboard: 27, radar: 8, switchbot: 5, stationhead: 6, stationheadHealth: 10, config: 9 },
       commands: [],
       radar: JSON.stringify({ marker: "radar" }),
@@ -148,7 +148,7 @@ describe("D1 meta and command optimizations", () => {
         deviceId: "homepanel-device",
         version: 9,
         updatedAt: configUpdatedAt,
-        config: { cloudPollSeconds: 300 },
+        config: { cloudPollSeconds: 900 },
       }),
     });
   });
@@ -173,13 +173,13 @@ describe("D1 meta and command optimizations", () => {
     });
   });
 
-  it("sets SwitchBot to five minutes and Octopus to six hours", async () => {
+  it("sets SwitchBot to fifteen minutes and Octopus to six hours", async () => {
     const rows = await env.DB.prepare(
       "SELECT name, interval_seconds FROM jobs WHERE name IN ('switchbot','octopus') ORDER BY name",
     ).all<{ name: string; interval_seconds: number }>();
     expect(rows.results).toEqual([
       { name: "octopus", interval_seconds: 21_600 },
-      { name: "switchbot", interval_seconds: 300 },
+      { name: "switchbot", interval_seconds: 900 },
     ]);
   });
 

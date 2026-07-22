@@ -19,6 +19,7 @@ import { proxyRadarTile } from "./radar_tile";
 import type { Env } from "./sources";
 import { fetchStationhead } from "./spotify_source";
 import { stationheadHealthPayload } from "./stationhead_health";
+import { receiveCompactTelemetry } from "./telemetry_compact";
 import { receiveTelemetryOptimized } from "./telemetry_route";
 
 async function dashboardJsonResponse(request: Request, env: Env): Promise<Response> {
@@ -164,6 +165,11 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (url.pathname === "/v1/stationhead") return stationheadState(request, env, ctx);
     if (url.pathname === "/v1/stationhead-health") return stationheadHealthState(request, env);
     return stateJson(request, env, "radar");
+  }
+
+  if (url.pathname === "/v1/telemetry/compact") {
+    if (request.method !== "POST") return methodNotAllowed(["POST"]);
+    return receiveCompactTelemetry(request, env, ctx);
   }
 
   if (url.pathname === "/v1/telemetry") {

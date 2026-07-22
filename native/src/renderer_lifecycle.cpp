@@ -37,7 +37,6 @@ Renderer::Renderer(HWND window, int width, int height)
 Renderer::~Renderer() {
   shuttingDown_ = true;
   StopNativePlaybackBridge();
-  StopNativeMinuteFactsBridge();
   StopRadarCompose();
   DestroyNativeStaticWindows();
 }
@@ -49,7 +48,6 @@ void Renderer::Initialize() {
   PrepareParentWindow(window_);
   EnsureNativeStaticWindows();
   StartNativePlaybackBridge();
-  StartNativeMinuteFactsBridge();
   StartRadarCompose();
 }
 

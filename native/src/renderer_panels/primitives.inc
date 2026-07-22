@@ -365,20 +365,13 @@ struct SidebarSections {
 SidebarSections SplitSidebarSections(const RECT& client) {
   const int height = std::max(1L, client.bottom - client.top);
   const int gap = std::max(6, height * 18 / 1000);
-
-  // The sidebar and main panel share the same inner dashboard height. Mirror
-  // SplitMainSections' radar/news proportions so the controls card lines up
-  // with the news card, then split the rest evenly across the clock,
-  // weather-forecast, and energy cards so all three share one height.
   const int radarHeight = height * 600 / 1000;
   const int mainGap = std::max(6, height * 18 / 1000);
   const int mainHeight = std::max(1, height - radarHeight - mainGap);
   const int targetControlsHeight = std::max(1, mainHeight * 270 / 1000);
   const int availableForCards = std::max(3, height - gap * 3);
-  const int controlsHeight = std::clamp(
-      targetControlsHeight, 1, std::max(1, availableForCards - 2));
+  const int controlsHeight = std::clamp(targetControlsHeight, 1, std::max(1, availableForCards - 2));
   const int cardHeight = std::max(1, (availableForCards - controlsHeight) / 3);
-
   SidebarSections sections;
   int top = client.top;
   sections.clock = RECT{client.left, top, client.right, top + cardHeight};
@@ -409,46 +402,15 @@ MainSections SplitMainSections(const RECT& client) {
   const LONG rowBottom = std::max(client.top + 1, sections.news.top - gapY);
   sections.music = RECT{client.left, client.top, client.left + musicWidth, rowBottom};
   sections.air = RECT{sections.music.right + gapX, client.top, client.right, rowBottom};
-  if (sections.air.right <= sections.air.left) {
-    sections.air.right = sections.air.left + 1;
-  }
+  if (sections.air.right <= sections.air.left) sections.air.right = sections.air.left + 1;
   return sections;
 }
-
-struct ControlsRects {
-  RECT update{};
-  RECT restart{};
-  RECT status{};
-};
-
-ControlsRects ControlsFromContent(const RECT& content) {
-  const int height = std::max(1L, content.bottom - content.top);
-  const int width = std::max(1L, content.right - content.left);
-  const int gap = std::max(6, SpanX(content, 35));
-  const int buttonHeight = std::clamp(height * 45 / 100, 28, 54);
-  const int statusLineHeight = std::clamp(height * 20 / 100, 14, 24);
-  const int statusGap = std::max(4, statusLineHeight / 2);
-  const int statusHeight = std::min(
-      statusLineHeight * 2, std::max(1, height - buttonHeight - statusGap));
-  const int groupHeight = buttonHeight + statusGap + statusHeight;
-  const int groupTop = content.top + std::max(0, (height - groupHeight) / 2);
-  const int buttonWidth = std::max(1, (width - gap) / 2);
-  ControlsRects rects;
-  rects.update = RECT{content.left, groupTop, content.left + buttonWidth,
-                      groupTop + buttonHeight};
-  rects.restart = RECT{rects.update.right + gap, groupTop, content.right,
-                       groupTop + buttonHeight};
-  rects.status = RECT{content.left, rects.update.bottom + statusGap,
-                      content.right, rects.update.bottom + statusGap + statusHeight};
-  if (rects.status.bottom <= rects.status.top) rects.status.bottom = rects.status.top + 1;
-  return rects;}
 
 struct MusicRowRects {
   RECT row{};
   RECT artwork{};
   RECT button{};
   RECT muteButton{};
-  RECT status{};
 };
 
 MusicRowRects MusicRowFromBody(const RECT& body) {
@@ -460,19 +422,16 @@ MusicRowRects MusicRowFromBody(const RECT& body) {
   rects.artwork = RECT{rects.row.left, rects.row.top + pad, rects.row.left + artSize,
                        rects.row.top + pad + artSize};
   const int buttonGap = std::max(3, rowHeight * 4 / 100);
-  const int buttonHeight = std::min(
-      std::clamp(rowHeight * 28 / 100, 20, 44),
-      std::max(1, (rowHeight - buttonGap) / 2));
+  const int buttonHeight = std::min(std::clamp(rowHeight * 28 / 100, 20, 44),
+                                    std::max(1, (rowHeight - buttonGap) / 2));
   const int buttonWidth = std::clamp(SpanX(body, 170), 64, 140);
-  const int statusHeight = std::clamp(rowHeight * 14 / 100, 16, 30);
-  const int clusterHeight = buttonHeight * 2 + statusHeight + buttonGap * 2;
+  const int retiredFooterHeight = std::clamp(rowHeight * 14 / 100, 16, 30);
+  const int clusterHeight = buttonHeight * 2 + retiredFooterHeight + buttonGap * 2;
   const int clusterTop = rects.row.top + std::max(0, (rowHeight - clusterHeight) / 2);
   rects.button = RECT{rects.row.right - buttonWidth, clusterTop, rects.row.right,
                       clusterTop + buttonHeight};
   rects.muteButton = RECT{rects.row.right - buttonWidth, rects.button.bottom + buttonGap,
                           rects.row.right, rects.button.bottom + buttonGap + buttonHeight};
-  rects.status = RECT{rects.row.right - buttonWidth, rects.muteButton.bottom + buttonGap,
-                      rects.row.right, rects.muteButton.bottom + buttonGap + statusHeight};
   return rects;
 }
 
@@ -480,12 +439,10 @@ RECT MusicProgressRectFromBody(const RECT& body) {
   const MusicRowRects rects = MusicRowFromBody(body);
   const int rowHeight = std::max(1, static_cast<int>(rects.row.bottom - rects.row.top));
   const int pad = std::max(6, rowHeight * 10 / 100);
-  RECT progress{
-      rects.artwork.right + pad,
-      rects.row.top + rowHeight * 64 / 100,
-      rects.button.left - pad,
-      rects.row.bottom - rowHeight * 2 / 100,
-  };
+  RECT progress{rects.artwork.right + pad,
+                rects.row.top + rowHeight * 64 / 100,
+                rects.button.left - pad,
+                rects.row.bottom - rowHeight * 2 / 100};
   if (progress.right <= progress.left) progress.right = progress.left + 1;
   if (progress.bottom <= progress.top) progress.bottom = progress.top + 1;
   return progress;
@@ -508,10 +465,8 @@ void StretchRadarInto(HDC destDc, const RECT& destRect, HBITMAP radarBitmap) {
   if (!sourceDc) return;
   const double scale = std::max(static_cast<double>(destWidth) / kRadarCanvasWidth,
                                 static_cast<double>(destHeight) / kRadarCanvasHeight);
-  const int sourceWidth = std::clamp(
-      static_cast<int>(std::lround(destWidth / scale)), 1, kRadarCanvasWidth);
-  const int sourceHeight = std::clamp(
-      static_cast<int>(std::lround(destHeight / scale)), 1, kRadarCanvasHeight);
+  const int sourceWidth = std::clamp(static_cast<int>(std::lround(destWidth / scale)), 1, kRadarCanvasWidth);
+  const int sourceHeight = std::clamp(static_cast<int>(std::lround(destHeight / scale)), 1, kRadarCanvasHeight);
   const int sourceLeft = (kRadarCanvasWidth - sourceWidth) / 2;
   const int sourceTop = (kRadarCanvasHeight - sourceHeight) / 2;
   HGDIOBJ previous = SelectObject(sourceDc, radarBitmap);
@@ -539,4 +494,3 @@ HDC NativePanelMemoryDc(HDC compatibleDc) {
 constexpr UINT_PTR kNativePanelTickTimer = 1;
 constexpr UINT kNativePanelTickMs = 1'000;
 }
-

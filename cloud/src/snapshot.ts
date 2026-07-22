@@ -1,8 +1,9 @@
+import { readR2EnvironmentState } from "./environment_r2";
 import { jstDayKey, type Env, type SourceResult } from "./sources";
 import { markStateChanged } from "./state_generation";
 import { memoizedStateHash } from "./state_hash_cache";
 
-export const WORKER_VERSION = "2.11.0";
+export const WORKER_VERSION = "2.12.0";
 
 const EMPTY_OBJECT_HASH = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 const HEX_DIGITS = "0123456789abcdef";
@@ -38,8 +39,7 @@ export const DASHBOARD_SOURCE_NAMES = [
   "environment",
 ] as const;
 const META_SOURCE_NAMES = [...DASHBOARD_SOURCE_NAMES, "radar"] as const;
-const META_SOURCE_PLACEHOLDERS = "?,?,?,?,?,?,?";
-const STATE_HEARTBEAT_MS = 15 * 60_000;
+const STATE_HEARTBEAT_MS = 60 * 60_000;
 
 type DashboardSourceName = typeof DASHBOARD_SOURCE_NAMES[number];
 type CachedDashboardSource = { key: string; value: unknown };
@@ -55,23 +55,40 @@ export async function sha256Hex(value: string | ArrayBuffer): Promise<string> {
   return output;
 }
 
-export async function readState(env: Env, source: string): Promise<StateRow | null> {
+async function readD1State(env: Env, source: string): Promise<StateRow | null> {
   return env.DB.prepare(
     `SELECT source, version, payload, observed_at, fetched_at, last_success_at, status, error, content_hash
        FROM current_state WHERE source = ?1`,
   ).bind(source).first<StateRow>();
 }
 
+export async function readState(env: Env, source: string): Promise<StateRow | null> {
+  if (source !== "environment") return readD1State(env, source);
+  const [d1, r2] = await Promise.all([
+    readD1State(env, source),
+    readR2EnvironmentState(env),
+  ]);
+  if (!r2) return d1;
+  if (!d1 || r2.fetched_at >= d1.fetched_at) return r2;
+  return d1;
+}
+
 export async function readStates(env: Env, sources: readonly string[]): Promise<Record<string, StateRow>> {
   if (!sources.length) return {};
   let placeholders = "?";
   for (let index = 1; index < sources.length; index += 1) placeholders += ",?";
-  const result = await env.DB.prepare(
-    `SELECT source, version, payload, observed_at, fetched_at, last_success_at, status, error, content_hash
-       FROM current_state WHERE source IN (${placeholders})`,
-  ).bind(...sources).all<StateRow>();
+  const [result, r2Environment] = await Promise.all([
+    env.DB.prepare(
+      `SELECT source, version, payload, observed_at, fetched_at, last_success_at, status, error, content_hash
+         FROM current_state WHERE source IN (${placeholders})`,
+    ).bind(...sources).all<StateRow>(),
+    sources.includes("environment") ? readR2EnvironmentState(env) : Promise.resolve(null),
+  ]);
   const rows: Record<string, StateRow> = {};
   for (const row of result.results ?? []) rows[row.source] = row;
+  if (r2Environment && (!rows.environment || r2Environment.fetched_at >= rows.environment.fetched_at)) {
+    rows.environment = r2Environment;
+  }
   return rows;
 }
 
@@ -275,15 +292,8 @@ export interface MetaPayload {
   workerVersion: string;
 }
 
-type StateMetadataRow = Pick<StateRow, "source" | "version" | "fetched_at" | "status">;
-
 export async function buildMeta(env: Env): Promise<MetaPayload> {
-  const result = await env.DB.prepare(
-    `SELECT source, version, fetched_at, status
-       FROM current_state WHERE source IN (${META_SOURCE_PLACEHOLDERS})`,
-  ).bind(...META_SOURCE_NAMES).all<StateMetadataRow>();
-  const rows: Record<string, StateMetadataRow> = {};
-  for (const row of result.results ?? []) rows[row.source] = row;
+  const rows = await readStates(env, META_SOURCE_NAMES);
   const radar = rows.radar;
   let version = 0;
   let dashboardFetchedAt = 0;

@@ -19,8 +19,8 @@ struct AppConfig {
   std::wstring deviceId = L"homepanel-device";
   int screenWidth = 1920;
   int screenHeight = 1280;
-  int cloudPollSeconds = 300;
-  int telemetryMinutes = 30;
+  int cloudPollSeconds = 900;
+  int telemetryMinutes = 60;
   double temperatureOffset = -4.5;
   std::wstring serialPort;
   StationheadConfig stationhead;
@@ -29,4 +29,4 @@ struct AppConfig {
 AppConfig LoadConfig(const fs::path& path);
 std::wstring LoadProtectedToken(const fs::path& path, const wchar_t* environmentName);
 bool SaveProtectedToken(const fs::path& path, const std::wstring& value);
-}
+}  // namespace hp

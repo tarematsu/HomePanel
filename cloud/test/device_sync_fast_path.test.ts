@@ -37,7 +37,7 @@ describe("device sync unchanged fast path", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      workerVersion: "2.11.0",
+      workerVersion: "2.12.0",
       versions: {
         dashboard: 27,
         radar: 8,

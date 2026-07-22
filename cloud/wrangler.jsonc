@@ -13,7 +13,11 @@
   "assets": {
     "directory": "../video/public",
     "binding": "ASSETS",
-    "run_worker_first": true,
+    "run_worker_first": [
+      "/api/*",
+      "/v1/*",
+      "/admin"
+    ],
     "not_found_handling": "single-page-application"
   },
   "browser": {
@@ -47,6 +51,9 @@
     {
       "binding": "UPDATE_BUCKET",
       "bucket_name": "homepanel-updates"
+    },
+    {
+      "binding": "DATA_BUCKET"
     }
   ],
   "queues": {

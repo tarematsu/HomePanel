@@ -207,12 +207,16 @@ config.d1_databases = [{
   database_id: databaseId,
   migrations_dir: generatedPath(migrationsDir),
 }];
-if (updateBucket) {
-  config.r2_buckets = [{
+const retainedR2Buckets = Array.isArray(config.r2_buckets)
+  ? config.r2_buckets.filter(entry => entry?.binding !== "UPDATE_BUCKET")
+  : [];
+config.r2_buckets = updateBucket
+  ? [...retainedR2Buckets, {
     binding: "UPDATE_BUCKET",
     bucket_name: updateBucket,
-  }];
-}
+  }]
+  : retainedR2Buckets;
+if (!config.r2_buckets.length) delete config.r2_buckets;
 const controlPlugIds = legacyControlPlugIds();
 if (controlPlugIds.length) {
   config.vars ??= {};
@@ -222,6 +226,7 @@ if (controlPlugIds.length) {
 writeFileSync(generatedConfig, `${JSON.stringify(config, null, 2)}\n`);
 console.log(`Using Worker '${workerName}' and D1 '${databaseName}' (${databaseId})`);
 if (updateBucket) console.log(`Using R2 bucket '${updateBucket}' for update assets`);
+if (retainedR2Buckets.length) console.log(`Preserving ${retainedR2Buckets.length} non-update R2 binding(s)`);
 console.log(`Generated config paths: main=${config.main}, migrations=${config.d1_databases[0].migrations_dir}`);
 if (config.assets?.directory) console.log(`Generated assets path: ${config.assets.directory}`);
 console.log("Local .env files are ignored; runtime credentials remain in Cloudflare secrets");

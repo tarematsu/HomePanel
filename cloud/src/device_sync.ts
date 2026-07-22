@@ -3,6 +3,7 @@ import {
   claimPendingDeviceCommands,
   COMMAND_REDELIVERY_MS,
 } from "./device_command_delivery";
+import { readR2EnvironmentState } from "./environment_r2";
 import { json } from "./http";
 import {
   DASHBOARD_SOURCE_NAMES,
@@ -22,6 +23,8 @@ type SyncSourceName = typeof SYNC_SOURCE_NAMES[number];
 
 interface DeviceSyncSnapshotRow {
   dashboard_version: number;
+  environment_version: number;
+  environment_fetched_at: number;
   radar_version: number;
   switchbot_version: number;
   stationhead_version: number;
@@ -47,6 +50,8 @@ async function deviceSyncSnapshot(env: Env, deviceId: string, now: number): Prom
          COALESCE(SUM(CASE
            WHEN source IN ('weather','news','octopus','switchbot','stationhead','environment')
            THEN version ELSE 0 END),0) AS dashboard_version,
+         COALESCE(MAX(CASE WHEN source='environment' THEN version ELSE 0 END),0) AS environment_version,
+         COALESCE(MAX(CASE WHEN source='environment' THEN fetched_at ELSE 0 END),0) AS environment_fetched_at,
          COALESCE(MAX(CASE WHEN source='radar' THEN version ELSE 0 END),0) AS radar_version,
          COALESCE(MAX(CASE WHEN source='switchbot' THEN version ELSE 0 END),0) AS switchbot_version,
          COALESCE(MAX(CASE WHEN source='stationhead' THEN version ELSE 0 END),0) AS stationhead_version,
@@ -79,6 +84,8 @@ async function deviceSyncSnapshot(env: Env, deviceId: string, now: number): Prom
   const row = result.results?.[0];
   return row ?? {
     dashboard_version: 0,
+    environment_version: 0,
+    environment_fetched_at: 0,
     radar_version: 0,
     switchbot_version: 0,
     stationhead_version: 0,
@@ -88,6 +95,15 @@ async function deviceSyncSnapshot(env: Env, deviceId: string, now: number): Prom
     config_payload: null,
     pending: 0,
   };
+}
+
+function preferredEnvironmentState(
+  snapshot: DeviceSyncSnapshotRow,
+  r2: StateRow | null,
+): StateRow | null {
+  if (!r2) return null;
+  const d1FetchedAt = Number(snapshot.environment_fetched_at ?? 0);
+  return r2.fetched_at >= d1FetchedAt ? r2 : null;
 }
 
 export async function buildDeviceSyncPayload(request: Request, env: Env): Promise<Record<string, unknown>> {
@@ -103,9 +119,18 @@ export async function buildDeviceSyncPayload(request: Request, env: Env): Promis
     config: requestedVersion(url, "configVersion"),
   };
   const now = Date.now();
-  const snapshot = await deviceSyncSnapshot(env, deviceId, now);
+  const [snapshot, r2Environment] = await Promise.all([
+    deviceSyncSnapshot(env, deviceId, now),
+    readR2EnvironmentState(env),
+  ]);
   const versions = normalizeDeviceSyncVersions(snapshot);
-  const currentDashboardVersion = versions.dashboard_version;
+  const environmentState = preferredEnvironmentState(snapshot, r2Environment);
+  const d1EnvironmentVersion = Number(snapshot.environment_version ?? 0);
+  const environmentVersion = environmentState?.version ?? d1EnvironmentVersion;
+  const currentDashboardVersion = Math.max(
+    0,
+    versions.dashboard_version - d1EnvironmentVersion + environmentVersion,
+  );
   const radarVersion = versions.radar_version;
   const switchbotVersion = versions.switchbot_version;
   const stationheadVersion = versions.stationhead_version;
@@ -145,6 +170,7 @@ export async function buildDeviceSyncPayload(request: Request, env: Env): Promis
          FROM current_state WHERE source IN (${placeholders})`,
     ).bind(...names).all<StateRow>();
     for (const state of stateResult.results ?? []) states[state.source] = state;
+    if (dashboardChanged && environmentState) states.environment = environmentState;
   }
 
   if (dashboardChanged) response.dashboard = JSON.stringify(dashboardPayload(states));

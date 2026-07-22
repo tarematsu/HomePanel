@@ -177,8 +177,8 @@ describe("HomePanel Worker", () => {
     expect(stateResponse.headers.get("etag")).toBeTruthy();
   });
 
-  it("sets the SwitchBot fallback poll interval to five minutes", async () => {
+  it("sets the SwitchBot fallback poll interval to fifteen minutes", async () => {
     const row = await env.DB.prepare("SELECT interval_seconds FROM jobs WHERE name='switchbot'").first<{ interval_seconds: number }>();
-    expect(row?.interval_seconds).toBe(300);
+    expect(row?.interval_seconds).toBe(900);
   });
 });
