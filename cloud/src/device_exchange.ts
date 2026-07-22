@@ -51,14 +51,12 @@ async function applyTelemetry(
   telemetry: unknown,
   payload: Record<string, unknown>,
 ): Promise<void> {
-  const telemetryResponse = await applyCompactTelemetryInput(telemetry, env, deviceId);
-  if (telemetryResponse.status === 200) {
-    payload.telemetry = await telemetryResponse.json<unknown>();
+  const result = await applyCompactTelemetryInput(telemetry, env, deviceId);
+  if (result.status === 200) {
+    payload.telemetry = result.body;
     return;
   }
-  let detail: unknown = null;
-  try { detail = await telemetryResponse.json<unknown>(); } catch { detail = null; }
-  payload.telemetryError = { status: telemetryResponse.status, detail };
+  payload.telemetryError = { status: result.status, detail: result.body };
 }
 
 export async function deviceExchangeResponse(
