@@ -38,6 +38,7 @@ class App {
   void ClearStartupStationheadPreview();
   void StopServices();
   void Tick();
+  void ProcessPendingStationheadTrackBoundaryRefreshes(int64_t nowMs);
   void Draw();
   void MarkRenderStateDirty() noexcept { renderStateDirty_ = true; }
   void ShowToast(std::wstring message, int64_t durationMs, bool invalidate = true);
@@ -98,6 +99,8 @@ class App {
   uint64_t stationheadPlaybackFallbackRevision_ = 0;
   int64_t primaryTrackBoundaryPendingUntil_ = 0;
   int64_t secondaryTrackBoundaryPendingUntil_ = 0;
+  int64_t primaryTrackBoundaryHandoffReadyAt_ = 0;
+  int64_t secondaryTrackBoundaryHandoffReadyAt_ = 0;
   int64_t lastTelemetryAt_ = 0;
   int64_t lastStationheadPlayStatsUpdatedAt_ = 0;
   int64_t lastStationheadPlayHistorySavedAt_ = 0;

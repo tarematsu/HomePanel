@@ -8,6 +8,7 @@ constexpr int64_t kDailyPlayStatsIntervalMs = 5 * 60'000;
 constexpr int64_t kAuthProbeIntervalMs = 5 * 60'000;
 constexpr int64_t kAuthProbeTimeoutMs = 30'000;
 constexpr int64_t kStationheadTrackBoundaryRefreshDelayMs = 52 * 60'000;
+constexpr int64_t kStationheadTrackBoundaryNavigationTimeoutMs = 30'000;
 constexpr int64_t kStationheadTrackBoundaryPlaybackRecoveryTimeoutMs = 30'000;
 
 bool CallbackAlive(const std::shared_ptr<std::atomic<bool>>& alive) {
@@ -36,12 +37,16 @@ StationheadPlayer::~StationheadPlayer() { Stop(); }
 void StationheadPlayer::Start() {
   shuttingDown_ = false;
   usingFallback_ = false;
+  trackBoundaryPlaybackRecoveryPending_ = false;
+  trackBoundaryPlaybackRecoveryAwaitingNavigation_ = false;
+  trackBoundaryPlaybackRecoveryDeadline_ = 0;
   ResetNavigationRouteState();
   Create();
 }
 
 void StationheadPlayer::Stop() {
   shuttingDown_ = true;
+  audioPlayingSinceAt_.store(0, std::memory_order_relaxed);
   createCallbackAlive_->store(false, std::memory_order_release);
   authCallbackAlive_->store(false, std::memory_order_release);
   CloseAuthWebView();
@@ -65,12 +70,16 @@ StationheadStatus StationheadPlayer::Status() const {
 
 void StationheadPlayer::ResetNavigationRouteState() {
   audioPlaying_ = false;
+  audioPlayingSinceAt_.store(0, std::memory_order_relaxed);
   trackBoundaryRefreshPending_ = false;
   nextTickAt_ = 0;
   nextAutoClickAt_ = 0;
 }
 
 void StationheadPlayer::ApplyAudioPlaybackState(bool playing, const std::wstring& source) {
+  const bool awaitingTrackBoundaryNavigation =
+      trackBoundaryPlaybackRecoveryPending_ &&
+      trackBoundaryPlaybackRecoveryAwaitingNavigation_;
   const bool changed =
       audioPlaying_.exchange(playing, std::memory_order_relaxed) != playing;
   // Give the page's own auto-click scanners the same ground truth WebView2's
@@ -86,8 +95,35 @@ void StationheadPlayer::ApplyAudioPlaybackState(bool playing, const std::wstring
         nullptr);
   }
   if (playing) {
+    // WebView2 may report audio from the outgoing document before the matching
+    // NavigationCompleted event. Keep the navigation watchdog armed and avoid
+    // treating that early signal as recovery until the new document is known
+    // to be committed.
+    if (awaitingTrackBoundaryNavigation) {
+      audioPlayingSinceAt_.store(0, std::memory_order_relaxed);
+      {
+        std::lock_guard lock(mutex_);
+        status_.audioPlaying = true;
+        status_.playing = true;
+        status_.loginRequired = false;
+        status_.detail = L"audio observed while track-boundary navigation is still pending";
+      }
+      if (changed) {
+        log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
+                  L" audio observed before track-boundary navigation completed (" +
+                  source + L")");
+      }
+      nextTickAt_ = 0;
+      PostChange();
+      return;
+    }
+
+    if (audioPlayingSinceAt_.load(std::memory_order_relaxed) <= 0) {
+      audioPlayingSinceAt_.store(UnixMillis(), std::memory_order_relaxed);
+    }
     if (trackBoundaryPlaybackRecoveryPending_) {
       trackBoundaryPlaybackRecoveryPending_ = false;
+      trackBoundaryPlaybackRecoveryAwaitingNavigation_ = false;
       trackBoundaryPlaybackRecoveryDeadline_ = 0;
       log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
                 L" audio recovered after track-boundary refresh");
@@ -109,6 +145,7 @@ void StationheadPlayer::ApplyAudioPlaybackState(bool playing, const std::wstring
     return;
   }
 
+  audioPlayingSinceAt_.store(0, std::memory_order_relaxed);
   // Un-arm stylesheet blocking while audio isn't playing: Stationhead can
   // briefly stop the audio element between tracks and needs to load styles
   // for a Resume/Continue control, and a stale "ever played" latch would
@@ -169,7 +206,7 @@ void StationheadPlayer::HandleTrackEnded(int64_t nowMs, bool retry) {
       : WM_HP_PRIMARY_RELOAD_READY;
   if (SendMessageW(window_, readyMessage, 0, 0) == 0) {
     log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
-              L" track-boundary refresh waiting for the other window's audio");
+              L" track-boundary refresh waiting for stable handoff audio");
     return;
   }
 
@@ -179,14 +216,23 @@ void StationheadPlayer::HandleTrackEnded(int64_t nowMs, bool retry) {
 }
 
 void StationheadPlayer::RecoverTrackBoundaryPlayback() {
-  if (!trackBoundaryPlaybackRecoveryPending_ || !webview_ ||
-      audioPlaying_.load(std::memory_order_relaxed) || spotifyAuthorization_ ||
-      loginRequired_ || recreating_.load(std::memory_order_relaxed) ||
+  if (!trackBoundaryPlaybackRecoveryPending_ ||
+      trackBoundaryPlaybackRecoveryAwaitingNavigation_ || !webview_ ||
+      spotifyAuthorization_ || loginRequired_ ||
+      recreating_.load(std::memory_order_relaxed) ||
       navigationInFlight_.load(std::memory_order_acquire)) {
+    return;
+  }
+  if (audioPlaying_.load(std::memory_order_relaxed)) {
+    trackBoundaryPlaybackRecoveryPending_ = false;
+    trackBoundaryPlaybackRecoveryDeadline_ = 0;
+    log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
+              L" playback recovery watchdog observed audio before rebuilding");
     return;
   }
 
   trackBoundaryPlaybackRecoveryPending_ = false;
+  trackBoundaryPlaybackRecoveryAwaitingNavigation_ = false;
   trackBoundaryPlaybackRecoveryDeadline_ = 0;
   const auto alive = createCallbackAlive_;
   ComPtr<ICoreWebView2> view = webview_;
@@ -303,8 +349,9 @@ void StationheadPlayer::NavigateStationheadUrl(int64_t nowMs, const std::wstring
   const bool trackBoundaryRefresh =
       reason == L"track-boundary authentication refresh";
   trackBoundaryPlaybackRecoveryPending_ = trackBoundaryRefresh;
+  trackBoundaryPlaybackRecoveryAwaitingNavigation_ = trackBoundaryRefresh;
   trackBoundaryPlaybackRecoveryDeadline_ = trackBoundaryRefresh
-      ? nowMs + kStationheadTrackBoundaryPlaybackRecoveryTimeoutMs
+      ? nowMs + kStationheadTrackBoundaryNavigationTimeoutMs
       : 0;
   stationNavigationStarted_ = true;
   SetStartupBounds();
@@ -327,13 +374,14 @@ void StationheadPlayer::NavigateStationheadUrl(int64_t nowMs, const std::wstring
   const HRESULT result = webview_->Navigate(url.c_str());
   if (FAILED(result)) {
     trackBoundaryPlaybackRecoveryPending_ = false;
+    trackBoundaryPlaybackRecoveryAwaitingNavigation_ = false;
     trackBoundaryPlaybackRecoveryDeadline_ = 0;
     ScheduleRecreate(L"navigation start failed " + HResultHex(result), 1'000);
     return;
   }
   if (trackBoundaryRefresh) {
     log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
-              L" armed 30-second playback recovery after track-boundary refresh");
+              L" armed 30-second navigation watchdog for track-boundary refresh");
   }
   log_.Info(L"Stationhead " + std::wstring(RoleTag()) + L" navigation (" + reason + L"): " + url);
 }
@@ -367,26 +415,38 @@ void StationheadPlayer::PollAuthProbe(int64_t nowMs) {
 // position could.
 void StationheadPlayer::AttemptNativeStartClick(int64_t nowMs) {
   if (!webview_ || autoClickInFlight_ ||
+      navigationInFlight_.load(std::memory_order_acquire) ||
+      recreating_.load(std::memory_order_relaxed) ||
       audioPlaying_.load(std::memory_order_relaxed) || nowMs < nextAutoClickAt_) {
     return;
   }
   nextAutoClickAt_ = nowMs + kStationheadAutoClickRetryMs;
   autoClickInFlight_ = true;
   const auto alive = createCallbackAlive_;
+  const uint64_t navigationIdAtStart =
+      activeNavigationId_.load(std::memory_order_acquire);
   static const std::wstring locateScript = StationheadLocateStartButtonScript();
   ComPtr<ICoreWebView2> view = webview_;
   const HRESULT result = webview_->ExecuteScript(
       locateScript.c_str(),
       Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
-          [this, alive, view](HRESULT scriptResult, LPCWSTR resultJson) -> HRESULT {
+          [this, alive, view, navigationIdAtStart](
+              HRESULT scriptResult, LPCWSTR resultJson) -> HRESULT {
             if (!CallbackAlive(alive)) return S_OK;
-            if (FAILED(scriptResult) || !resultJson) {
+            const auto navigationChanged = [this, navigationIdAtStart]() noexcept {
+              return navigationInFlight_.load(std::memory_order_acquire) ||
+                  activeNavigationId_.load(std::memory_order_acquire) !=
+                      navigationIdAtStart;
+            };
+            if (view.Get() != webview_.Get() || navigationChanged() ||
+                FAILED(scriptResult) || !resultJson) {
               autoClickInFlight_ = false;
               return S_OK;
             }
             double x = 0.0;
             double y = 0.0;
-            if (!ParseStationheadLocateButtonResult(resultJson, x, y)) {
+            if (!ParseStationheadLocateButtonResult(resultJson, x, y) ||
+                navigationChanged()) {
               autoClickInFlight_ = false;
               return S_OK;
             }
@@ -601,30 +661,88 @@ void StationheadPlayer::Tick(int64_t nowMs) {
   }
   if (!spotifyAuthorization_ && authController_) CloseAuthWebView();
   if (spotifyAuthorization_ || loginRequired_) {
+    if (trackBoundaryPlaybackRecoveryPending_) {
+      trackBoundaryPlaybackRecoveryPending_ = false;
+      trackBoundaryPlaybackRecoveryAwaitingNavigation_ = false;
+      trackBoundaryPlaybackRecoveryDeadline_ = 0;
+      log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
+                L" cancelled track-boundary recovery because interactive authentication is required");
+    }
     nextTickAt_ = nowMs + 1'000;
     return;
   }
+
+  bool statusNavigating = false;
+  {
+    std::lock_guard lock(mutex_);
+    statusNavigating = status_.navigating;
+  }
+  const bool navigationActive =
+      navigationInFlight_.load(std::memory_order_acquire) || statusNavigating;
 
   int64_t next = nowMs + 30 * 60'000;
   const auto consider = [&](int64_t deadline) {
     if (deadline <= nowMs) next = nowMs + 1'000;
     else next = std::min(next, deadline);
   };
-  if (trackBoundaryPlaybackRecoveryPending_ &&
-      trackBoundaryPlaybackRecoveryDeadline_ > 0) {
-    bool statusNavigating = false;
-    {
-      std::lock_guard lock(mutex_);
-      statusNavigating = status_.navigating;
+  if (trackBoundaryPlaybackRecoveryPending_) {
+    if (trackBoundaryPlaybackRecoveryAwaitingNavigation_) {
+      if (navigationActive) {
+        if (trackBoundaryPlaybackRecoveryDeadline_ > 0 &&
+            nowMs >= trackBoundaryPlaybackRecoveryDeadline_) {
+          ScheduleRecreate(
+              L"track-boundary navigation did not complete before its watchdog deadline",
+              2'000);
+          return;
+        }
+        consider(trackBoundaryPlaybackRecoveryDeadline_);
+      } else {
+        trackBoundaryPlaybackRecoveryAwaitingNavigation_ = false;
+        // The atomic flag may still contain an outgoing-document event. Query
+        // WebView2 again only after NavigationCompleted released the navigating
+        // state, then use that fresh value as the recovery baseline.
+        bool playingAfterNavigation = false;
+        ComPtr<ICoreWebView2_8> audioView;
+        BOOL nativePlaying = FALSE;
+        const bool measuredAfterNavigation =
+            SUCCEEDED(webview_.As(&audioView)) && audioView &&
+            SUCCEEDED(audioView->get_IsDocumentPlayingAudio(&nativePlaying));
+        if (measuredAfterNavigation) {
+          playingAfterNavigation = nativePlaying != FALSE;
+        } else {
+          log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
+                    L" could not recheck native audio after track-boundary navigation; waiting for a fresh playback event");
+        }
+        ApplyAudioPlaybackState(
+            playingAfterNavigation, L"post-navigation native confirmation");
+        if (!playingAfterNavigation) {
+          trackBoundaryPlaybackRecoveryDeadline_ =
+              nowMs + kStationheadTrackBoundaryPlaybackRecoveryTimeoutMs;
+          log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
+                    L" track-boundary navigation completed; armed full 30-second audio recovery window");
+          consider(trackBoundaryPlaybackRecoveryDeadline_);
+        }
+      }
+    } else if (trackBoundaryPlaybackRecoveryDeadline_ > 0) {
+      if (audioPlaying_.load(std::memory_order_relaxed)) {
+        ApplyAudioPlaybackState(true, L"playback recovery confirmation");
+      } else if (nowMs >= trackBoundaryPlaybackRecoveryDeadline_) {
+        RecoverTrackBoundaryPlayback();
+        return;
+      } else {
+        consider(trackBoundaryPlaybackRecoveryDeadline_);
+      }
     }
-    if (nowMs >= trackBoundaryPlaybackRecoveryDeadline_ &&
-        !navigationInFlight_.load(std::memory_order_acquire) &&
-        !statusNavigating) {
-      RecoverTrackBoundaryPlayback();
-      return;
-    }
-    consider(trackBoundaryPlaybackRecoveryDeadline_);
   }
+
+  // Do not run auth probes, stats scripts, or click scans against a document
+  // while WebView2 is replacing it. Window B used to run its local auth probe
+  // in this gap, adding avoidable callbacks to the most fragile transition.
+  if (navigationActive) {
+    nextTickAt_ = nowMs + 1'000;
+    return;
+  }
+
   if (!IsSecondary()) {
     if (nowMs - lastDailyPlayStatsAt_ >= kDailyPlayStatsIntervalMs) PollDailyPlayStats(nowMs);
     consider(lastDailyPlayStatsAt_ + kDailyPlayStatsIntervalMs);
@@ -651,6 +769,9 @@ void StationheadPlayer::Reconnect() { ScheduleRecreate(L"manual reconnect"); }
 
 void StationheadPlayer::OpenSpotifyAuthorization(const std::wstring& url) {
   if (url.empty()) return;
+  trackBoundaryPlaybackRecoveryPending_ = false;
+  trackBoundaryPlaybackRecoveryAwaitingNavigation_ = false;
+  trackBoundaryPlaybackRecoveryDeadline_ = 0;
   if (!webview_) {
     pendingAuthorizationUrl_ = url;
     if (!creating_) ScheduleRecreate(L"Spotify authorization requested before WebView2 was ready");
@@ -687,6 +808,9 @@ void StationheadPlayer::FinishSpotifyAuthorization(const std::wstring& detail) {
 
 void StationheadPlayer::ShowForLogin() {
   trackBoundaryRefreshPending_ = false;
+  trackBoundaryPlaybackRecoveryPending_ = false;
+  trackBoundaryPlaybackRecoveryAwaitingNavigation_ = false;
+  trackBoundaryPlaybackRecoveryDeadline_ = 0;
   SelectTab(StationheadTabKind::Stationhead);
   log_.Warn(L"Stationhead " + std::wstring(RoleTag()) + L" login required; window visible");
 }
@@ -745,7 +869,9 @@ void StationheadPlayer::PostChange(uint32_t flags) {
 
 void StationheadPlayer::ScheduleRecreate(const std::wstring& reason, int64_t delayMs) {
   if (shuttingDown_) return;
+  audioPlayingSinceAt_.store(0, std::memory_order_relaxed);
   trackBoundaryPlaybackRecoveryPending_ = false;
+  trackBoundaryPlaybackRecoveryAwaitingNavigation_ = false;
   trackBoundaryPlaybackRecoveryDeadline_ = 0;
   const int64_t candidate = UnixMillis() + std::max<int64_t>(0, delayMs);
   const bool wasRecreating = recreating_.exchange(true);

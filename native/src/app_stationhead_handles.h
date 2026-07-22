@@ -26,6 +26,9 @@ class StationheadHandleBase {
   [[nodiscard]] bool AudioPlaying() const noexcept {
     return player_ && player_->AudioPlaying();
   }
+  [[nodiscard]] int64_t AudioPlayingSince() const noexcept {
+    return player_ ? player_->AudioPlayingSince() : 0;
+  }
   void Stop();
   void SetAudioMuted(bool muted) noexcept;
   void SetBounds(const RECT& bounds);

@@ -98,6 +98,9 @@ class StationheadPlayer {
   [[nodiscard]] bool AudioPlaying() const noexcept {
     return audioPlaying_.load(std::memory_order_relaxed);
   }
+  [[nodiscard]] int64_t AudioPlayingSince() const noexcept {
+    return audioPlayingSinceAt_.load(std::memory_order_relaxed);
+  }
   void Reconnect();
   void RetryPendingTrackBoundaryRefresh(int64_t nowMs) {
     HandleTrackEnded(nowMs, true);
@@ -210,11 +213,13 @@ class StationheadPlayer {
   std::atomic<bool> navigationInFlight_{false};
   bool trackBoundaryRefreshPending_ = false;
   bool trackBoundaryPlaybackRecoveryPending_ = false;
+  bool trackBoundaryPlaybackRecoveryAwaitingNavigation_ = false;
   int64_t trackBoundaryPlaybackRecoveryDeadline_ = 0;
   int64_t creationStartedAt_ = 0;
   int64_t recreateAt_ = 0;
   std::atomic<bool> shuttingDown_{false};
   std::atomic<bool> audioPlaying_{false};
+  std::atomic<int64_t> audioPlayingSinceAt_{0};
   std::atomic<bool> audioMuted_{false};
   std::atomic<double> audioVolume_{1.0};
   mutable std::atomic<int> appliedMuted_{-1};
