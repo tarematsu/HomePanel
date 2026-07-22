@@ -64,28 +64,26 @@ static_assert(!StationheadAdditionalNonPlaybackScriptUrl(
 
 // Locates the current Stationhead playback/onboarding control, if any, and
 // returns its clickable center point as {x, y}, or null if there is nothing to
-// click right now (already playing, or no eligible control visible). Existing
-// Start Listening-like controls stay preferred; when the same screen contains
-// at least two distinct visible controls labelled exactly "Connect", the second
-// one is also eligible. Called on-demand from native code immediately before
-// dispatching a click, so the returned coordinates are always fresh.
+// click right now (already playing, or no eligible control visible). Called
+// on-demand from native code immediately before dispatching a click, so the
+// coordinates it returns are always fresh - there is no page-scheduled scan
+// loop whose captured position could go stale while a message travels back
+// to native code.
 inline std::wstring StationheadLocateStartButtonScript() {
   static constexpr wchar_t kScript[] = LR"JS(
 (() => {
   const host = String(location.hostname || '').toLowerCase();
   if (host !== 'stationhead.com' && !host.endsWith('.stationhead.com')) return null;
   const startPattern = /\b(start|join|resume|continue)\s+(listening|station|show|room)\b|\blisten\s+(now|live)\b|^(continue|let(?:'|’)?s\s+go|続ける|続行|次へ)$/i;
-  const connectPattern = /^connect$/i;
   const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
-  const labelsOf = element => [
+  const labelOf = element => normalize([
     element?.innerText,
     element?.getAttribute?.('aria-label'),
     element?.textContent,
     element?.getAttribute?.('title'),
     element?.getAttribute?.('value'),
     element?.getAttribute?.('data-testid')
-  ].map(normalize).filter(Boolean);
-  const labelOf = element => normalize(labelsOf(element).join(' '));
+  ].filter(Boolean).join(' '));
   const playing = () => {
     if (typeof window.__homepanelAudioPlaying === 'boolean') return window.__homepanelAudioPlaying;
     if (navigator.mediaSession?.playbackState === 'playing') return true;
@@ -94,43 +92,25 @@ inline std::wstring StationheadLocateStartButtonScript() {
   };
   if (!document.body || playing()) return null;
   const selector = "button,[role='button'],a,input[type='button'],input[type='submit'],[aria-label],[data-testid],[tabindex]";
-  const clickablePoint = element => {
-    if (!(element instanceof HTMLElement) || !element.isConnected) return null;
+  for (const element of document.querySelectorAll(selector)) {
+    if (!(element instanceof HTMLElement) || !element.isConnected) continue;
     if (element.disabled || element.getAttribute('aria-disabled') === 'true' ||
-        element.getAttribute('aria-hidden') === 'true') return null;
-    if (element.matches('audio,video') || element.querySelector?.('audio,video')) return null;
+        element.getAttribute('aria-hidden') === 'true') continue;
+    if (!startPattern.test(labelOf(element))) continue;
+    if (element.matches('audio,video') || element.querySelector?.('audio,video')) continue;
     const rect = element.getBoundingClientRect();
-    if (!rect || rect.width <= 2 || rect.height <= 2) return null;
+    if (!rect || rect.width <= 2 || rect.height <= 2) continue;
     const style = getComputedStyle(element);
     if (style.display === 'none' || style.visibility === 'hidden' ||
-        Number(style.opacity || 1) <= 0 || style.pointerEvents === 'none') return null;
+        Number(style.opacity || 1) <= 0 || style.pointerEvents === 'none') continue;
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
-    if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
+    if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) continue;
     const hit = document.elementFromPoint(x, y);
-    if (!hit || (hit !== element && !element.contains(hit))) return null;
-    return { element, x, y };
-  };
-  let startPoint = null;
-  const connectPoints = [];
-  for (const element of document.querySelectorAll(selector)) {
-    const labels = labelsOf(element);
-    const isStart = startPattern.test(labelOf(element));
-    const isConnect = labels.some(label => connectPattern.test(label));
-    if (!isStart && !isConnect) continue;
-    const point = clickablePoint(element);
-    if (!point) continue;
-    if (isStart && !startPoint) startPoint = point;
-    if (!isConnect) continue;
-    const duplicate = connectPoints.some(candidate =>
-      candidate.element === element || candidate.element.contains(element) ||
-      element.contains(candidate.element) ||
-      (Math.abs(candidate.x - point.x) < 1 && Math.abs(candidate.y - point.y) < 1));
-    if (!duplicate) connectPoints.push(point);
+    if (!hit || (hit !== element && !element.contains(hit))) continue;
+    return { x, y };
   }
-  if (startPoint) return { x: startPoint.x, y: startPoint.y };
-  const secondConnect = connectPoints[1];
-  return secondConnect ? { x: secondConnect.x, y: secondConnect.y } : null;
+  return null;
 })()
 )JS";
   return kScript;
