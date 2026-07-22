@@ -213,14 +213,35 @@ def main() -> int:
         [{
             "kind": "filter",
             "key": "$workers.cpuTimeMs",
-            "operation": "gt",
+            "operation": "exists",
             "type": "number",
-            "value": CPU_BUDGET_MS,
         }],
-        "github-actions-cpu-policy",
+        "github-actions-cpu-samples",
     )
-    violations = [detail(event) for event in cpu_events if not exempt(event)]
-    exempted = [detail(event) for event in cpu_events if exempt(event)]
+    samples_by_worker: dict[str, list[float]] = {worker: [] for worker in WORKERS}
+    violations: list[dict[str, Any]] = []
+    exempted: list[dict[str, Any]] = []
+    for event in cpu_events:
+        item = detail(event)
+        cpu_ms = item["cpu_ms"]
+        worker = item["worker"]
+        if worker in samples_by_worker and cpu_ms is not None:
+            samples_by_worker[worker].append(cpu_ms)
+        if cpu_ms is None or cpu_ms <= CPU_BUDGET_MS:
+            continue
+        if exempt(event):
+            exempted.append(item)
+        else:
+            violations.append(item)
+    cpu_workers = {
+        worker: {
+            "samples": len(values),
+            "max_ms": max(values) if values else None,
+            "avg_ms": (sum(values) / len(values)) if values else None,
+        }
+        for worker, values in samples_by_worker.items()
+    }
+    coverage_ok = bool(cpu_events) and not cpu_truncated
 
     try:
         error_events, error_total, error_truncated = query_events(
@@ -275,6 +296,8 @@ def main() -> int:
             "matching_events": cpu_total,
             "fetched": len(cpu_events),
             "truncated": cpu_truncated,
+            "coverage_ok": coverage_ok,
+            "workers": cpu_workers,
             "violations": len(violations),
             "exempted": len(exempted),
             "samples": violations[:20],
@@ -288,9 +311,15 @@ def main() -> int:
     }
     print("TELEMETRY_AUDIT=" + json.dumps(report, ensure_ascii=False, separators=(",", ":")))
     print(
-        f"CPU_POLICY budget_ms={CPU_BUDGET_MS:g} violations={len(violations)} "
-        f"exempted={len(exempted)} matching={cpu_total} truncated={cpu_truncated}"
+        f"CPU_POLICY budget_ms={CPU_BUDGET_MS:g} samples={len(cpu_events)} "
+        f"violations={len(violations)} exempted={len(exempted)} "
+        f"matching={cpu_total} truncated={cpu_truncated} coverage_ok={coverage_ok}"
     )
+    for worker, stats in cpu_workers.items():
+        print(
+            f"CPU_WORKER worker={worker} samples={stats['samples']} "
+            f"avg_ms={stats['avg_ms']} max_ms={stats['max_ms']}"
+        )
     for item in violations[:20]:
         print(
             "::error title=Worker CPU policy violation::"
@@ -298,7 +327,12 @@ def main() -> int:
             f"event={item['event_type']} url={item['url']}"
         )
     if cpu_truncated:
-        print("::error title=Worker CPU policy incomplete::Violation events were truncated")
+        print("::error title=Worker CPU policy incomplete::CPU events were truncated")
+    if not cpu_events:
+        print(
+            "::error title=Worker CPU policy has no coverage::"
+            "No persisted invocation CPU samples were returned"
+        )
     print(
         f"WORKER_ERRORS matching={error_total} fetched={len(error_events)} "
         f"truncated={error_truncated}"
@@ -315,6 +349,8 @@ def main() -> int:
         "",
         f"- Window: `{report['window']['from']}` to `{report['window']['to']}`",
         f"- CPU policy: `<= {CPU_BUDGET_MS:g} ms` per invocation",
+        f"- CPU samples: `{len(cpu_events)}`",
+        f"- CPU coverage: `{'OK' if coverage_ok else 'MISSING'}`",
         f"- CPU violations: `{len(violations)}`",
         f"- CPU exemptions: `{len(exempted)}`",
         f"- Error events: `{error_total if error_total is not None else len(error_events)}`",
@@ -331,7 +367,7 @@ def main() -> int:
         with open(summary_path, "a", encoding="utf-8") as output:
             output.write("\n".join(summary) + "\n")
 
-    return 1 if violations or cpu_truncated else 0
+    return 1 if violations or not coverage_ok else 0
 
 
 if __name__ == "__main__":
