@@ -174,11 +174,13 @@ void StationheadPlayer::HandleTrackEnded(int64_t nowMs, bool retry) {
 void StationheadPlayer::TryStartInitialNavigation() {
   if (!webViewConfigured_ || !authCaptureScriptRegistrationComplete_ ||
       !startupScriptRegistrationComplete_ || startupNavigationStarted_ ||
-      shuttingDown_ || !webview_) {
+      shuttingDown_ || recreating_.load(std::memory_order_relaxed) || !webview_) {
     return;
   }
   startupNavigationStarted_ = true;
   startupScriptDeadline_ = 0;
+  log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
+            L" startup prerequisites ready; starting initial navigation");
   if (!pendingAuthorizationUrl_.empty()) {
     const std::wstring authorizationUrl = pendingAuthorizationUrl_;
     pendingAuthorizationUrl_.clear();
@@ -468,14 +470,24 @@ void StationheadPlayer::Tick(int64_t nowMs) {
     return;
   }
   if (!startupNavigationStarted_) {
-    if ((!authCaptureScriptRegistrationComplete_ ||
-         !startupScriptRegistrationComplete_) &&
+    const bool waitingForAuthCapture =
+        !authCaptureScriptRegistrationComplete_;
+    const bool waitingForStartupScript =
+        !startupScriptRegistrationComplete_;
+    if ((waitingForAuthCapture || waitingForStartupScript) &&
         startupScriptDeadline_ > 0 && nowMs >= startupScriptDeadline_) {
-      authCaptureScriptRegistrationComplete_ = true;
-      startupScriptRegistrationComplete_ = true;
-      log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
-                L" startup script registration timed out; continuing without it");
-      TryStartInitialNavigation();
+      std::wstring missing;
+      if (waitingForAuthCapture) missing = L"auth capture";
+      if (waitingForStartupScript) {
+        if (!missing.empty()) missing += L", ";
+        missing += L"startup";
+      }
+      startupScriptDeadline_ = 0;
+      ScheduleRecreate(
+          L"startup script registration timed out waiting for " + missing,
+          1'000);
+      nextTickAt_ = nowMs + 1'000;
+      return;
     }
     if (!startupNavigationStarted_) {
       nextTickAt_ = nowMs + 1'000;
