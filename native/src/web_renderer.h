@@ -259,6 +259,7 @@ class Renderer {
       void (Renderer::*draw)(HDC, const RECT&));
   HBITMAP NativePanelBackBuffer(HWND hwnd, HDC dc, int width, int height);
   void ReleaseNativePanelBackBuffer(HWND hwnd);
+  void ReleaseNativePanelSurfaces() noexcept;
   void ResetNativeBitmapCaches() noexcept;
   void QueueAction(UiAction action);
   void StartNativePlaybackBridge();
@@ -311,6 +312,7 @@ class Renderer {
   bool nativeDashboardVisible_ = true;
   bool nativePanelTimerActive_ = false;
   int nativeClockDayKey_ = 0;
+  int64_t nativeClockSecondKey_ = -1;
   fs::path rootDir_;
   fs::path dataDir_;
   std::atomic<bool> shuttingDown_{false};
