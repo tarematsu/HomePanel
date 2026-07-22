@@ -37,13 +37,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Restore npm cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-22-unified-${{ hashFiles('cloud/package-lock.json', 'video/package.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22-unified-
+          cache: npm
+          cache-dependency-path: |
+            cloud/package-lock.json
+            video/package.json
       - name: Install HomePanel dependencies
         working-directory: cloud
         run: npm ci --no-audit --no-fund
