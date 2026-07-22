@@ -69,19 +69,24 @@ struct StationheadSurfacePolicy {
 
 constexpr StationheadSurfacePolicy ResolveStationheadSurfacePolicy(
     bool startupPreviewActive,
-    StationheadTabKind selectedTab) noexcept {
-  const bool showAuth = selectedTab == StationheadTabKind::Auth;
+    StationheadTabKind selectedTab,
+    bool authSurfaceReady) noexcept {
+  const bool showAuth = selectedTab == StationheadTabKind::Auth && authSurfaceReady;
   return {showAuth, startupPreviewActive && !showAuth};
 }
 
 static_assert(ResolveStationheadSurfacePolicy(
-                  true, StationheadTabKind::None).showStartupPreview);
+                  true, StationheadTabKind::None, false).showStartupPreview);
 static_assert(ResolveStationheadSurfacePolicy(
-                  true, StationheadTabKind::Auth).showAuth);
+                  true, StationheadTabKind::Auth, true).showAuth);
 static_assert(!ResolveStationheadSurfacePolicy(
-                   true, StationheadTabKind::Auth).showStartupPreview);
+                   true, StationheadTabKind::Auth, true).showStartupPreview);
+static_assert(!ResolveStationheadSurfacePolicy(
+                   true, StationheadTabKind::Auth, false).showAuth);
 static_assert(ResolveStationheadSurfacePolicy(
-                  false, StationheadTabKind::Auth).showAuth);
+                  true, StationheadTabKind::Auth, false).showStartupPreview);
+static_assert(ResolveStationheadSurfacePolicy(
+                  false, StationheadTabKind::Auth, true).showAuth);
 
 void ApplyStationheadChildLayout(HWND hostWindow,
                                  HWND authHostWindow,
@@ -183,7 +188,14 @@ bool StationheadPlayer::EnsureAuthHostWindow() {
 }
 
 void StationheadPlayer::KeepPlaybackBehindDashboard() {
-  if (spotifyAuthorization_ || loginRequired_) return;
+  if (spotifyAuthorization_ || loginRequired_) {
+    selectedTab_ = spotifyAuthorization_
+        ? StationheadTabKind::Auth
+        : StationheadTabKind::Stationhead;
+    viewVisible_ = true;
+    LayoutControllers();
+    return;
+  }
   if (startupPreviewActive_) {
     // The App owns the startup-preview lifetime. A player can request to hide
     // after audio starts or auth completes, but clearing only this local flag
@@ -272,8 +284,9 @@ void StationheadPlayer::SetVisible(bool visible) {
 
 void StationheadPlayer::LayoutControllers() {
   if (!EnsureHostWindow()) return;
-  const StationheadSurfacePolicy policy =
-      ResolveStationheadSurfacePolicy(startupPreviewActive_, selectedTab_);
+  const bool authSurfaceReady = authController_ && authWebview_;
+  const StationheadSurfacePolicy policy = ResolveStationheadSurfacePolicy(
+      startupPreviewActive_, selectedTab_, authSurfaceReady);
   ApplyStationheadChildLayout(hostWindow_, authHostWindow_, controller_.Get(), authController_.Get(),
                               bounds_, viewVisible_, policy.showAuth,
                               policy.showStartupPreview);
@@ -306,7 +319,8 @@ bool StationheadPlayer::HasAuthTab() const {
 }
 
 HWND StationheadPlayer::ActiveHostWindowForAccountSetup() const noexcept {
-  if (selectedTab_ == StationheadTabKind::Auth && authHostWindow_ && IsWindow(authHostWindow_)) {
+  if (selectedTab_ == StationheadTabKind::Auth && authController_ && authWebview_ &&
+      authHostWindow_ && IsWindow(authHostWindow_)) {
     return authHostWindow_;
   }
   return hostWindow_;
