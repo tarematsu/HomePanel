@@ -326,8 +326,10 @@ LRESULT App::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         // Keep the shared workspace in Main placement mode. It evaluates A and B
         // independently, so a request from B remains in B's half instead of the
         // legacy Stationhead workspace selecting A full-screen over it.
-        selectedTab_ = WorkspaceTab::Main;
-        layoutChanged = true;
+        if (selectedTab_ != WorkspaceTab::Main) {
+          selectedTab_ = WorkspaceTab::Main;
+          layoutChanged = true;
+        }
       } else if (ShouldReturnMainForStationheadChanges(changes) &&
                  selectedTab_ != WorkspaceTab::Main) {
         // Auth completion is handled by the originating StationheadPlayer,
