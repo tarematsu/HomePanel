@@ -22,6 +22,10 @@ const playbackResolve = readFileSync(
   new URL('../../native/src/dashboard_playback_resolve.cpp', import.meta.url),
   'utf8',
 );
+const radarUi = readFileSync(
+  new URL('../../native/src/renderer_radar_ui.cpp', import.meta.url),
+  'utf8',
+);
 const rendererHeader = readFileSync(
   new URL('../../native/src/web_renderer.h', import.meta.url),
   'utf8',
@@ -96,6 +100,31 @@ test('playback update storage is reduced to one native source', () => {
   assert.match(playbackResolve, /const NativePlaybackUpdate& update = nativePlaybackUpdate_;/);
   assert.doesNotMatch(nativePlayback, /nativePlaybackUpdates_/);
   assert.doesNotMatch(playbackResolve, /nativePlaybackUpdates_/);
+});
+
+test('static radar waits for updates instead of polling every five seconds', () => {
+  assert.match(radarUi, /RadarAnimationIntervalFromSignature/);
+  assert.match(radarUi, /if \(animationIntervalMs > 0\)[\s\S]*wait_for[\s\S]*else \{\s*radarComposeWake_\.wait/s);
+  assert.match(radarUi, /frames\.Size\(\) > 1 \? frameIntervalMs : 0/);
+  assert.match(radarUi, /L"\|animate:" << animationIntervalMs/);
+});
+
+test('animated radar avoids per-frame disk snapshot serialization', () => {
+  assert.match(
+    radarUi,
+    /if \(animationIntervalMs == 0 && !signature\.empty\(\) &&\s*SaveBitmapAsBmp/s,
+  );
+  assert.match(
+    radarUi,
+    /if \(animationIntervalMs == 0 && !signature\.empty\(\) &&\s*file::MatchesText/s,
+  );
+});
+
+test('radar updates invalidate only the radar window and reuse a source DC', () => {
+  assert.match(radarUi, /InvalidateRadarWindow\(nativeRadarWindow_\);/);
+  assert.doesNotMatch(radarUi, /InvalidateAllNativePanels\(\)/);
+  assert.match(radarUi, /thread_local CachedRadarSourceDc cached/);
+  assert.doesNotMatch(radarUi, /void BlendBitmap[\s\S]*DeleteDC\(sourceDc\)/);
 });
 
 test('native panel state no longer compares or invalidates News revisions', () => {
