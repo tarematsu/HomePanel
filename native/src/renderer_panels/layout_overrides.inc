@@ -100,4 +100,4 @@ std::wstring DashboardStatusTimeText(int64_t epochMs) {
   SelectObject((dc), hpPreviousFont); \
 } while (false)
 
-}  // namespace hp
+}  // namespace
