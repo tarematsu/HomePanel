@@ -41,8 +41,8 @@ bool ApplyCloudConfig(AppConfig& config, const fs::path& path) {
     const auto envelope = JsonObject::Parse(Utf8ToWide(text));
     const auto root = Object(envelope, L"config");
 
-    config.cloudPollSeconds = 900;
-    config.telemetryMinutes = 60;
+    config.cloudPollSeconds = 1800;
+    config.telemetryMinutes = 120;
 
     const auto screen = Object(root, L"screen");
     config.screenWidth = Number(screen, L"width", config.screenWidth, 320, 7680);
