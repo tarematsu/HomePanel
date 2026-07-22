@@ -16,6 +16,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -47,6 +48,46 @@ jobs:
           show-progress: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      - name: Determine whether upstream run deployed the Worker
+        id: deployment
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jobs_json="$RUNNER_TEMP/upstream-deploy-jobs.json"
+          curl --fail --silent --show-error --location \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$UPSTREAM_RUN_ID/jobs?per_page=100" \
+            > "$jobs_json"
+          python3 - "$jobs_json" >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+
+          target = "Deploy Worker with migration discovery only when required"
+          with open(sys.argv[1], encoding="utf-8") as source:
+              jobs = json.load(source).get("jobs") or []
+          matches = [
+              step
+              for job in jobs
+              for step in (job.get("steps") or [])
+              if step.get("name") == target
+          ]
+          if not matches:
+              raise SystemExit(f"Upstream deployment step was not found: {target}")
+          conclusions = {str(step.get("conclusion") or "") for step in matches}
+          if "success" in conclusions:
+              print("deployed=true")
+          elif conclusions == {"skipped"}:
+              print("deployed=false")
+          else:
+              raise SystemExit(f"Unexpected upstream deployment conclusions: {sorted(conclusions)}")
+          PY
+
       - name: Validate observability policy code
         run: |
           python3 .github/scripts/audit-cloudflare-daily-usage.py --self-test
@@ -58,13 +99,17 @@ jobs:
           set -o pipefail
           python3 .github/scripts/audit-cloudflare-daily-usage.py 2>&1 | tee daily-usage-audit.log
 
+      - name: Report deferred post-deployment runtime audit
+        if: ${{ github.event_name == 'workflow_run' && steps.deployment.outputs.deployed != 'true' }}
+        run: echo "::notice::The upstream workflow completed without deploying the Worker; runtime telemetry audit is skipped."
+
       - name: Start deep audit window
-        if: github.event_name != 'schedule' || github.event.schedule == '47 2 * * *'
+        if: ${{ (github.event_name != 'schedule' || github.event.schedule == '47 2 * * *') && (github.event_name != 'workflow_run' || steps.deployment.outputs.deployed == 'true') }}
         shell: bash
         run: echo "AUDIT_FROM=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
 
       - name: Collect metrics and live events in parallel
-        if: github.event_name != 'schedule' || github.event.schedule == '47 2 * * *'
+        if: ${{ (github.event_name != 'schedule' || github.event.schedule == '47 2 * * *') && (github.event_name != 'workflow_run' || steps.deployment.outputs.deployed == 'true') }}
         env:
           LIVE_TAIL_WORKER: homepanel-cloud
           LIVE_TAIL_SECONDS: "90"
@@ -96,7 +141,7 @@ jobs:
           exit "$query_status"
 
       - name: Enforce current-version persisted and live CPU policy
-        if: github.event_name != 'schedule' || github.event.schedule == '47 2 * * *'
+        if: ${{ (github.event_name != 'schedule' || github.event.schedule == '47 2 * * *') && (github.event_name != 'workflow_run' || steps.deployment.outputs.deployed == 'true') }}
         env:
           LIVE_TAIL_LOG: live-tail.log
         shell: bash
