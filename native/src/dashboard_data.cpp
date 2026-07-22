@@ -126,24 +126,10 @@ bool ParseDashboardSnapshot(
       }
     }
 
-    const JsonObject news = json::Object(root, L"news");
-    next.revisions.news = SectionRevision(news);
-    const JsonArray newsItems = json::Array(news, L"items");
-    next.newsItems.reserve(10);
-    for (uint32_t index = 0;
-         index < newsItems.Size() && next.newsItems.size() < 10; ++index) {
-      try {
-        const auto value = newsItems.GetAt(index);
-        if (value.ValueType() != JsonValueType::Object) continue;
-        const JsonObject item = value.GetObject();
-        const std::wstring title = json::Text(item, L"title");
-        if (!title.empty()) {
-          next.newsItems.push_back({title, json::Text(item, L"description")});
-        }
-      } catch (...) {
-      }
-    }
-    next.newsItemCount = static_cast<int>(next.newsItems.size());
+    // The native News panel has been removed. Do not materialize up to ten
+    // titles/descriptions or stringify the News object solely for a revision
+    // that no visible panel consumes. The legacy snapshot fields stay empty so
+    // older call sites remain harmless while using no dynamic News storage.
 
     const JsonObject octopus = json::Object(root, L"octopus");
     next.lastMonthUsage = NumberOrNaN(json::Object(octopus, L"lastMonth"), L"usage");
