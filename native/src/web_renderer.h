@@ -133,11 +133,7 @@ class Renderer {
 
  private:
   struct NativePlaybackUpdate {
-    std::wstring source;
-    std::wstring payload;
     NativePlaybackProjection projection;
-    std::wstring error;
-    int64_t fetchedAt = 0;
     uint64_t revision = 0;
     uint64_t contentRevision = 0;
     bool hasPayload = false;
@@ -329,7 +325,6 @@ class Renderer {
   uint64_t nativeImageUseCounter_ = 0;
   std::map<HWND, PanelBackBuffer> nativeBackBuffers_;
   std::map<PanelSection, PanelBitmapCache> nativeSectionBitmaps_;
-  std::atomic<uint64_t> nativePlaybackRevision_{0};
   std::atomic<bool> nativePlaybackStarted_{false};
   std::atomic<bool> nativePlaybackStopping_{false};
   mutable std::mutex nativeMinuteFactsMutex_;
