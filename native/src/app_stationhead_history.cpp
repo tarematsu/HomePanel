@@ -76,6 +76,7 @@ void App::LoadStationheadPlayHistory() {
       history.erase(history.begin(), history.end() - kMaxHistorySamples);
     }
     lastStationheadPlayHistorySavedAt_ = history.empty() ? 0 : now;
+    stationheadPlayHistoryDirty_ = false;
     renderState_.stationheadPlayHistory = std::move(history);
     ++renderState_.stationheadPlayHistoryRevision;
   } catch (const std::exception& error) {
@@ -85,7 +86,7 @@ void App::LoadStationheadPlayHistory() {
   }
 }
 
-void App::SaveStationheadPlayHistory() const {
+bool App::SaveStationheadPlayHistory() const {
   try {
     std::ostringstream output;
     output << "[";
@@ -96,14 +97,17 @@ void App::SaveStationheadPlayHistory() const {
       output << "{\"t\":" << sample.timestamp << ",\"v\":" << sample.value << "}";
     }
     output << "]";
-    if (!AtomicWriteText(dataDir_ / L"stationhead-play-history.json", output.str()) && logger_) {
-      logger_->Warn(L"Stationhead play history atomic write failed");
+    if (!AtomicWriteText(dataDir_ / L"stationhead-play-history.json", output.str())) {
+      if (logger_) logger_->Warn(L"Stationhead play history atomic write failed");
+      return false;
     }
+    return true;
   } catch (const std::exception& error) {
     if (logger_) logger_->Warn(L"Stationhead play history save failed: " + Utf8ToWide(error.what()));
   } catch (...) {
     if (logger_) logger_->Warn(L"Stationhead play history save failed with an unknown error");
   }
+  return false;
 }
 
 void App::UpdateStationheadPlayHistory(const StationheadStatus& status) {
@@ -127,7 +131,8 @@ void App::UpdateStationheadPlayHistory(const StationheadStatus& status) {
   const int64_t bucket =
       status.dailyPlayStatsUpdatedAt / kSampleBucketMs * kSampleBucketMs;
   const int value = todayPoint->value;
-  const int64_t cutoff = UnixMillis() - kHistoryWindowMs;
+  const int64_t now = UnixMillis();
+  const int64_t cutoff = now - kHistoryWindowMs;
   if (bucket < cutoff) return;
 
   auto& history = renderState_.stationheadPlayHistory;
@@ -155,10 +160,13 @@ void App::UpdateStationheadPlayHistory(const StationheadStatus& status) {
   }
 
   ++renderState_.stationheadPlayHistoryRevision;
+  stationheadPlayHistoryDirty_ = true;
   if (lastStationheadPlayHistorySavedAt_ <= 0 ||
-      bucket - lastStationheadPlayHistorySavedAt_ >= kPersistIntervalMs) {
-    SaveStationheadPlayHistory();
-    lastStationheadPlayHistorySavedAt_ = bucket;
+      now - lastStationheadPlayHistorySavedAt_ >= kPersistIntervalMs) {
+    if (SaveStationheadPlayHistory()) {
+      stationheadPlayHistoryDirty_ = false;
+      lastStationheadPlayHistorySavedAt_ = now;
+    }
   }
   MarkRenderStateDirty();
 }
