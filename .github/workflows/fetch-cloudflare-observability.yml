@@ -1,216 +1,70 @@
-name: Check Cloudflare observability logs
+name: Cloudflare Observability
 
 on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
-      since:
-        description: Optional ISO-8601 lower bound for R2 object LastModified
-        required: false
-        type: string
       lookback_minutes:
-        description: Used when since is omitted
+        description: Minutes of Cloudflare metrics and persisted errors to inspect
         required: false
-        default: "120"
+        default: "60"
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: cloudflare-observability-hp-${{ github.ref }}
+  group: cloudflare-observability-hp-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  fetch:
+  observability:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
-      AWS_DEFAULT_REGION: auto
-      R2_BUCKET: cloudflare-managed-1609110a
-      LOG_SINCE: ${{ inputs.since || '' }}
-      LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '120' }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_WORKERS: homepanel-cloud
+      LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '60' }}
+      CPU_BUDGET_MS: "10"
 
     steps:
-      - name: Derive R2 credentials
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+
+      - name: Query Cloudflare metrics and persisted errors
         shell: bash
         run: |
-          set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
-          verify="$(curl --fail-with-body --silent --show-error -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" https://api.cloudflare.com/client/v4/user/tokens/verify)"
-          token_id="$(jq -er '.result.id' <<<"$verify")"
-          secret="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)"
-          accounts="$(curl --fail-with-body --silent --show-error -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" 'https://api.cloudflare.com/client/v4/accounts?per_page=50')"
-          export AWS_ACCESS_KEY_ID="$token_id" AWS_SECRET_ACCESS_KEY="$secret"
-          match=""
-          while read -r account_id; do
-            endpoint="https://${account_id}.r2.cloudflarestorage.com"
-            if aws s3api head-bucket --endpoint-url "$endpoint" --bucket "$R2_BUCKET" >/dev/null 2>&1; then
-              test -z "$match" || { echo 'Multiple matching accounts' >&2; exit 1; }
-              match="$account_id"
-            fi
-          done < <(jq -r '.result[].id' <<<"$accounts")
-          test -n "$match" || { echo "R2 bucket not accessible: $R2_BUCKET" >&2; exit 1; }
-          echo "::add-mask::$token_id"
-          echo "::add-mask::$secret"
-          echo "AWS_ACCESS_KEY_ID=$token_id" >> "$GITHUB_ENV"
-          echo "AWS_SECRET_ACCESS_KEY=$secret" >> "$GITHUB_ENV"
-          echo "R2_ENDPOINT=https://${match}.r2.cloudflarestorage.com" >> "$GITHUB_ENV"
+          actual_summary="$GITHUB_STEP_SUMMARY"
+          GITHUB_STEP_SUMMARY=observability-summary.md python3 .github/scripts/query-cloudflare-observability.py
+          cat observability-summary.md >> "$actual_summary"
 
-      - name: Download incremental Worker logs
+      - name: Capture live HomePanel events
+        continue-on-error: true
+        env:
+          LIVE_TAIL_WORKER: homepanel-cloud
+          LIVE_TAIL_SECONDS: "300"
+          LIVE_TAIL_PROBES: /v1/health,/
         shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p raw observability-logs
-          aws s3api list-objects-v2 --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --output json > objects.json
-          python3 - <<'PY'
-          import datetime as dt, json, os, pathlib
+        run: node .github/scripts/capture-cloudflare-live-tail.mjs 2>&1 | tee live-tail.log
 
-          data = json.loads(pathlib.Path('objects.json').read_text(encoding='utf-8'))
-          objects = data.get('Contents') or []
-          if not objects:
-              raise SystemExit('No observability objects found')
-
-          since = os.environ.get('LOG_SINCE', '').strip()
-          if since:
-              cutoff = dt.datetime.fromisoformat(since.replace('Z', '+00:00'))
-              if cutoff.tzinfo is None:
-                  cutoff = cutoff.replace(tzinfo=dt.timezone.utc)
-          else:
-              minutes = max(1, int(os.environ.get('LOOKBACK_MINUTES', '120')))
-              cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=minutes)
-
-          selected = []
-          for item in objects:
-              modified = dt.datetime.fromisoformat(str(item['LastModified']).replace('Z', '+00:00'))
-              if modified >= cutoff:
-                  selected.append((modified, item['Key']))
-          selected.sort(reverse=True)
-          selected = selected[:100]
-          pathlib.Path('cutoff.txt').write_text(cutoff.isoformat().replace('+00:00', 'Z'), encoding='utf-8')
-          with pathlib.Path('keys.txt').open('w', encoding='utf-8') as dst:
-              for _, key in selected:
-                  dst.write(key + '\n')
-          print(f'Selected {len(selected)} objects modified since {cutoff.isoformat()}')
-          PY
-          if [[ -s keys.txt ]]; then
-            index=0
-            while IFS= read -r key; do
-              index=$((index + 1))
-              file="raw/$(printf '%03d' "$index").log"
-              aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$key" "$file" >/dev/null
-            done < keys.txt
-          fi
-
-      - name: Build compact findings and CPU summary
+      - name: Enforce per-invocation 10 ms CPU policy
         shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import gzip, json, math, pathlib, statistics
+        run: python3 .github/scripts/audit-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
 
-          targets = {'homepanel-cloud'}
-          output_dir = pathlib.Path('observability-logs')
-          full_path = output_dir / 'homepanel-cloud.ndjson'
-          findings_path = output_dir / 'findings.ndjson'
-          summary_path = output_dir / 'summary.json'
-          cutoff = pathlib.Path('cutoff.txt').read_text(encoding='utf-8').strip()
-
-          def walk(value, prefix=''):
-              if isinstance(value, dict):
-                  for key, child in value.items():
-                      name = f'{prefix}.{key}' if prefix else str(key)
-                      yield name, child
-                      yield from walk(child, name)
-              elif isinstance(value, list):
-                  for index, child in enumerate(value):
-                      yield from walk(child, f'{prefix}[{index}]')
-
-          def text_values(event, names):
-              values = []
-              for path, value in walk(event):
-                  leaf = path.rsplit('.', 1)[-1].lower()
-                  if leaf in names and value not in (None, '', [], {}):
-                      values.append(str(value))
-              return values
-
-          def cpu_values(event):
-              values = []
-              for path, value in walk(event):
-                  leaf = path.rsplit('.', 1)[-1].lower()
-                  if 'cpu' not in leaf or isinstance(value, bool):
-                      continue
-                  try:
-                      number = float(value)
-                  except (TypeError, ValueError):
-                      continue
-                  if math.isfinite(number):
-                      values.append(number)
-              return values
-
-          def percentile(values, fraction):
-              if not values:
-                  return None
-              ordered = sorted(values)
-              index = min(len(ordered) - 1, math.ceil(len(ordered) * fraction) - 1)
-              return ordered[index]
-
-          counts = {name: 0 for name in sorted(targets)}
-          cpu = {name: [] for name in sorted(targets)}
-          findings = 0
-          total = 0
-          with full_path.open('w', encoding='utf-8') as full, findings_path.open('w', encoding='utf-8') as flagged:
-              for path in sorted(pathlib.Path('raw').glob('*')):
-                  data = path.read_bytes()
-                  if data[:2] == b'\x1f\x8b':
-                      data = gzip.decompress(data)
-                  for line in data.decode('utf-8', errors='replace').splitlines():
-                      try:
-                          event = json.loads(line)
-                      except json.JSONDecodeError:
-                          continue
-                      script = event.get('ScriptName')
-                      if script not in targets:
-                          continue
-                      compact = json.dumps(event, ensure_ascii=False, separators=(',', ':'))
-                      full.write(compact + '\n')
-                      total += 1
-                      counts[script] += 1
-                      cpu[script].extend(cpu_values(event))
-                      levels = [value.lower() for value in text_values(event, {'level', 'severity', 'loglevel'})]
-                      outcomes = [value.lower() for value in text_values(event, {'outcome', 'status'})]
-                      errors = text_values(event, {'error', 'exception', 'stack', 'stacktrace'})
-                      bad_level = any(value in {'warn', 'warning', 'error', 'fatal', 'critical'} for value in levels)
-                      bad_outcome = any(value not in {'ok', 'success', 'succeeded', 'completed', 'true', '200'} for value in outcomes)
-                      if bad_level or bad_outcome or errors:
-                          flagged.write(compact + '\n')
-                          findings += 1
-
-          summary = {
-              'ok': True,
-              'since': cutoff,
-              'objects_downloaded': len(list(pathlib.Path('raw').glob('*'))),
-              'events': total,
-              'findings': findings,
-              'scripts': {},
-          }
-          for script in sorted(targets):
-              values = cpu[script]
-              summary['scripts'][script] = {
-                  'events': counts[script],
-                  'cpu_samples': len(values),
-                  'cpu_avg': statistics.fmean(values) if values else None,
-                  'cpu_p95': percentile(values, 0.95),
-                  'cpu_max': max(values) if values else None,
-              }
-          summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-          print(json.dumps(summary, ensure_ascii=False, separators=(',', ':')))
-          PY
-
-      - name: Upload filtered logs and compact analysis
+      - name: Upload sanitized observability report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cloudflare-observability-hp-${{ github.run_id }}
-          path: observability-logs/
-          if-no-files-found: error
-          retention-days: 7
+          name: cloudflare-observability-report-hp-${{ github.run_id }}
+          path: |
+            observability-summary.md
+            telemetry-audit.log
+            live-tail.log
+          if-no-files-found: warn
+          retention-days: 1
