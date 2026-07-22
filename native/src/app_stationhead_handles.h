@@ -3,6 +3,8 @@
 
 namespace hp {
 
+// Give the refreshed side enough time to rebuild its EME/Widevine playback
+// pipeline before the other side is allowed to start its own boundary refresh.
 inline constexpr int64_t kStationheadTrackTransitionGraceMs = 30'000;
 
 inline bool StationheadNeedsForeground(const StationheadStatus& status) noexcept {
