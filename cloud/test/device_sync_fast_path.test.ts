@@ -1,8 +1,16 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { getDeviceSync } from "../src/device_sync";
 import type { Env } from "../src/sources";
 
 describe("device sync unchanged fast path", () => {
+  it("passes parsed exchange versions directly without constructing an internal request", () => {
+    const source = readFileSync(new URL("../src/device_exchange.ts", import.meta.url), "utf8");
+    expect(source).toContain("buildDeviceSyncPayloadForDevice(env, deviceId, versions)");
+    expect(source).not.toContain("new Request(");
+    expect(source).not.toContain("new URL(");
+  });
+
   it("uses one snapshot statement and does not fetch state payload rows when versions match", async () => {
     const statements: string[] = [];
     const all = vi.fn().mockResolvedValue({
