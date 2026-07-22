@@ -14,6 +14,10 @@ const dashboardLoader = readFileSync(
   new URL('../../native/src/renderer_dashboard.cpp', import.meta.url),
   'utf8',
 );
+const nativePlayback = readFileSync(
+  new URL('../../native/src/dashboard_native_playback.cpp', import.meta.url),
+  'utf8',
+);
 const rendererHeader = readFileSync(
   new URL('../../native/src/web_renderer.h', import.meta.url),
   'utf8',
@@ -67,6 +71,18 @@ test('dashboard loader retains a compact signature instead of the full JSON copy
   );
   assert.match(dashboardLoader, /dashboardUtf8_ = contentSignature;/);
   assert.doesNotMatch(dashboardLoader, /dashboardUtf8_ = std::move\(text\)/);
+});
+
+test('native playback state retains only a compact response signature', () => {
+  const updateStruct = rendererHeader.match(
+    /struct NativePlaybackUpdate \{([\s\S]*?)\n  \};/,
+  )?.[1] ?? '';
+  assert.doesNotMatch(updateStruct, /std::wstring|fetchedAt/);
+  assert.doesNotMatch(rendererHeader, /nativePlaybackRevision_/);
+  assert.match(nativePlayback, /uint64_t PayloadSignature\(/);
+  assert.match(nativePlayback, /update\.revision = payloadSignature;/);
+  assert.doesNotMatch(nativePlayback, /update\.payload\s*=/);
+  assert.doesNotMatch(nativePlayback, /update\.(?:source|error|fetchedAt)\s*=/);
 });
 
 test('native panel state no longer compares or invalidates News revisions', () => {
