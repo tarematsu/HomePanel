@@ -1,0 +1,68 @@
+name: Apply video initial feed size
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Update initial playback feed limits
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              'video/public/app-resilient.js': [
+                  ('const INITIAL_FEED_SIZE = 500;', 'const INITIAL_FEED_SIZE = 1000;'),
+                  ('const ORIENTED_INITIAL_FEED_SIZE = 200;', 'const ORIENTED_INITIAL_FEED_SIZE = 1000;'),
+                  ('const MAX_FEED_PAGES = 5;', 'const MAX_FEED_PAGES = 10;'),
+              ],
+              'video/test/initial-playback-feed.test.js': [
+                  ("test('initial playback feed uses bounded cursor invocations and a smaller oriented target', () => {", "test('initial playback feed loads up to 1000 URLs with bounded cursor invocations', () => {"),
+                  ('/const INITIAL_FEED_SIZE = 500;/', '/const INITIAL_FEED_SIZE = 1000;/'),
+                  ('/const ORIENTED_INITIAL_FEED_SIZE = 200;/', '/const ORIENTED_INITIAL_FEED_SIZE = 1000;/'),
+                  ('/const MAX_FEED_PAGES = 5;/', '/const MAX_FEED_PAGES = 10;/'),
+              ],
+              'video/test/d1-playback-read-budget.test.js': [
+                  ("test('initial playback feeds use bounded cursor pages and orientation work is reduced', () => {", "test('initial playback feeds load 1000 URLs through bounded cursor pages', () => {"),
+                  ('/const INITIAL_FEED_SIZE = 500;/', '/const INITIAL_FEED_SIZE = 1000;/'),
+                  ('/const ORIENTED_INITIAL_FEED_SIZE = 200;/', '/const ORIENTED_INITIAL_FEED_SIZE = 1000;/'),
+                  ('/const MAX_FEED_PAGES = 5;/', '/const MAX_FEED_PAGES = 10;/'),
+              ],
+          }
+
+          for filename, pairs in replacements.items():
+              path = Path(filename)
+              text = path.read_text(encoding='utf-8')
+              for old, new in pairs:
+                  if text.count(old) != 1:
+                      raise RuntimeError(f'{filename}: expected one match for {old!r}')
+                  text = text.replace(old, new, 1)
+              path.write_text(text, encoding='utf-8')
+
+          Path('.github/workflows/agent-video-initial-feed-1000.yml').unlink()
+          PY
+
+      - name: Run targeted video tests
+        run: node --test video/test/initial-playback-feed.test.js video/test/d1-playback-read-budget.test.js
+
+      - name: Commit changes to PR branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "再生ページ初期URL取得数を1000へ変更"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
