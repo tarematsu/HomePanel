@@ -22,6 +22,22 @@ const playbackResolve = readFileSync(
   new URL('../../native/src/dashboard_playback_resolve.cpp', import.meta.url),
   'utf8',
 );
+const artworkCache = readFileSync(
+  new URL('../../native/src/artwork_cache.h', import.meta.url),
+  'utf8',
+);
+const airHistory = readFileSync(
+  new URL('../../native/src/app_air_history.cpp', import.meta.url),
+  'utf8',
+);
+const loggerHeader = readFileSync(
+  new URL('../../native/src/logger.h', import.meta.url),
+  'utf8',
+);
+const loggerSource = readFileSync(
+  new URL('../../native/src/logger.cpp', import.meta.url),
+  'utf8',
+);
 const radarUi = readFileSync(
   new URL('../../native/src/renderer_radar_ui.cpp', import.meta.url),
   'utf8',
@@ -85,16 +101,40 @@ test('dashboard loader retains a compact signature instead of the full JSON copy
   assert.doesNotMatch(dashboardLoader, /dashboardUtf8_ = std::move\(text\)/);
 });
 
-test('native playback state retains only a compact response signature', () => {
+test('native playback state retains only a compact queue signature', () => {
   const updateStruct = rendererHeader.match(
     /struct NativePlaybackUpdate \{([\s\S]*?)\n  \};/,
   )?.[1] ?? '';
   assert.doesNotMatch(updateStruct, /std::wstring|fetchedAt/);
   assert.doesNotMatch(rendererHeader, /nativePlaybackRevision_/);
-  assert.match(nativePlayback, /uint64_t PayloadSignature\(/);
-  assert.match(nativePlayback, /update\.payloadSignature = payloadSignature;/);
+  assert.match(nativePlayback, /uint64_t PlaybackSnapshotSignature\(/);
+  assert.match(nativePlayback, /update\.payloadSignature = projectionSignature;/);
+  assert.doesNotMatch(nativePlayback, /PayloadSignature\(payload\)/);
   assert.doesNotMatch(nativePlayback, /update\.payload\s*=/);
   assert.doesNotMatch(nativePlayback, /update\.(?:source|error|fetchedAt)\s*=/);
+});
+
+test('playback snapshots are coalesced to queue changes or 30 minute checkpoints', () => {
+  assert.match(nativePlayback, /kDashboardSnapshotCheckpointMs = 30 \* 60'000;/);
+  assert.match(nativePlayback, /const bool snapshotChanged =\s*projectionSignature != lastSnapshotSignature;/s);
+  assert.match(nativePlayback, /fetchedAt - lastSnapshotSavedAt >= kDashboardSnapshotCheckpointMs/);
+  assert.match(nativePlayback, /\(snapshotChanged \|\| checkpointDue\) &&\s*SaveDashboardSnapshot/s);
+  assert.doesNotMatch(
+    nativePlayback,
+    /ParseDashboardProjection[\s\S]*SaveDashboardSnapshot\(dataDir_, payload, \{\}, fetchedAt\);/,
+  );
+});
+
+test('dashboard status and playback share one parsed root after validation', () => {
+  assert.match(nativePlayback, /ParseDashboardStatus\(root, fetchedAt\)/);
+  assert.doesNotMatch(nativePlayback, /ParseDashboardStatus\(payload, fetchedAt\)/);
+  assert.match(nativePlayback, /ParseDashboardProjection\(\s*dataDir_, payload, fetchedAt, &statusProjection\)/s);
+});
+
+test('unchanged playback polls do not invalidate the full Music panel', () => {
+  assert.match(nativePlayback, /bool musicChanged = false;/);
+  assert.match(nativePlayback, /if \(musicChanged\) \{\s*InvalidatePanelSection\(nativeMainWindow_, PanelSection::Music\);/s);
+  assert.doesNotMatch(nativePlayback, /\n    InvalidatePanelSection\(nativeMainWindow_, PanelSection::Music\);\n    std::unique_lock/);
 });
 
 test('playback update storage is reduced to one native source', () => {
@@ -104,6 +144,39 @@ test('playback update storage is reduced to one native source', () => {
   assert.match(playbackResolve, /const NativePlaybackUpdate& update = nativePlaybackUpdate_;/);
   assert.doesNotMatch(nativePlayback, /nativePlaybackUpdates_/);
   assert.doesNotMatch(playbackResolve, /nativePlaybackUpdates_/);
+});
+
+test('artwork URL resolution avoids repeated cache directory and extension probes', () => {
+  assert.match(artworkCache, /static thread_local MemoryIndex memoryIndex;/);
+  assert.match(artworkCache, /const auto indexed = memoryIndex\.urls\.find\(artworkUrl\);/);
+  assert.match(artworkCache, /if \(indexed != memoryIndex\.urls\.end\(\)\) return indexed->second;/);
+  assert.match(artworkCache, /static thread_local fs::path preparedCacheDir;/);
+  assert.match(artworkCache, /memoryIndex\.urls\.size\(\) >= 128/);
+});
+
+test('air history display remains five minute data while persistence is batched', () => {
+  assert.match(airHistory, /kAirHistoryBucketMs = 5LL \* 60 \* 1000;/);
+  assert.match(airHistory, /kAirHistoryPersistIntervalMs = 30LL \* 60 \* 1000;/);
+  assert.match(
+    airHistory,
+    /now - lastAirHistorySavedAt_ >= kAirHistoryPersistIntervalMs[\s\S]*SaveAirHistory\(\)/,
+  );
+  assert.doesNotMatch(
+    airHistory,
+    /\+\+renderState_\.airHistoryRevision;\s*SaveAirHistory\(\);\s*MarkRenderStateDirty\(\);/s,
+  );
+});
+
+test('logger keeps one stream open and avoids filesystem metadata checks per line', () => {
+  assert.match(loggerHeader, /std::ofstream output_;/);
+  assert.match(loggerHeader, /size_t currentBytes_ = 0;/);
+  assert.match(loggerSource, /kLogFlushThresholdBytes = 64 \* 1024;/);
+  assert.match(loggerSource, /output_\.write\(/);
+  assert.doesNotMatch(loggerSource, /RotateIfNeeded/);
+  const writeFunction = loggerSource.match(
+    /void Logger::Write\([\s\S]*?\n\}/,
+  )?.[0] ?? '';
+  assert.doesNotMatch(writeFunction, /fs::exists|fs::file_size|std::ofstream output\(/);
 });
 
 test('static radar waits for updates instead of polling every five seconds', () => {
