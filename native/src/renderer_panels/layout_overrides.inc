@@ -30,8 +30,6 @@ MainSections SplitRearrangedMainSections(const RECT& client) {
   const LONG rowBottom = std::max(client.top + 1, client.bottom);
 
   MainSections sections;
-  // News has been removed from the dashboard. Music and Electricity retain
-  // their established horizontal ratio and now use the full main-column height.
   sections.music = RECT{client.left, client.top, client.left + musicWidth, rowBottom};
   // MainSections::air is the right-hand slot. The rearranged dashboard uses it
   // for Electricity while Air occupies the expanded side-card slot.
@@ -39,9 +37,6 @@ MainSections SplitRearrangedMainSections(const RECT& client) {
   if (sections.air.right <= sections.air.left) {
     sections.air.right = sections.air.left + 1;
   }
-  // Keep the legacy News section outside the client so existing invalidation and
-  // paint plumbing remains harmless without reserving or drawing a panel.
-  sections.news = RECT{client.right, client.bottom, client.right + 1, client.bottom + 1};
   return sections;
 }
 
