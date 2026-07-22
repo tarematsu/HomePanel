@@ -33,9 +33,10 @@ bool Renderer::LoadDashboard(const fs::path& jsonPath, bool* changed) {
 
     const DashboardSourceStamp nextStamp{
         normalizedPath, sourceSize, modifiedAt, true};
-    // Retain only a small content signature instead of a second persistent copy
-    // of dashboard.json. Size is included so an equal FNV value for differently
-    // sized input cannot suppress parsing after metadata-only file replacement.
+    // dashboardUtf8_ is retained as a compatibility field name, but now stores
+    // only a small content signature instead of a second persistent copy of
+    // dashboard.json. Size is included so differently sized input cannot be
+    // treated as equal solely because of the 64-bit hash.
     const std::string contentSignature =
         std::to_string(sourceSize) + ":" + std::to_string(Fnv1a64(text));
     if (dashboardSourceStamp_.valid && dashboardUtf8_ == contentSignature) {
