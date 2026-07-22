@@ -6,6 +6,10 @@ const appSource = readFileSync(
   new URL('../../native/src/app.cpp', import.meta.url),
   'utf8',
 );
+const appHeader = readFileSync(
+  new URL('../../native/src/app.h', import.meta.url),
+  'utf8',
+);
 const playbackResolve = readFileSync(
   new URL('../../native/src/dashboard_playback_resolve.cpp', import.meta.url),
   'utf8',
@@ -20,6 +24,10 @@ const stationheadPlayerHeader = readFileSync(
 );
 const stationheadHandles = readFileSync(
   new URL('../../native/src/app_stationhead_handles.cpp', import.meta.url),
+  'utf8',
+);
+const airHistory = readFileSync(
+  new URL('../../native/src/app_air_history.cpp', import.meta.url),
   'utf8',
 );
 const stationheadHistory = readFileSync(
@@ -62,9 +70,25 @@ test('Stationhead play history persists on a fixed 30 minute cadence', () => {
   assert.match(stationheadHistory, /lastStationheadPlayHistorySavedAt_ = history\.empty\(\) \? 0 : now;/);
   assert.match(
     stationheadHistory,
-    /bucket - lastStationheadPlayHistorySavedAt_ >= kPersistIntervalMs[\s\S]*SaveStationheadPlayHistory\(\)/,
+    /now - lastStationheadPlayHistorySavedAt_ >= kPersistIntervalMs[\s\S]*SaveStationheadPlayHistory\(\)/,
   );
   assert.doesNotMatch(stationheadHistory, /currentValueChanged/);
+});
+
+test('batched histories flush dirty data on normal shutdown', () => {
+  assert.match(appHeader, /struct HistoryFlushGuard/);
+  assert.match(appHeader, /bool SaveAirHistory\(\) const;/);
+  assert.match(appHeader, /bool SaveStationheadPlayHistory\(\) const;/);
+  assert.match(appHeader, /bool airHistoryDirty_ = false;/);
+  assert.match(appHeader, /bool stationheadPlayHistoryDirty_ = false;/);
+  assert.match(
+    airHistory,
+    /HistoryFlushGuard::~HistoryFlushGuard\(\)[\s\S]*airHistoryDirty_[\s\S]*SaveAirHistory\(\)[\s\S]*stationheadPlayHistoryDirty_[\s\S]*SaveStationheadPlayHistory\(\)/,
+  );
+  assert.match(airHistory, /bool App::SaveAirHistory\(\) const/);
+  assert.match(stationheadHistory, /bool App::SaveStationheadPlayHistory\(\) const/);
+  assert.match(airHistory, /airHistoryDirty_ = true;/);
+  assert.match(stationheadHistory, /stationheadPlayHistoryDirty_ = true;/);
 });
 
 test('missing serial sensors use bounded exponential retry backoff', () => {
