@@ -89,6 +89,8 @@ void StationheadPlayer::ConfigureWebView() {
   ApplyMute();
   if (IsSecondary()) EnsureDistinctBrowserIdentity();
 
+  log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
+            L" registering required startup scripts");
   static const std::wstring authCaptureScript = StationheadAuthCaptureScript();
   const HRESULT authCaptureResult = webview_->AddScriptToExecuteOnDocumentCreated(
       authCaptureScript.c_str(),
@@ -96,18 +98,24 @@ void StationheadPlayer::ConfigureWebView() {
           [this, alive](HRESULT result, LPCWSTR) -> HRESULT {
             if (!CallbackAlive(alive)) return S_OK;
             if (FAILED(result)) {
-              log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
-                        L" auth capture script registration failed " + HResultHex(result));
+              startupScriptDeadline_ = 0;
+              ScheduleRecreate(
+                  L"auth capture script registration failed " + HResultHex(result),
+                  1'000);
+              return S_OK;
             }
             authCaptureScriptRegistrationComplete_ = true;
+            log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
+                      L" auth capture script registration completed");
             TryStartInitialNavigation();
             return S_OK;
           }).Get());
   if (FAILED(authCaptureResult)) {
-    log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
-              L" auth capture script registration could not start " +
-              HResultHex(authCaptureResult));
-    authCaptureScriptRegistrationComplete_ = true;
+    startupScriptDeadline_ = 0;
+    ScheduleRecreate(
+        L"auth capture script registration could not start " +
+            HResultHex(authCaptureResult),
+        1'000);
   }
   static const std::wstring primaryStartupScript =
       StationheadAutoplayScript(L"__homepanelPrimaryStationhead", L"stationhead") +
@@ -122,18 +130,24 @@ void StationheadPlayer::ConfigureWebView() {
           [this, alive](HRESULT result, LPCWSTR) -> HRESULT {
             if (!CallbackAlive(alive)) return S_OK;
             if (FAILED(result)) {
-              log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
-                        L" startup script registration failed " + HResultHex(result));
+              startupScriptDeadline_ = 0;
+              ScheduleRecreate(
+                  L"startup script registration failed " + HResultHex(result),
+                  1'000);
+              return S_OK;
             }
             startupScriptRegistrationComplete_ = true;
+            log_.Info(L"Stationhead " + std::wstring(RoleTag()) +
+                      L" startup script registration completed");
             TryStartInitialNavigation();
             return S_OK;
           }).Get());
   if (FAILED(startupScriptResult)) {
-    log_.Warn(L"Stationhead " + std::wstring(RoleTag()) +
-              L" startup script registration could not start " +
-              HResultHex(startupScriptResult));
-    startupScriptRegistrationComplete_ = true;
+    startupScriptDeadline_ = 0;
+    ScheduleRecreate(
+        L"startup script registration could not start " +
+            HResultHex(startupScriptResult),
+        1'000);
   }
 
   const HRESULT navigationStartingResult = webview_->add_NavigationStarting(
