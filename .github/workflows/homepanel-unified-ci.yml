@@ -9,6 +9,7 @@ on:
       - 'video/package.json'
       - '.github/scripts/audit-cloudflare-daily-usage.py'
       - '.github/scripts/audit-cloudflare-telemetry.py'
+      - '.github/workflows/cloud-deploy.yml'
       - '.github/workflows/fetch-cloudflare-observability.yml'
       - '.github/workflows/homepanel-unified-ci.yml'
   push:
@@ -21,6 +22,7 @@ on:
       - 'video/package.json'
       - '.github/scripts/audit-cloudflare-daily-usage.py'
       - '.github/scripts/audit-cloudflare-telemetry.py'
+      - '.github/workflows/cloud-deploy.yml'
       - '.github/workflows/fetch-cloudflare-observability.yml'
       - '.github/workflows/homepanel-unified-ci.yml'
   workflow_dispatch:
@@ -50,11 +52,18 @@ jobs:
           from pathlib import Path
 
           workflow = Path('.github/workflows/fetch-cloudflare-observability.yml').read_text()
+          deploy_workflow = Path('.github/workflows/cloud-deploy.yml').read_text()
           telemetry = Path('.github/scripts/audit-cloudflare-telemetry.py').read_text()
+          deploy_step = 'Deploy Worker with migration discovery only when required'
           required_workflow = (
               'workflows: ["Deploy unified homepanel-cloud Worker"]',
               'cron: "23 * * * *"',
               'cron: "47 2 * * *"',
+              'actions: read',
+              'Determine whether upstream run deployed the Worker',
+              '/actions/runs/$UPSTREAM_RUN_ID/jobs?per_page=100',
+              deploy_step,
+              "steps.deployment.outputs.deployed == 'true'",
               'DAILY_REQUEST_BUDGET: "3000"',
               'DAILY_REQUEST_RESERVE: "0"',
               'DAILY_D1_READ_BUDGET: "50000"',
@@ -77,6 +86,8 @@ jobs:
               assert marker in workflow, marker
           for marker in required_telemetry:
               assert marker in telemetry, marker
+          assert deploy_step in deploy_workflow
+          assert "if: steps.activation.outputs.active == 'true'" in deploy_workflow
           assert '\n  pull_request:' not in workflow
           assert '\n  push:' not in workflow
           assert 'R2_BUCKET' not in workflow + telemetry
