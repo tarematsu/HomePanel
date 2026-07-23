@@ -30,6 +30,11 @@ ON CONFLICT(account_number, supply_point, day) DO UPDATE SET
   slot_count=excluded.slot_count,
   updated_at=excluded.updated_at;
 
+CREATE VIEW IF NOT EXISTS video_liveness_bounds AS
+SELECT 1 AS id,
+       COALESCE((SELECT seq FROM sqlite_sequence WHERE name='videos'), 0) AS max_video_id,
+       CURRENT_TIMESTAMP AS updated_at;
+
 DROP TRIGGER IF EXISTS status_counts_dirty_on_block_delete;
 DROP TRIGGER IF EXISTS status_counts_delta_on_block_delete;
 
