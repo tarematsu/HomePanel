@@ -69,7 +69,8 @@ export async function prewarmRadarBundle(
   baseTime: string,
 ): Promise<boolean> {
   const namespace = (env as BundleEnv).SCHEDULER_COORDINATOR;
-  if (!env.DATA_BUCKET || !namespace) return false;
+  const bucket = env.DATA_BUCKET;
+  if (!bucket || !namespace) return false;
 
   const paths = radarBundlePaths(payload, baseTime);
   if (!paths.length) throw new Error("radar bundle prewarm paths are unavailable");
@@ -96,7 +97,7 @@ export async function prewarmRadarBundle(
     offset += shard.length;
   }
 
-  await env.DATA_BUCKET.put(R2_LATEST_BUNDLE_KEY, bundle, {
+  await bucket.put(R2_LATEST_BUNDLE_KEY, bundle, {
     httpMetadata: { contentType: "application/vnd.homepanel.radar-bundle" },
     customMetadata: {
       baseTime,
