@@ -55,8 +55,12 @@ jobs:
           from pathlib import Path
 
           workflow = Path('.github/workflows/fetch-cloudflare-observability.yml').read_text()
+          daily = Path('.github/scripts/audit-cloudflare-daily-usage.py').read_text()
           telemetry = Path('.github/scripts/audit-cloudflare-telemetry.py').read_text()
           publisher = Path('.github/scripts/publish-homepanel-observability-status.mjs').read_text()
+          unified_worker = Path('cloud/src/unified_worker.js').read_text()
+          radar_source = Path('cloud/src/radar_source.ts').read_text()
+          radar_cache = Path('cloud/src/radar_bundle_cache.ts').read_text()
           required_workflow = (
               'workflows: ["Deploy unified homepanel-cloud Worker"]',
               'cron: "47 2 * * *"',
@@ -66,6 +70,8 @@ jobs:
               'DAILY_REQUEST_RESERVE: "0"',
               'DAILY_D1_READ_BUDGET: "50000"',
               'DAILY_D1_WRITE_BUDGET: "3000"',
+              'DAILY_QUEUE_BUDGET: "1000"',
+              'Enforce projected UTC daily Worker, D1, and Queue budgets',
               'id: observability-query',
               'LIVE_TAIL_SECONDS: "90"',
               'LIVE_TAIL_LOG: live-tail.log',
@@ -76,6 +82,15 @@ jobs:
               'if: always()',
               'set -o pipefail',
               'retention-days: 1',
+          )
+          required_daily = (
+              'queueMessageOperationsAdaptiveGroups',
+              'billableOperations',
+              'linear-from-utc-midnight',
+              'project_daily_usage',
+              'queueOperations',
+              'Actual to now',
+              'Projected 24h',
           )
           required_telemetry = (
               'scriptVersion',
@@ -99,10 +114,17 @@ jobs:
           )
           for marker in required_workflow:
               assert marker in workflow, marker
+          for marker in required_daily:
+              assert marker in daily, marker
           for marker in required_telemetry:
               assert marker in telemetry, marker
           for marker in required_publisher:
               assert marker in publisher, marker
+          assert "async scheduled(_controller, env, ctx)" in unified_worker
+          assert "ctx.waitUntil(runSchedulerTick(env))" in unified_worker
+          assert "await prewarmRadarBundle(env, payload" in radar_source
+          assert "cache.match(cacheKey)" in radar_cache
+          assert "env.DATA_BUCKET.get(R2_LATEST_BUNDLE_KEY)" in radar_cache
           assert workflow.count('cron: "') == 1
           assert 'cron: "23 * * * *"' not in workflow
           assert 'actions: read' not in workflow
