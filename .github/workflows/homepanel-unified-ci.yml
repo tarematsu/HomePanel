@@ -9,6 +9,7 @@ on:
       - 'video/package.json'
       - '.github/scripts/audit-cloudflare-daily-usage.py'
       - '.github/scripts/audit-cloudflare-telemetry.py'
+      - '.github/scripts/query-cloudflare-d1-insights.mjs'
       - '.github/scripts/publish-homepanel-observability-status.mjs'
       - '.github/workflows/cloud-deploy.yml'
       - '.github/workflows/fetch-cloudflare-observability.yml'
@@ -23,6 +24,7 @@ on:
       - 'video/package.json'
       - '.github/scripts/audit-cloudflare-daily-usage.py'
       - '.github/scripts/audit-cloudflare-telemetry.py'
+      - '.github/scripts/query-cloudflare-d1-insights.mjs'
       - '.github/scripts/publish-homepanel-observability-status.mjs'
       - '.github/workflows/cloud-deploy.yml'
       - '.github/workflows/fetch-cloudflare-observability.yml'
@@ -50,6 +52,7 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/audit-cloudflare-daily-usage.py --self-test
           python3 .github/scripts/audit-cloudflare-telemetry.py --self-test
+          node .github/scripts/query-cloudflare-d1-insights.mjs --self-test
           node .github/scripts/publish-homepanel-observability-status.mjs --self-test
           python3 - <<'PY'
           from pathlib import Path
@@ -57,8 +60,16 @@ jobs:
           workflow = Path('.github/workflows/fetch-cloudflare-observability.yml').read_text()
           daily = Path('.github/scripts/audit-cloudflare-daily-usage.py').read_text()
           telemetry = Path('.github/scripts/audit-cloudflare-telemetry.py').read_text()
+          insights = Path('.github/scripts/query-cloudflare-d1-insights.mjs').read_text()
           publisher = Path('.github/scripts/publish-homepanel-observability-status.mjs').read_text()
           unified_worker = Path('cloud/src/unified_worker.js').read_text()
+          worker_core = Path('cloud/src/worker_core.ts').read_text()
+          device_sync = Path('cloud/src/device_sync.ts').read_text()
+          scheduler = Path('cloud/src/scheduler.ts').read_text()
+          octopus_history = Path('cloud/src/octopus_history.ts').read_text()
+          status_report = Path('video/src/status-report.js').read_text()
+          liveness = Path('video/src/liveness-monitor.js').read_text()
+          migration = Path('cloud/migrations/202607230500_d1_read_hotspots.sql').read_text()
           radar_source = Path('cloud/src/radar_source.ts').read_text()
           radar_cache = Path('cloud/src/radar_bundle_cache.ts').read_text()
           required_workflow = (
@@ -66,12 +77,17 @@ jobs:
               'cron: "47 2 * * *"',
               'issues: write',
               'statuses: write',
+              'D1_CONFIG_GLOBS: cloud/wrangler.jsonc',
+              'D1_DATABASE_NAME: homepanel-data',
               'DAILY_REQUEST_BUDGET: "3000"',
               'DAILY_REQUEST_RESERVE: "0"',
               'DAILY_D1_READ_BUDGET: "50000"',
               'DAILY_D1_WRITE_BUDGET: "3000"',
               'DAILY_QUEUE_BUDGET: "1000"',
               'Enforce projected UTC daily Worker, D1, and Queue budgets',
+              'Collect top D1 queries by rows read',
+              'query-cloudflare-d1-insights.mjs',
+              'D1_INSIGHTS_OUTCOME',
               'id: observability-query',
               'LIVE_TAIL_SECONDS: "90"',
               'LIVE_TAIL_LOG: live-tail.log',
@@ -92,6 +108,16 @@ jobs:
               'Actual to now',
               'Projected 24h',
           )
+          required_insights = (
+              'wrangler',
+              'd1',
+              'insights',
+              '--sort-by',
+              'reads',
+              'totalRowsRead',
+              'sanitizeQuery',
+              'SQL fingerprint',
+          )
           required_telemetry = (
               'scriptVersion',
               'fromisoformat',
@@ -105,7 +131,9 @@ jobs:
               '<!-- homepanel-observability-status -->',
               'MAX_SECTION_CHARS = 12_000',
               'MAX_ISSUE_BODY_CHARS = 60_000',
+              'observability/d1-query-insights',
               'observability/overall',
+              'Top D1 queries by rows read',
               'upsertStatusIssue',
               "statusState('skipped'), 'failure'",
               "statusState('unknown'), 'failure'",
@@ -116,6 +144,8 @@ jobs:
               assert marker in workflow, marker
           for marker in required_daily:
               assert marker in daily, marker
+          for marker in required_insights:
+              assert marker in insights, marker
           for marker in required_telemetry:
               assert marker in telemetry, marker
           for marker in required_publisher:
@@ -125,6 +155,20 @@ jobs:
           assert "await prewarmRadarBundle(env, payload" in radar_source
           assert "cache.match(cacheKey)" in radar_cache
           assert "bucket.get(R2_LATEST_BUNDLE_KEY)" in radar_cache
+          assert 'legacy telemetry endpoint retired' in worker_core
+          assert 'receiveTelemetryOptimized' not in worker_core
+          assert ').first<DeviceSyncSnapshotRow>()' in device_sync
+          assert 'refreshStatusCounts(env.DB' in scheduler
+          assert 'SYSTEM_JOBS_CACHE_MS = 60 * 60_000' in scheduler
+          assert 'octopus_daily_totals' in octopus_history
+          assert 'readDailyRange' in octopus_history
+          assert 'status-counts-stale-deferred-to-cleanup' in status_report
+          assert 'refreshStatusCounts' not in status_report
+          assert 'video_liveness_bounds' in liveness
+          assert 'MAX(video.id)' not in liveness
+          assert 'CREATE TABLE IF NOT EXISTS octopus_daily_totals' in migration
+          assert 'CREATE TABLE IF NOT EXISTS video_liveness_bounds' in migration
+          assert 'status_counts_delta_on_block_delete' in migration
           assert workflow.count('cron: "') == 1
           assert 'cron: "23 * * * *"' not in workflow
           assert 'actions: read' not in workflow
@@ -136,9 +180,9 @@ jobs:
           assert '\n  pull_request:' not in workflow
           assert '\n  push:' in workflow
           assert 'branches: [main]' in workflow
-          assert ".github/scripts/publish-homepanel-observability-status.mjs" in workflow
+          assert '.github/scripts/publish-homepanel-observability-status.mjs' in workflow
           assert 'R2_BUCKET' not in workflow + telemetry
-          print('observability workflow policy check passed')
+          print('observability and D1 read policy check passed')
           PY
       - uses: actions/setup-node@v4
         with:
