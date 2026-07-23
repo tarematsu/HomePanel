@@ -55,32 +55,25 @@ jobs:
           from pathlib import Path
 
           workflow = Path('.github/workflows/fetch-cloudflare-observability.yml').read_text()
-          deploy_workflow = Path('.github/workflows/cloud-deploy.yml').read_text()
           telemetry = Path('.github/scripts/audit-cloudflare-telemetry.py').read_text()
           publisher = Path('.github/scripts/publish-homepanel-observability-status.mjs').read_text()
-          deploy_step = 'Deploy Worker with migration discovery only when required'
           required_workflow = (
               'workflows: ["Deploy unified homepanel-cloud Worker"]',
-              'cron: "23 * * * *"',
               'cron: "47 2 * * *"',
-              'actions: read',
               'issues: write',
               'statuses: write',
-              'Determine whether upstream run deployed the Worker',
-              '/actions/runs/$UPSTREAM_RUN_ID/jobs?per_page=100',
-              deploy_step,
-              "steps.deployment.outputs.deployed == 'true'",
               'DAILY_REQUEST_BUDGET: "3000"',
               'DAILY_REQUEST_RESERVE: "0"',
               'DAILY_D1_READ_BUDGET: "50000"',
               'DAILY_D1_WRITE_BUDGET: "3000"',
+              'id: observability-query',
               'LIVE_TAIL_SECONDS: "90"',
               'LIVE_TAIL_LOG: live-tail.log',
               'telemetry-summary.md',
               'Publish persistent observability status',
               'publish-homepanel-observability-status.mjs',
               'steps.publish-status.outcome',
-              "github.event.schedule == '47 2 * * *'",
+              'if: always()',
               'set -o pipefail',
               'retention-days: 1',
           )
@@ -99,7 +92,9 @@ jobs:
               'MAX_ISSUE_BODY_CHARS = 60_000',
               'observability/overall',
               'upsertStatusIssue',
-              "statusState('skipped')",
+              "statusState('skipped'), 'failure'",
+              "statusState('unknown'), 'failure'",
+              "overallOutcome({ a: 'success', b: 'skipped' }), 'failure'",
               'Bearer [redacted]',
           )
           for marker in required_workflow:
@@ -108,8 +103,14 @@ jobs:
               assert marker in telemetry, marker
           for marker in required_publisher:
               assert marker in publisher, marker
-          assert deploy_step in deploy_workflow
-          assert "if: steps.activation.outputs.active == 'true'" in deploy_workflow
+          assert workflow.count('cron: "') == 1
+          assert 'cron: "23 * * * *"' not in workflow
+          assert 'actions: read' not in workflow
+          assert 'Determine whether upstream run deployed the Worker' not in workflow
+          assert 'steps.deployment.outputs' not in workflow
+          assert 'Report deferred post-deployment runtime audit' not in workflow
+          assert 'Start deep audit window' not in workflow
+          assert 'AUDIT_FROM=' not in workflow
           assert '\n  pull_request:' not in workflow
           assert '\n  push:' in workflow
           assert 'branches: [main]' in workflow
