@@ -98,6 +98,9 @@ export async function refreshStatusExclusionCounts(db, capturedAt = new Date().t
 }
 
 export async function refreshStatusCounts(db, capturedAt = new Date().toISOString()) {
+  const current = await prepareStatusCountsRead(db).first();
+  if (current?.countsUpdatedAt && Number(current.countsDirty || 0) === 0) return current;
+
   const results = await db.batch([
     prepareStatusVideoCountsRefresh(db, capturedAt),
     prepareStatusExclusionCountsRefresh(db, capturedAt),
