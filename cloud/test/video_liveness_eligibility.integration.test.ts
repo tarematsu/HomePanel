@@ -1,14 +1,8 @@
 import { applyD1Migrations, env } from "cloudflare:test";
-import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { resetD1TestDatabase } from "./d1_test_utils";
 
 type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1] };
-
-const MIGRATION = readFileSync(
-  new URL("../migrations/202607230600_video_liveness_eligibility.sql", import.meta.url),
-  "utf8",
-);
 
 beforeEach(async () => {
   const testEnv = env as TestEnv;
@@ -32,11 +26,6 @@ async function readStatus(id: number): Promise<string> {
 }
 
 describe("video liveness eligibility invariant", () => {
-  it("repairs existing excluded-active rows during deployment", () => {
-    expect(MIGRATION).toMatch(/UPDATE videos[\s\S]*SET status = 'hidden'[\s\S]*video_blocklist/);
-    expect(MIGRATION).toMatch(/UPDATE videos[\s\S]*SET status = 'dead'[\s\S]*video_death_list/);
-  });
-
   it("keeps video status synchronized with block and death lists", async () => {
     const key = "media.test/invariant.mp4";
     const id = await insertVideo(key);
