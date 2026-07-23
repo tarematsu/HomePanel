@@ -8,8 +8,7 @@ import {
 } from './liveness-schedule.js';
 import {
   emptyStatusCounts,
-  prepareStatusCountsRead,
-  refreshStatusCounts
+  prepareStatusCountsRead
 } from './status-counts.js';
 import {
   buildManualImportSiteStatus,
@@ -28,15 +27,13 @@ async function buildStatusReport(env) {
     manualImportRunsStatement(env.DB),
     prepareLivenessStateRead(env.DB)
   ]);
-  let countRow = counts?.results?.[0] || emptyStatusCounts();
+  const countRow = counts?.results?.[0] || emptyStatusCounts();
   const livenessState = state?.results?.[0] || null;
-
-  if (needsStatusCountRefresh(countRow)) {
-    try {
-      countRow = await refreshStatusCounts(env.DB);
-    } catch (error) {
-      console.error('status-count-refresh-failed', error);
-    }
+  const countsStale = needsStatusCountRefresh(countRow);
+  if (countsStale) {
+    console.warn('status-counts-stale-deferred-to-cleanup', {
+      updatedAt: countRow.countsUpdatedAt || null
+    });
   }
 
   const manualRows = manualRuns?.results || [];
@@ -54,11 +51,15 @@ async function buildStatusReport(env) {
 
   const excludedCount = Number(countRow.blockedVideos || 0);
   const data = {
-    ok: collectionHealthy,
+    ok: collectionHealthy && !countsStale,
     mode: 'manual-import-site-stats',
     automaticCollection: false,
     schedules: {},
-    counts: countRow,
+    counts: {
+      ...countRow,
+      stale: countsStale,
+      repair: countsStale ? 'daily-cleanup' : null
+    },
     collectionHealth: {
       healthy: collectionHealthy,
       status: collectionHealthy ? 'ok' : 'degraded',
