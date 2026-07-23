@@ -17,12 +17,11 @@ export function normalizeOutcome(value) {
 }
 
 export function statusState(outcome) {
-  const normalized = normalizeOutcome(outcome);
-  return normalized === 'success' || normalized === 'skipped' ? 'success' : 'failure';
+  return normalizeOutcome(outcome) === 'success' ? 'success' : 'failure';
 }
 
 export function overallOutcome(outcomes) {
-  return Object.values(outcomes).every((value) => statusState(value) === 'success')
+  return Object.values(outcomes).every((value) => normalizeOutcome(value) === 'success')
     ? 'success'
     : 'failure';
 }
@@ -199,23 +198,26 @@ export async function publishFromEnvironment() {
 
 function selfTest() {
   assert.equal(statusState('success'), 'success');
-  assert.equal(statusState('skipped'), 'success');
+  assert.equal(statusState('skipped'), 'failure');
+  assert.equal(statusState('unknown'), 'failure');
   assert.equal(statusState('failure'), 'failure');
-  assert.equal(overallOutcome({ a: 'success', b: 'skipped' }), 'success');
-  assert.equal(overallOutcome({ a: 'success', b: 'failure' }), 'failure');
+  assert.equal(overallOutcome({ a: 'success', b: 'success' }), 'success');
+  assert.equal(overallOutcome({ a: 'success', b: 'skipped' }), 'failure');
+  assert.equal(overallOutcome({ a: 'success', b: 'unknown' }), 'failure');
   const body = buildIssueBody({
     generatedAt: '2026-07-23T00:00:00.000Z',
     targetSha: 'abc123',
     runUrl: 'https://github.com/tarematsu/HP/actions/runs/1',
     trigger: 'workflow_run',
     lookbackMinutes: '60',
-    outcomes: { policy: 'success', daily: 'failure', query: 'skipped', telemetry: 'skipped' },
+    outcomes: { policy: 'success', daily: 'failure', query: 'skipped', telemetry: 'success' },
     summaries: {
       daily: '## Daily\n\n| Metric | Value |\n|---|---:|\n| D1 | 1 |',
       telemetry: 'Authorization: Bearer secret-value',
     },
   });
   assert.match(body, /HomePanel Observability Status/);
+  assert.match(body, /\*\*Overall:\*\* failure/);
   assert.match(body, /\| daily \| failure \|/);
   assert.match(body, /\| query \| skipped \|/);
   assert.match(body, /abc123/);
