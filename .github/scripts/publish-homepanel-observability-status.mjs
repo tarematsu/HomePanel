@@ -81,7 +81,7 @@ This issue is maintained automatically by the HomePanel Cloudflare Observability
 | Gate | Outcome |
 |---|---|
 ${rows}
-${section('UTC daily request and D1 budgets', summaries.daily)}
+${section('Projected UTC daily Worker, D1, and Queue budgets', summaries.daily)}
 ${section('Cloudflare metrics and persisted errors', summaries.observability)}
 ${section('Current-version CPU and error policy', summaries.telemetry)}
 `;
@@ -126,7 +126,7 @@ async function githubRequest(method, path, payload) {
 async function publishCommitStatuses(targetSha, runUrl, outcomes) {
   const contexts = {
     policy: 'observability/policy-self-test',
-    daily: 'observability/daily-d1-budget',
+    daily: 'observability/daily-usage-budget',
     query: 'observability/cloudflare-query',
     telemetry: 'observability/telemetry-policy',
   };
@@ -212,7 +212,7 @@ function selfTest() {
     lookbackMinutes: '60',
     outcomes: { policy: 'success', daily: 'failure', query: 'skipped', telemetry: 'success' },
     summaries: {
-      daily: '## Daily\n\n| Metric | Value |\n|---|---:|\n| D1 | 1 |',
+      daily: '## Daily\n\n| Metric | Value |\n|---|---:|\n| Queue | 1 |',
       telemetry: 'Authorization: Bearer secret-value',
     },
   });
@@ -221,7 +221,7 @@ function selfTest() {
   assert.match(body, /\| daily \| failure \|/);
   assert.match(body, /\| query \| skipped \|/);
   assert.match(body, /abc123/);
-  assert.match(body, /UTC daily request and D1 budgets/);
+  assert.match(body, /Projected UTC daily Worker, D1, and Queue budgets/);
   assert.doesNotMatch(body, /secret-value/);
   assert.match(body, /Bearer \[redacted\]/);
   console.log('HomePanel observability status publisher self-test passed');

@@ -7,6 +7,7 @@ import {
 } from "./dashboard_cache";
 import { deviceExchangeResponse } from "./device_exchange";
 import { radarBundleResponse } from "./radar_bundle";
+import { cachedRadarBundleResponse } from "./radar_bundle_cache";
 import worker from "./worker_core";
 import { etagResponse, suppliedEtags, unauthorized } from "./response";
 import { radarFrameResponse } from "./radar_source";
@@ -57,6 +58,8 @@ export default {
 
     if (request.method === "GET" && path.startsWith("/v1/radar/bundle/")) {
       if (!authorizedAnyDevice(request, env)) return unauthorized();
+      const cached = await cachedRadarBundleResponse(request, env, ctx);
+      if (cached) return cached;
       return radarBundleResponse(request, env, ctx);
     }
 

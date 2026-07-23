@@ -1,6 +1,7 @@
 import homePanelWorker from './worker_entry.ts';
 import videoWorker from '../../video/src/entry.js';
 import { requestFamily } from './unified_routes.js';
+import { runSchedulerTick } from './scheduler.ts';
 import {
   inactiveVideoRuntimeResponse,
   retryInactiveVideoBatch,
@@ -27,5 +28,9 @@ export default {
     }
     if (typeof videoWorker.queue !== 'function') return undefined;
     return videoWorker.queue(batch, env, ctx);
+  },
+
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(runSchedulerTick(env));
   }
 };

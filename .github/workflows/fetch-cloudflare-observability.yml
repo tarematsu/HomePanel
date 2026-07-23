@@ -50,6 +50,7 @@ jobs:
       DAILY_REQUEST_RESERVE: "0"
       DAILY_D1_READ_BUDGET: "50000"
       DAILY_D1_WRITE_BUDGET: "3000"
+      DAILY_QUEUE_BUDGET: "1000"
       DAILY_USAGE_OUTPUT_DIR: daily-usage
 
     steps:
@@ -65,7 +66,7 @@ jobs:
           python3 .github/scripts/audit-cloudflare-telemetry.py --self-test
           node .github/scripts/publish-homepanel-observability-status.mjs --self-test
 
-      - name: Enforce UTC daily request and D1 budgets
+      - name: Enforce projected UTC daily Worker, D1, and Queue budgets
         id: daily-budget
         continue-on-error: true
         shell: bash

@@ -1,4 +1,5 @@
 import { fetchJson } from "./http";
+import { prewarmRadarBundle } from "./radar_bundle_prewarm";
 import { signedRadarTilePath } from "./radar_tile";
 import type { Env, SourceResult } from "./sources";
 
@@ -156,24 +157,26 @@ export async function fetchRadar(env: Env): Promise<SourceResult> {
     })();
   }
   const frames = await Promise.all(framePromises);
+  const payload = {
+    provider: "JMA current radar and one-hour forecast via Cloudflare radar bundle",
+    precomposed: false,
+    bundleUrl: `/v1/radar/bundle/${entries[0]!.basetime}.hpb`,
+    width,
+    height,
+    outputWidth: RADAR_OUTPUT_WIDTH,
+    outputHeight: RADAR_OUTPUT_HEIGHT,
+    center,
+    zoom,
+    forecastWindowMs: RADAR_FORECAST_WINDOW_MS,
+    frameIntervalMs: RADAR_FRAME_INTERVAL_MS,
+    playbackRate: 1,
+    frames,
+    legend: RADAR_LEGEND,
+  };
+  await prewarmRadarBundle(env, payload, entries[0]!.basetime);
   return {
     source: "radar",
-    payload: {
-      provider: "JMA current radar and one-hour forecast via Cloudflare radar bundle",
-      precomposed: false,
-      bundleUrl: `/v1/radar/bundle/${entries[0]!.basetime}.hpb`,
-      width,
-      height,
-      outputWidth: RADAR_OUTPUT_WIDTH,
-      outputHeight: RADAR_OUTPUT_HEIGHT,
-      center,
-      zoom,
-      forecastWindowMs: RADAR_FORECAST_WINDOW_MS,
-      frameIntervalMs: RADAR_FRAME_INTERVAL_MS,
-      playbackRate: 1,
-      frames,
-      legend: RADAR_LEGEND,
-    },
+    payload,
     observedAt: currentAt,
   };
 }
