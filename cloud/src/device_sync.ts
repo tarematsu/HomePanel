@@ -44,7 +44,7 @@ async function deviceSyncSnapshot(env: Env, deviceId: string, now: number): Prom
   const deviceParameter = SYNC_SOURCE_NAMES.length + 1;
   const nowParameter = deviceParameter + 1;
   const redeliveryParameter = nowParameter + 1;
-  const result = await env.DB.prepare(
+  const row = await env.DB.prepare(
     `WITH versions AS (
        SELECT
          COALESCE(SUM(CASE
@@ -80,8 +80,7 @@ async function deviceSyncSnapshot(env: Env, deviceId: string, now: number): Prom
     deviceId,
     now,
     now - COMMAND_REDELIVERY_MS,
-  ).all<DeviceSyncSnapshotRow>();
-  const row = result.results?.[0];
+  ).first<DeviceSyncSnapshotRow>();
   return row ?? {
     dashboard_version: 0,
     environment_version: 0,
