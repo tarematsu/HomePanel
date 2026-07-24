@@ -11,15 +11,11 @@ import {
   WORKER_VERSION,
   type StateRow,
 } from "./snapshot";
-import {
-  normalizeDeviceSyncVersions,
-  SYNC_SOURCE_NAMES,
-  SYNC_SOURCE_PLACEHOLDERS,
-} from "./device_sync_versions";
+import { normalizeDeviceSyncVersions } from "./device_sync_versions";
 import type { Env } from "./sources";
 import { stationheadHealthPayload } from "./stationhead_health";
 
-type SyncSourceName = typeof SYNC_SOURCE_NAMES[number];
+type SyncSourceName = typeof DASHBOARD_SOURCE_NAMES[number] | "radar" | "stationhead_health";
 
 interface DeviceSyncSnapshotRow {
   dashboard_version: number;
@@ -41,42 +37,32 @@ function requestedVersion(value: unknown): number {
 }
 
 async function deviceSyncSnapshot(env: Env, deviceId: string, now: number): Promise<DeviceSyncSnapshotRow> {
-  const deviceParameter = SYNC_SOURCE_NAMES.length + 1;
-  const nowParameter = deviceParameter + 1;
-  const redeliveryParameter = nowParameter + 1;
   const row = await env.DB.prepare(
-    `WITH versions AS (
-       SELECT
-         COALESCE(SUM(CASE
-           WHEN source IN ('weather','news','octopus','switchbot','stationhead','environment')
-           THEN version ELSE 0 END),0) AS dashboard_version,
-         COALESCE(MAX(CASE WHEN source='environment' THEN version ELSE 0 END),0) AS environment_version,
-         COALESCE(MAX(CASE WHEN source='environment' THEN fetched_at ELSE 0 END),0) AS environment_fetched_at,
-         COALESCE(MAX(CASE WHEN source='radar' THEN version ELSE 0 END),0) AS radar_version,
-         COALESCE(MAX(CASE WHEN source='switchbot' THEN version ELSE 0 END),0) AS switchbot_version,
-         COALESCE(MAX(CASE WHEN source='stationhead' THEN version ELSE 0 END),0) AS stationhead_version,
-         COALESCE(MAX(CASE WHEN source='stationhead_health' THEN version ELSE 0 END),0) AS stationhead_health_version
-       FROM current_state
-       WHERE source IN (${SYNC_SOURCE_PLACEHOLDERS})
-     ), config AS (
-       SELECT version,updated_at,payload FROM device_configs WHERE device_id=?${deviceParameter}
+    `WITH config AS (
+       SELECT version,updated_at,payload FROM device_configs WHERE device_id=?1
      )
      SELECT
-       versions.*,
+       manifest.dashboard_version,
+       manifest.environment_version,
+       manifest.environment_fetched_at,
+       manifest.radar_version,
+       manifest.switchbot_version,
+       manifest.stationhead_version,
+       manifest.stationhead_health_version,
        COALESCE((SELECT version FROM config),0) AS config_version,
        COALESCE((SELECT updated_at FROM config),0) AS config_updated_at,
        (SELECT payload FROM config) AS config_payload,
        EXISTS(
          SELECT 1 FROM device_commands
-          WHERE device_id=?${deviceParameter}
+          WHERE device_id=?1
             AND command='check_update'
             AND completed_at IS NULL
-            AND (expires_at IS NULL OR expires_at>?${nowParameter})
-            AND (delivered_at IS NULL OR delivered_at<=?${redeliveryParameter})
+            AND (expires_at IS NULL OR expires_at>?2)
+            AND (delivered_at IS NULL OR delivered_at<=?3)
        ) AS pending
-     FROM versions`,
+     FROM sync_manifest AS manifest
+     WHERE manifest.id=1`,
   ).bind(
-    ...SYNC_SOURCE_NAMES,
     deviceId,
     now,
     now - COMMAND_REDELIVERY_MS,
