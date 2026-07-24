@@ -54,7 +54,7 @@ test('Workers KV is absent while bounded R2 caches remain declared', () => {
 
 test('native polling is fixed at thirty-minute sync and two-hour telemetry', () => {
   assert.match(nativeConfig, /cloudPollSeconds = 1800;/);
-  assert.match(nativeConfig, /config\.cloudPollSeconds = 1800;/);
+  assert.match(nativeConfig, /telemetryMinutes = 120;/);
   assert.match(nativeCloudConfig, /config\.cloudPollSeconds = 1800;/);
   assert.match(nativeCloudConfig, /config\.telemetryMinutes = 120;/);
   assert.match(adminPage, /cloudPollSeconds:1800,telemetryMinutes:120/);
