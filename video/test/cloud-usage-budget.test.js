@@ -9,6 +9,7 @@ const adminPage = readFileSync(new URL('../../cloud/src/admin.ts', import.meta.u
 const deviceExchange = readFileSync(new URL('../../cloud/src/device_exchange.ts', import.meta.url), 'utf8');
 const octopusHistory = readFileSync(new URL('../../cloud/src/octopus_history.ts', import.meta.url), 'utf8');
 const schedulerRuntime = readFileSync(new URL('../../cloud/src/scheduler_runtime.ts', import.meta.url), 'utf8');
+const telemetryHeartbeat = readFileSync(new URL('../../cloud/src/telemetry_heartbeat.ts', import.meta.url), 'utf8');
 const resourceMigration = readFileSync(
   new URL('../../cloud/migrations/202607220100_resource_budget_3000.sql', import.meta.url),
   'utf8'
@@ -142,6 +143,8 @@ test('high-frequency D1 tables and legacy telemetry are compacted', () => {
   assert.match(runtimeBugfixMigration, /WHEN NEW\.source IN/);
   assert.match(runtimeBugfixMigration, /BEFORE DELETE ON videos/);
   assert.match(runtimeBugfixMigration, /AFTER DELETE ON ranking_entries/);
+  assert.match(telemetryHeartbeat, /HEARTBEAT_REFRESH_MS = 6 \* 60 \* 60_000/);
+  assert.match(telemetryHeartbeat, /last_seen_at<=\?7/);
 });
 
 test('modeled daily D1 written rows stay below the 3000-row target', () => {
@@ -149,7 +152,7 @@ test('modeled daily D1 written rows stay below the 3000-row target', () => {
   const switchbotChangedStateReserve = 24;
   const heartbeatStateRows = heartbeatStateIntervals
     .reduce((total, interval) => total + throttledHeartbeatWrites(interval), 0);
-  const compactTelemetryHeartbeatRows = runsPerDay(120 * 60);
+  const compactTelemetryHeartbeatRows = runsPerDay(6 * 60 * 60);
   const livenessStateRows = runsPerDay(scheduledIntervals.video_liveness);
   const jobFailureRecoveryReserve = 4;
   const octopusDailyAndCursorRows = 3;
@@ -164,9 +167,9 @@ test('modeled daily D1 written rows stay below the 3000-row target', () => {
     + changeCommandWebhookAndVideoMutationReserve;
 
   assert.equal(heartbeatStateRows, 17);
-  assert.equal(compactTelemetryHeartbeatRows, 12);
+  assert.equal(compactTelemetryHeartbeatRows, 4);
   assert.equal(livenessStateRows, 24);
-  assert.equal(modeledRows, 1_584);
+  assert.equal(modeledRows, 1_576);
   assert.ok(modeledRows < TARGET);
 });
 
