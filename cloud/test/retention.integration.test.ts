@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { cleanupExpiredData } from "../src/scheduler";
 import { resetD1TestDatabase } from "./d1_test_utils";
 
-type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1] };
+ type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1] };
 
 beforeEach(async () => {
   const testEnv = env as TestEnv;
@@ -11,7 +11,7 @@ beforeEach(async () => {
 });
 
 describe("telemetry retention", () => {
-  it("retains environment and Octopus history beyond cleanup limits", async () => {
+  it("retains environment and Octopus daily history beyond cleanup limits", async () => {
     const now = Date.now();
     const day = 86_400_000;
     const insertSample = (sequence: number, observedAt: number, applied: number) => env.DB.prepare(
@@ -35,9 +35,9 @@ describe("telemetry retention", () => {
       insertBucket(now - 8 * day),
       insertBucket(now - 6 * day),
       env.DB.prepare(
-        `INSERT INTO octopus_readings(account_number,supply_point,observed_at,energy_kwh,updated_at)
-         VALUES('A-123','spin-1',?1,0.5,?2)`,
-      ).bind(now - 3650 * day, now),
+        `INSERT INTO octopus_daily_totals(account_number,day,energy_kwh,slot_count,updated_at)
+         VALUES('A-123','2020-01-01',0.5,48,?1)`,
+      ).bind(now),
     ]);
 
     await cleanupExpiredData(env, now);
@@ -61,8 +61,8 @@ describe("telemetry retention", () => {
     ]);
 
     const octopus = await env.DB.prepare(
-      "SELECT observed_at,energy_kwh FROM octopus_readings WHERE account_number='A-123'",
-    ).first<{ observed_at: number; energy_kwh: number }>();
-    expect(octopus).toMatchObject({ observed_at: now - 3650 * day, energy_kwh: 0.5 });
+      "SELECT day,energy_kwh FROM octopus_daily_totals WHERE account_number='A-123'",
+    ).first<{ day: string; energy_kwh: number }>();
+    expect(octopus).toMatchObject({ day: "2020-01-01", energy_kwh: 0.5 });
   });
 });
