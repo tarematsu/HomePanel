@@ -191,7 +191,7 @@ async function writeSyncCursor(
      ON CONFLICT(account_number) DO UPDATE SET
        stable_through=excluded.stable_through,
        updated_at=excluded.updated_at
-     WHERE octopus_sync_state.stable_through IS NOT excluded.stable_through`,
+     WHERE excluded.stable_through > octopus_sync_state.stable_through`,
   ).bind(accountNumber, stableThrough, nowMs).run();
 }
 
@@ -225,7 +225,8 @@ export async function synchronizeOctopusHistory(
     [...totalsByDay.values()].sort((left, right) => left.day.localeCompare(right.day)),
     nowMs,
   );
-  const cursorAfter = await contiguousStoredThrough(env, accountNumber, fetchFrom, stableThrough);
+  const contiguousThrough = await contiguousStoredThrough(env, accountNumber, fetchFrom, stableThrough);
+  const cursorAfter = Math.max(cursorBefore ?? fetchFrom, contiguousThrough);
   await writeSyncCursor(env, accountNumber, cursorAfter, nowMs);
 
   return {
