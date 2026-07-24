@@ -14,7 +14,6 @@ import { radarFrameResponse } from "./radar_source";
 import { queueSchedulerWake } from "./scheduler_coordinator";
 import { WORKER_VERSION } from "./snapshot";
 import type { Env } from "./sources";
-import { receiveTelemetryOptimized } from "./telemetry_route";
 import { queueUpdateCheckPing } from "./update_check";
 import { updateFileResponse } from "./update_proxy";
 import {
@@ -109,11 +108,6 @@ export default {
       }
       const meta = await cachedMeta(env);
       return etagResponse(request, meta.payload, "application/json; charset=utf-8", meta.hash);
-    }
-
-    if (request.method === "POST" && path === "/v1/telemetry") {
-      console.warn("legacy-telemetry-endpoint-used");
-      return receiveTelemetryOptimized(request, env);
     }
 
     const response = await worker.fetch(request, env, ctx);
