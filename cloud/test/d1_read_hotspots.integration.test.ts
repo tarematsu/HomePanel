@@ -66,4 +66,47 @@ describe("D1 read hotspot migration", () => {
       .bind(videoId).first<{ status: string }>();
     expect(video?.status).toBe("active");
   });
+
+  it("decrements active and feed counts before a ranked video cascades away", async () => {
+    const timestamp = "2026-07-23T00:00:00.000Z";
+    const inserted = await env.DB.prepare(
+      `INSERT INTO videos(media_url,canonical_key,media_type,first_seen_at,last_seen_at,status)
+       VALUES(?1,?2,'mp4',?3,?3,'active') RETURNING id`,
+    ).bind("https://media.test/ranked.mp4", "media.test/ranked.mp4", timestamp)
+      .first<{ id: number }>();
+    const videoId = Number(inserted?.id);
+    await env.DB.prepare(
+      `INSERT INTO ranking_entries(period,video_id,rank,captured_at)
+       VALUES('24h',?1,1,?2)`,
+    ).bind(videoId, timestamp).run();
+
+    const before = await env.DB.prepare(
+      `SELECT active_videos,active_mp4_videos,feed_videos,feed_mp4_videos
+         FROM status_counts WHERE id=1`,
+    ).first<Record<string, number>>();
+    expect(before).toMatchObject({
+      active_videos: 1,
+      active_mp4_videos: 1,
+      feed_videos: 1,
+      feed_mp4_videos: 1,
+    });
+
+    await env.DB.prepare("DELETE FROM videos WHERE id=?1").bind(videoId).run();
+
+    const after = await env.DB.prepare(
+      `SELECT active_videos,active_mp4_videos,feed_videos,feed_mp4_videos,dirty
+         FROM status_counts WHERE id=1`,
+    ).first<Record<string, number>>();
+    expect(after).toMatchObject({
+      active_videos: 0,
+      active_mp4_videos: 0,
+      feed_videos: 0,
+      feed_mp4_videos: 0,
+      dirty: 0,
+    });
+    const rankings = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM ranking_entries WHERE video_id=?1",
+    ).bind(videoId).first<{ count: number }>();
+    expect(Number(rankings?.count)).toBe(0);
+  });
 });
