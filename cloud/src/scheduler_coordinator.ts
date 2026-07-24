@@ -40,11 +40,14 @@ async function signalCoordinator(
 ): Promise<void> {
   const stub = coordinatorStub(env);
   if (!stub) return;
-  const response = await stub.fetch(`https://scheduler.internal${path}`, {
-    method: "POST",
-    headers: names === undefined ? undefined : { "Content-Type": "application/json" },
-    body: names === undefined ? undefined : JSON.stringify({ names }),
-  });
+  const init: RequestInit = names === undefined
+    ? { method: "POST" }
+    : {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names }),
+      };
+  const response = await stub.fetch(`https://scheduler.internal${path}`, init);
   if (!response.ok) throw new Error(`scheduler coordinator ${path} failed: HTTP ${response.status}`);
 }
 
