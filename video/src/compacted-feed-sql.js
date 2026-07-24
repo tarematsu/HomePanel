@@ -10,14 +10,6 @@ const DESIRED_FEED_CTE = `WITH desired AS (
     FROM videos AS video
    WHERE video.status = 'active'
      AND video.last_seen_at >= ?
-     AND NOT EXISTS (
-       SELECT 1 FROM video_blocklist AS bad
-        WHERE bad.canonical_key = video.canonical_key
-     )
-     AND NOT EXISTS (
-       SELECT 1 FROM video_death_list AS death
-        WHERE death.canonical_key = video.canonical_key
-     )
    ORDER BY video.last_seen_at DESC, video.id DESC
    LIMIT ?
 )`;

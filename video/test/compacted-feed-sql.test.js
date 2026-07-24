@@ -48,6 +48,8 @@ test('compacted feed synchronization stays inside four D1 statements', async () 
     assert.match(statement.sql, /^WITH desired AS/);
     assert.match(statement.sql, /ROW_NUMBER\(\) OVER/);
     assert.match(statement.sql, /video\.last_seen_at DESC, video\.id DESC/);
+    assert.match(statement.sql, /video\.status = 'active'/);
+    assert.doesNotMatch(statement.sql, /video_blocklist|video_death_list/);
     assert.match(statement.sql, /LIMIT \?/);
     assert.doesNotMatch(statement.sql, /OFFSET/);
   }

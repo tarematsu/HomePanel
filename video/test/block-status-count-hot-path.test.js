@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const source = await readFile(new URL('../src/video-blocklist.js', import.meta.url), 'utf8');
 
-test('successful block relies on the transactional insert trigger instead of a full recount', () => {
+test('successful block avoids full recount while preserving standalone status updates', () => {
   assert.doesNotMatch(source, /refreshStatusCounts/);
   assert.doesNotMatch(source, /playback-exclusion-status-refresh-failed/);
   assert.match(source, /const results = await env\.DB\.batch\(\[/);

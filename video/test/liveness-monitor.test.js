@@ -64,10 +64,10 @@ function probeRows(count) {
   }));
 }
 
-test('liveness preserves 120 daily checks as one-probe invocations', () => {
-  assert.equal(LIVENESS_CRON, '*/12 * * * *');
-  assert.equal(LIVENESS_BATCH_SIZE, 1);
-  assert.equal((24 * 60) / 12 * LIVENESS_BATCH_SIZE, 120);
+test('liveness preserves 120 daily checks as five-probe hourly invocations', () => {
+  assert.equal(LIVENESS_CRON, '0 * * * *');
+  assert.equal(LIVENESS_BATCH_SIZE, 5);
+  assert.equal(24 * LIVENESS_BATCH_SIZE, 120);
 });
 
 test('liveness status is built from the shared state row and list count', () => {
@@ -79,7 +79,7 @@ test('liveness status is built from the shared state row and list count', () => 
     checkedTotal: 250,
     deadTotal: 9,
     revivedTotal: 2,
-    lastCheckedCount: 10
+    lastCheckedCount: 5
   }, 7);
 
   assert.equal(status.count, 7);
@@ -87,7 +87,9 @@ test('liveness status is built from the shared state row and list count', () => 
   assert.equal(status.cursor, 'video-b');
   assert.equal(status.upperBound, 'video-z');
   assert.equal(status.checkedTotal, 250);
-  assert.equal(status.lastCheckedCount, 10);
+  assert.equal(status.lastCheckedCount, 5);
+  assert.equal(status.batchSize, 5);
+  assert.equal(status.concurrency, 5);
 });
 
 test('only definitive missing responses are classified as dead', () => {
@@ -106,40 +108,29 @@ test('unchanged healthy probes do not require a video-row write', () => {
   assert.equal(shouldRefreshAliveMetadata({ lastHttpStatus: 206, failCount: 2 }, 206), true);
 });
 
-test('base probe mutations update feed and status counters for dead URLs', async () => {
+test('base dead probes rely on schema triggers for counts', async () => {
   const db = createMutationDb();
-  const rows = probeRows(10);
+  const rows = probeRows(5);
   const probes = rows.map(() => ({ state: 'dead', status: 404 }));
   const result = await applyProbeResults(
     db, 'base', rows, probes, '2026-07-02T00:00:00.000Z'
   );
 
-  assert.equal(result.deadCount, 10);
+  assert.equal(result.deadCount, 5);
   assert.equal(result.feedChanged, true);
   assert.equal(db.batches.length, 1);
-  assert.equal(db.batches[0].length, 4);
-  assert.equal(db.batches[0][0].sql.includes('UPDATE status_counts'), true);
-  assert.equal(db.batches[0][0].sql.includes('death_videos = death_videos +'), true);
-  assert.equal(db.batches[0][1].sql.includes('INSERT INTO video_death_list'), true);
-  assert.equal(db.batches[0][1].sql.includes('COALESCE(video_death_list.check_count, 0) + 1'), true);
-  assert.equal(db.batches[0][2].sql.includes('UPDATE videos'), true);
-  assert.equal(db.batches[0][2].sql.includes('last_http_status = COALESCE(input.httpStatus, videos.last_http_status)'), true);
-  assert.equal(db.batches[0][2].sql.includes('COALESCE(videos.fail_count, 0) + 1'), true);
-  assert.equal(db.batches[0][3].sql.startsWith('DELETE FROM ranking_entries'), true);
-  assert.deepEqual(db.batches[0][0].args.slice(1), ['24h', '2026-07-02T00:00:00.000Z']);
-  const statusPayload = JSON.parse(db.batches[0][0].args[0]);
-  assert.deepEqual(statusPayload[0], {
-    id: 1,
-    mediaUrl: 'https://cdn.example/1.mp4',
-    canonicalKey: 'video-1',
-    state: 'dead',
-    httpStatus: 404
-  });
+  assert.equal(db.batches[0].length, 3);
+  assert.equal(db.batches[0][0].sql.includes('INSERT INTO video_death_list'), true);
+  assert.equal(db.batches[0][0].sql.includes('COALESCE(video_death_list.check_count, 0) + 1'), true);
+  assert.equal(db.batches[0][1].sql.includes('UPDATE videos'), true);
+  assert.equal(db.batches[0][1].sql.includes('last_http_status = COALESCE(input.httpStatus, videos.last_http_status)'), true);
+  assert.equal(db.batches[0][2].sql.startsWith('DELETE FROM ranking_entries'), true);
+  assert.equal(db.batches[0].some(statement => statement.sql.includes('UPDATE status_counts')), false);
 });
 
 test('unchanged alive base probes perform no D1 mutation batch', async () => {
   const db = createMutationDb();
-  const rows = probeRows(10);
+  const rows = probeRows(5);
   const probes = rows.map(() => ({ state: 'alive', status: 206 }));
   const result = await applyProbeResults(
     db, 'base', rows, probes, '2026-07-02T00:00:00.000Z'
@@ -165,7 +156,7 @@ test('unknown base probes preserve the previous definitive HTTP status', async (
   assert.equal(db.batches[0][0].sql.includes('last_http_status = COALESCE(input.httpStatus, videos.last_http_status)'), true);
 });
 
-test('death checks restore one revived rank and update status counters last', async () => {
+test('death checks restore revived ranks and rely on triggers for counts', async () => {
   const db = createMutationDb();
   const rows = probeRows(3);
   const probes = [
@@ -181,22 +172,17 @@ test('death checks restore one revived rank and update status counters last', as
   assert.equal(result.unknownCount, 1);
   assert.equal(result.feedChanged, true);
   assert.equal(db.batches.length, 1);
-  assert.equal(db.batches[0].length, 5);
+  assert.equal(db.batches[0].length, 4);
   assert.equal(db.batches[0][0].sql.startsWith('DELETE FROM video_death_list'), true);
   assert.equal(db.batches[0][1].sql.includes('UPDATE videos'), true);
   assert.equal(db.batches[0][2].sql.startsWith('INSERT OR IGNORE INTO ranking_entries'), true);
-  assert.equal(db.batches[0][2].sql.includes('-video.id'), true);
   assert.equal(db.batches[0][3].sql.includes('UPDATE video_death_list'), true);
-  assert.equal(db.batches[0][3].sql.includes('last_http_status = COALESCE(input.httpStatus, video_death_list.last_http_status)'), true);
-  assert.equal(db.batches[0][3].sql.includes('COALESCE(video_death_list.check_count, 0) + 1'), true);
-  assert.equal(db.batches[0][4].sql.includes('UPDATE status_counts'), true);
-  assert.equal(db.batches[0][4].sql.includes('death_videos = MAX(0, death_videos -'), true);
-  assert.deepEqual(db.batches[0][4].args.slice(1), ['24h', '2026-07-02T00:00:00.000Z']);
+  assert.equal(db.batches[0].some(statement => statement.sql.includes('UPDATE status_counts')), false);
 });
 
-test('run recording reports whether the held liveness lock was released', async () => {
+test('run recording reports whether the singleton state was updated without a lease predicate', async () => {
   const successDb = createRunRecordDb(1);
-  const staleDb = createRunRecordDb(0);
+  const missingDb = createRunRecordDb(0);
   const values = {
     checkedCount: 3,
     deadCount: 1,
@@ -214,10 +200,11 @@ test('run recording reports whether the held liveness lock was released', async 
     cycle: 1
   };
 
-  assert.equal(await recordRunAndRelease(successDb, 'token-a', values, state), true);
-  assert.equal(await recordRunAndRelease(staleDb, 'token-b', values, state), false);
-  assert.equal(successDb.statements[0].args.at(-1), 'token-a');
-  assert.equal(staleDb.statements[0].sql.includes('lock_token = ?'), true);
+  assert.equal(await recordRunAndRelease(successDb, null, values, state), true);
+  assert.equal(await recordRunAndRelease(missingDb, null, values, state), false);
+  assert.equal(successDb.statements[0].sql.includes('WHERE id = 1'), true);
+  assert.equal(successDb.statements[0].sql.includes('lock_token = ?'), false);
+  assert.equal(successDb.statements[0].args.includes('token-a'), false);
 });
 
 test('run recording preserves totals when old rows contain NULL counters', async () => {
@@ -231,7 +218,7 @@ test('run recording preserves totals when old rows contain NULL counters', async
     error: null
   };
 
-  assert.equal(await recordRunAndRelease(db, 'token-c', values, null), true);
+  assert.equal(await recordRunAndRelease(db, null, values, null), true);
   assert.equal(db.statements[0].sql.includes('checked_total = COALESCE(checked_total, 0) + ?'), true);
   assert.equal(db.statements[0].sql.includes('dead_total = COALESCE(dead_total, 0) + ?'), true);
   assert.equal(db.statements[0].sql.includes('revived_total = COALESCE(revived_total, 0) + ?'), true);

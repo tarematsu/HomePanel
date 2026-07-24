@@ -12,7 +12,7 @@ WITH active AS (
          COALESCE(SUM(video.media_type = 'mp4'), 0) AS feedMp4Videos
     FROM ranking_entries AS ranking
     INNER JOIN videos AS video ON video.id = ranking.video_id
-   WHERE ranking.period = '24h'
+   WHERE ranking.period = '24h' AND video.status = 'active'
 )
 SELECT 1, activeVideos, activeMp4Videos, feedVideos, feedMp4Videos, 0, 0, ?
   FROM active CROSS JOIN feed

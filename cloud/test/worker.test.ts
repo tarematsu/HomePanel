@@ -32,24 +32,6 @@ describe("HomePanel Worker", () => {
     expect(second.status).toBe(304);
   });
 
-  it("deduplicates telemetry by device and sequence", async () => {
-    const payload = { deviceId: "homepanel-device", appVersion: "2.0.0", stationheadOk: true, outboxCount: 1,
-      samples: [{ sequence: 9, observedAt: Date.now(), co2: 700, temperature: 25, humidity: 50 }] };
-    const accepted: number[] = [];
-    for (let index = 0; index < 2; index++) {
-      const response = await SELF.fetch("https://example.test/v1/telemetry", {
-        method: "POST", headers: { Authorization: "Bearer test-device", "Content-Type": "application/json" }, body: JSON.stringify(payload),
-      });
-      expect(response.status).toBe(200);
-      accepted.push((await response.json<{ accepted: number }>()).accepted);
-    }
-    expect(accepted).toEqual([1, 0]);
-    const bucket = await env.DB.prepare(
-      "SELECT sample_count FROM environment_buckets WHERE device_id=?1",
-    ).bind("homepanel-device").first<{ sample_count: number }>();
-    expect(bucket?.sample_count).toBe(1);
-  });
-
   it("preserves the last successful payload when a source becomes stale", async () => {
     await updateState(env, { source: "weather", observedAt: Date.now(), payload: { temperature: 20 } });
     const initialDashboard = await ensureDashboard(env);
@@ -109,7 +91,7 @@ describe("HomePanel Worker", () => {
     expect(await acquireDueJobs(env, now)).toHaveLength(0);
   });
 
-  it("leases only one due job for a CPU-bounded cron tick", async () => {
+  it("leases only one due job for a CPU-bounded compatibility tick", async () => {
     const now = Math.floor(Date.now() / 1000);
     await env.DB.prepare("UPDATE jobs SET next_run_at=?1, lease_until=NULL").bind(now - 1).run();
 
@@ -121,7 +103,7 @@ describe("HomePanel Worker", () => {
     expect(second[0]?.name).not.toBe(first[0]?.name);
   });
 
-  it("queues refresh work without executing source jobs in the HTTP request", async () => {
+  it("queues refresh work in the Scheduler DO without writing D1 jobs", async () => {
     const future = Math.floor(Date.now() / 1000) + 3600;
     await env.DB.prepare("UPDATE jobs SET next_run_at=?1, lease_until=NULL").bind(future).run();
 
@@ -139,7 +121,7 @@ describe("HomePanel Worker", () => {
     const job = await env.DB.prepare(
       "SELECT next_run_at,lease_until FROM jobs WHERE name='weather'",
     ).first<{ next_run_at: number; lease_until: number | null }>();
-    expect(job).toEqual({ next_run_at: 0, lease_until: null });
+    expect(job).toEqual({ next_run_at: future, lease_until: null });
     expect(await readState(env, "weather")).toBeNull();
   });
 

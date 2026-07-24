@@ -67,11 +67,13 @@ jobs:
           worker_core = Path('cloud/src/worker_core.ts').read_text()
           device_sync = Path('cloud/src/device_sync.ts').read_text()
           scheduler = Path('cloud/src/scheduler.ts').read_text()
+          scheduler_runtime = Path('cloud/src/scheduler_runtime.ts').read_text()
           octopus_history = Path('cloud/src/octopus_history.ts').read_text()
           status_report = Path('video/src/status-report.js').read_text()
           status_lists = Path('video/src/status-lists.js').read_text()
           liveness = Path('video/src/liveness-monitor.js').read_text()
           migration = Path('cloud/migrations/202607230500_d1_read_hotspots.sql').read_text()
+          runtime_migration = Path('cloud/migrations/202607240200_d1_runtime_reduction.sql').read_text()
           radar_source = Path('cloud/src/radar_source.ts').read_text()
           radar_cache = Path('cloud/src/radar_bundle_cache.ts').read_text()
           required_workflow = (
@@ -154,15 +156,20 @@ jobs:
           for marker in required_publisher:
               assert marker in publisher, marker
           assert "async scheduled(_controller, env, ctx)" in unified_worker
-          assert "ctx.waitUntil(runSchedulerTick(env))" in unified_worker
+          assert "queueSchedulerWatchdog(env, ctx)" in unified_worker
+          assert "runSchedulerTick" not in unified_worker
           assert "await prewarmRadarBundle(env, payload" in radar_source
           assert "cache.match(cacheKey)" in radar_cache
           assert "bucket.get(R2_LATEST_BUNDLE_KEY)" in radar_cache
-          assert 'legacy-telemetry-endpoint-used' in worker_entry
-          assert 'receiveTelemetryOptimized' in worker_entry
-          assert 'legacy-telemetry-endpoint-used' in worker_core
-          assert 'receiveTelemetryOptimized' in worker_core
+          assert 'legacy-telemetry-endpoint-used' not in worker_entry
+          assert 'receiveTelemetryOptimized' not in worker_entry
+          assert 'legacy-telemetry-endpoint-used' not in worker_core
+          assert 'receiveTelemetryOptimized' not in worker_core
+          assert 'FROM sync_manifest AS manifest' in device_sync
           assert ').first<DeviceSyncSnapshotRow>()' in device_sync
+          assert 'RUNTIME_STORAGE_KEY' in scheduler_runtime
+          assert 'state.storage.put(RUNTIME_STORAGE_KEY' in scheduler_runtime
+          assert 'INSERT INTO job_events' in scheduler_runtime
           assert 'refreshStatusCounts(env.DB' in scheduler
           assert 'SYSTEM_JOBS_CACHE_MS = 60 * 60_000' in scheduler
           assert 'octopus_daily_totals' in octopus_history
@@ -173,12 +180,20 @@ jobs:
           assert 'daily-cleanup' in status_lists
           assert 'video_liveness_bounds' in liveness
           assert 'MAX(video.id)' not in liveness
+          assert 'LIVENESS_BATCH_SIZE = 5' in liveness
+          assert "video.status = 'active'" in liveness
           assert 'CREATE TABLE IF NOT EXISTS octopus_daily_totals' in migration
           assert 'CREATE VIEW IF NOT EXISTS video_liveness_bounds' in migration
           assert 'sqlite_sequence' in migration
           assert 'video_liveness_bound_on_insert' not in migration
-          assert 'status_counts_delta_on_block_delete' in migration
-          assert 'dirty=1' in migration
+          assert 'CREATE TABLE sync_manifest' in runtime_migration
+          assert 'CREATE TABLE job_events' in runtime_migration
+          assert 'WITHOUT ROWID' in runtime_migration
+          assert 'DROP TABLE IF EXISTS environment_samples' in runtime_migration
+          assert 'DROP TABLE IF EXISTS environment_buckets' in runtime_migration
+          assert 'status_counts_on_video_update' in runtime_migration
+          assert 'status_counts_on_ranking_insert' in runtime_migration
+          assert 'dirty=0' in runtime_migration
           assert workflow.count('cron: "') == 1
           assert 'cron: "23 * * * *"' not in workflow
           assert 'actions: read' not in workflow

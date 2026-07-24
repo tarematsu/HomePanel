@@ -1,22 +1,17 @@
 import { restoreRevivedRankingStatement } from './liveness-feed-maintenance.js';
-import {
-  baseLivenessStatusDeltaStatement,
-  deathLivenessStatusDeltaStatement
-} from './liveness-status-counts.js';
 import { LIVENESS_CRON } from './liveness-schedule.js';
 
 const BASE_PHASE = 'base';
 const DEATH_PHASE = 'death';
-const PROBE_CONCURRENCY = 1;
+const PROBE_CONCURRENCY = 5;
 const PROBE_TIMEOUT_MS = 8_000;
-const LOCK_TTL_MS = 4 * 60_000;
 const BASE_UPPER_ID_SQL = `(SELECT COALESCE(max_video_id, 0)
   FROM video_liveness_bounds
  WHERE id = 1)`;
 const DEATH_UPPER_KEY_SQL = `(SELECT COALESCE(MAX(canonical_key), '')
   FROM video_death_list)`;
 
-export const LIVENESS_BATCH_SIZE = 1;
+export const LIVENESS_BATCH_SIZE = 5;
 
 function number(value) {
   const parsed = Number(value);
@@ -114,72 +109,32 @@ export function buildLivenessStatus(state, count) {
   };
 }
 
-async function acquireRunState(db) {
-  const token = crypto.randomUUID();
-  const now = new Date().toISOString();
-  const lockUntil = new Date(Date.now() + LOCK_TTL_MS).toISOString();
-  const row = await db.prepare(
-    `UPDATE video_liveness_state
-        SET lock_token = ?,
-            lock_until = ?,
-            base_cursor_id = CASE
-              WHEN phase = 'base' AND base_upper_id = 0 THEN 0
-              ELSE base_cursor_id
-            END,
-            base_upper_id = CASE
-              WHEN phase = 'base' AND base_upper_id = 0 THEN ${BASE_UPPER_ID_SQL}
-              ELSE base_upper_id
-            END,
-            death_cursor_key = CASE
-              WHEN phase = 'death' AND death_upper_key = '' THEN ''
-              ELSE death_cursor_key
-            END,
-            death_upper_key = CASE
-              WHEN phase = 'death' AND death_upper_key = '' THEN ${DEATH_UPPER_KEY_SQL}
-              ELSE death_upper_key
-            END
-      WHERE id = 1 AND (lock_until IS NULL OR lock_until < ?)
-      RETURNING phase,
-                base_cursor_id AS baseCursorId,
-                base_upper_id AS baseUpperId,
-                death_cursor_key AS deathCursorKey,
-                death_upper_key AS deathUpperKey,
-                cycle`
-  ).bind(token, lockUntil, now).first();
+async function readRunState(db) {
+  const row = await prepareLivenessStateRead(db).first();
   if (!row) return null;
-  return {
-    token,
-    state: {
-      phase: row.phase === DEATH_PHASE ? DEATH_PHASE : BASE_PHASE,
-      baseCursorId: number(row.baseCursorId),
-      baseUpperId: number(row.baseUpperId),
-      deathCursorKey: String(row.deathCursorKey || ''),
-      deathUpperKey: String(row.deathUpperKey || ''),
-      cycle: number(row.cycle)
-    }
+  const state = {
+    phase: row.phase === DEATH_PHASE ? DEATH_PHASE : BASE_PHASE,
+    baseCursorId: number(row.baseCursorId),
+    baseUpperId: number(row.baseUpperId),
+    deathCursorKey: String(row.deathCursorKey || ''),
+    deathUpperKey: String(row.deathUpperKey || ''),
+    cycle: number(row.cycle)
   };
-}
-
-async function releaseLock(db, token) {
-  await db.prepare(
-    `UPDATE video_liveness_state
-        SET lock_token = NULL, lock_until = NULL
-      WHERE id = 1 AND lock_token = ?`
-  ).bind(token).run();
+  if (state.phase === BASE_PHASE && state.baseUpperId === 0) {
+    const bound = await db.prepare(`SELECT ${BASE_UPPER_ID_SQL} AS upperId`).first();
+    state.baseCursorId = 0;
+    state.baseUpperId = number(bound?.upperId);
+  } else if (state.phase === DEATH_PHASE && !state.deathUpperKey) {
+    const bound = await db.prepare(`SELECT ${DEATH_UPPER_KEY_SQL} AS upperKey`).first();
+    state.deathCursorKey = '';
+    state.deathUpperKey = String(bound?.upperKey || '');
+  }
+  return state;
 }
 
 async function transitionPhase(db, state) {
   if (state.phase === BASE_PHASE) {
-    const row = await db.prepare(
-      `UPDATE video_liveness_state
-          SET phase = 'death',
-              base_cursor_id = 0,
-              base_upper_id = 0,
-              death_cursor_key = '',
-              death_upper_key = ${DEATH_UPPER_KEY_SQL}
-        WHERE id = 1
-        RETURNING death_upper_key AS deathUpperKey`
-    ).first();
+    const row = await db.prepare(`SELECT ${DEATH_UPPER_KEY_SQL} AS deathUpperKey`).first();
     return {
       ...state,
       phase: DEATH_PHASE,
@@ -190,17 +145,7 @@ async function transitionPhase(db, state) {
     };
   }
 
-  const row = await db.prepare(
-    `UPDATE video_liveness_state
-        SET phase = 'base',
-            death_cursor_key = '',
-            death_upper_key = '',
-            base_cursor_id = 0,
-            base_upper_id = ${BASE_UPPER_ID_SQL},
-            cycle = COALESCE(cycle, 0) + 1
-      WHERE id = 1
-      RETURNING base_upper_id AS baseUpperId, cycle`
-  ).first();
+  const row = await db.prepare(`SELECT ${BASE_UPPER_ID_SQL} AS baseUpperId`).first();
   return {
     ...state,
     phase: BASE_PHASE,
@@ -208,7 +153,7 @@ async function transitionPhase(db, state) {
     baseUpperId: number(row?.baseUpperId),
     deathCursorKey: '',
     deathUpperKey: '',
-    cycle: number(row?.cycle)
+    cycle: number(state.cycle) + 1
   };
 }
 
@@ -222,14 +167,6 @@ async function selectRows(db, state, limit) {
          FROM videos AS video
         WHERE video.id > ? AND video.id <= ?
           AND video.status = 'active'
-          AND NOT EXISTS (
-            SELECT 1 FROM video_blocklist AS bad
-            WHERE bad.canonical_key = video.canonical_key
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM video_death_list AS death
-            WHERE death.canonical_key = video.canonical_key
-          )
         ORDER BY video.id
         LIMIT ?`
     ).bind(state.baseCursorId, state.baseUpperId, limit).all();
@@ -251,32 +188,29 @@ async function selectRows(db, state, limit) {
 function baseMutationStatements(db, payload, checkedAt, hasDead) {
   const statements = [];
   if (hasDead) {
-    statements.push(
-      baseLivenessStatusDeltaStatement(db, payload, checkedAt),
-      db.prepare(
-        `WITH input AS (
-           SELECT CAST(json_extract(value, '$.id') AS INTEGER) AS id,
-                  json_extract(value, '$.mediaUrl') AS mediaUrl,
-                  json_extract(value, '$.canonicalKey') AS canonicalKey,
-                  CAST(json_extract(value, '$.httpStatus') AS INTEGER) AS httpStatus
-             FROM json_each(?)
-            WHERE json_extract(value, '$.state') = 'dead'
-         )
-         INSERT INTO video_death_list (
-           canonical_key, media_url, video_id, detected_at,
-           last_checked_at, last_http_status, check_count
-         )
-         SELECT canonicalKey, mediaUrl, id, ?, ?, httpStatus, 1
-           FROM input
-          WHERE 1
-         ON CONFLICT(canonical_key) DO UPDATE SET
-           media_url = excluded.media_url,
-           video_id = excluded.video_id,
-           last_checked_at = excluded.last_checked_at,
-           last_http_status = excluded.last_http_status,
-           check_count = COALESCE(video_death_list.check_count, 0) + 1`
-      ).bind(payload, checkedAt, checkedAt)
-    );
+    statements.push(db.prepare(
+      `WITH input AS (
+         SELECT CAST(json_extract(value, '$.id') AS INTEGER) AS id,
+                json_extract(value, '$.mediaUrl') AS mediaUrl,
+                json_extract(value, '$.canonicalKey') AS canonicalKey,
+                CAST(json_extract(value, '$.httpStatus') AS INTEGER) AS httpStatus
+           FROM json_each(?)
+          WHERE json_extract(value, '$.state') = 'dead'
+       )
+       INSERT INTO video_death_list (
+         canonical_key, media_url, video_id, detected_at,
+         last_checked_at, last_http_status, check_count
+       )
+       SELECT canonicalKey, mediaUrl, id, ?, ?, httpStatus, 1
+         FROM input
+        WHERE 1
+       ON CONFLICT(canonical_key) DO UPDATE SET
+         media_url = excluded.media_url,
+         video_id = excluded.video_id,
+         last_checked_at = excluded.last_checked_at,
+         last_http_status = excluded.last_http_status,
+         check_count = COALESCE(video_death_list.check_count, 0) + 1`
+    ).bind(payload, checkedAt, checkedAt));
   }
 
   statements.push(db.prepare(
@@ -361,7 +295,6 @@ function deathMutationStatements(db, payload, checkedAt, hasRevived, hasUnresolv
         WHERE video_death_list.canonical_key = input.canonicalKey`
     ).bind(payload, checkedAt));
   }
-  if (hasRevived) statements.push(deathLivenessStatusDeltaStatement(db, payload, checkedAt));
   return statements;
 }
 
@@ -422,7 +355,7 @@ export async function applyProbeResults(db, phase, rows, probes, checkedAt) {
   };
 }
 
-export async function recordRunAndRelease(db, token, values, state) {
+export async function recordRunAndRelease(db, _token, values, state) {
   const result = await db.prepare(
     `UPDATE video_liveness_state
         SET phase = COALESCE(?, phase),
@@ -442,7 +375,7 @@ export async function recordRunAndRelease(db, token, values, state) {
             last_error = ?,
             lock_token = NULL,
             lock_until = NULL
-      WHERE id = 1 AND lock_token = ?`
+      WHERE id = 1`
   ).bind(
     state?.phase ?? null,
     state?.baseCursorId ?? null,
@@ -458,20 +391,18 @@ export async function recordRunAndRelease(db, token, values, state) {
     values.deadCount,
     values.revivedCount,
     values.unknownCount,
-    values.error || null,
-    token
+    values.error || null
   ).run();
   return number(result.meta?.changes) > 0;
 }
 
 export async function runLivenessMonitor(env) {
-  const acquired = await acquireRunState(env.DB);
-  if (!acquired) return { ok: true, skipped: true, reason: 'already-running' };
+  const initialState = await readRunState(env.DB);
+  if (!initialState) return { ok: true, skipped: true, reason: 'state-unavailable' };
 
-  const { token } = acquired;
   const totals = { checkedCount: 0, deadCount: 0, revivedCount: 0, unknownCount: 0 };
   let error = null;
-  let state = acquired.state;
+  let state = initialState;
 
   try {
     let remaining = LIVENESS_BATCH_SIZE;
@@ -499,42 +430,37 @@ export async function runLivenessMonitor(env) {
         continue;
       }
 
-      const row = rows[0];
-      if (state.phase === BASE_PHASE) state = { ...state, baseCursorId: number(row.id) };
-      else state = { ...state, deathCursorKey: row.canonicalKey };
-
-      const probe = await probeVideoUrl(row.mediaUrl);
+      const phase = state.phase;
+      const probes = await Promise.all(rows.map(row => probeVideoUrl(row.mediaUrl)));
       const checkedAt = new Date().toISOString();
-      const result = await applyProbeResults(env.DB, state.phase, [row], [probe], checkedAt);
-      totals.checkedCount += 1;
+      const result = await applyProbeResults(env.DB, phase, rows, probes, checkedAt);
+
+      // Advance only after the mutation batch succeeds. A transient D1 failure
+      // must retry these rows instead of persisting a cursor past unapplied work.
+      const last = rows[rows.length - 1];
+      if (phase === BASE_PHASE) state = { ...state, baseCursorId: number(last.id) };
+      else state = { ...state, deathCursorKey: last.canonicalKey };
+
+      totals.checkedCount += rows.length;
       totals.deadCount += result.deadCount;
       totals.revivedCount += result.revivedCount;
       totals.unknownCount += result.unknownCount;
-      remaining -= 1;
+      remaining -= rows.length;
     }
-
   } catch (caught) {
     error = shortError(caught);
     console.error('video-liveness-monitor-failed', { error });
   } finally {
-    const recorded = await recordRunAndRelease(env.DB, token, {
+    const recorded = await recordRunAndRelease(env.DB, null, {
       ...totals,
       completedAt: new Date().toISOString(),
       error
-    }, state).catch(async (recordError) => {
+    }, state).catch((recordError) => {
       if (!error) error = `failed-to-record-liveness-run: ${shortError(recordError)}`;
-      await releaseLock(env.DB, token).catch((releaseError) => {
-        if (!error) error = `failed-to-release-liveness-lock: ${shortError(releaseError)}`;
-      });
       return false;
     });
 
-    if (!recorded && !error) {
-      error = 'failed-to-record-liveness-run';
-      await releaseLock(env.DB, token).catch((releaseError) => {
-        error = `failed-to-release-liveness-lock: ${shortError(releaseError)}`;
-      });
-    }
+    if (!recorded && !error) error = 'failed-to-record-liveness-run';
   }
 
   if (error) throw new Error(error);

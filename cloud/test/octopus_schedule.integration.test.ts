@@ -12,7 +12,7 @@ beforeEach(async () => {
 });
 
 describe("Octopus schedule", () => {
-  it("normalizes the Octopus job to a 6-hour interval", async () => {
+  it("normalizes the Octopus job to a 24-hour interval", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-11T03:00:00Z"));
     const nowSeconds = Math.floor(Date.now() / 1000);
@@ -28,7 +28,7 @@ describe("Octopus schedule", () => {
     const job = await env.DB.prepare(
       "SELECT interval_seconds,next_run_at FROM jobs WHERE name='octopus'",
     ).first<{ interval_seconds: number; next_run_at: number }>();
-    expect(job?.interval_seconds).toBe(21600);
+    expect(job?.interval_seconds).toBe(86400);
     expect(job?.next_run_at).toBe(nowSeconds + 3600);
   });
 
@@ -42,6 +42,6 @@ describe("Octopus schedule", () => {
     const job = await env.DB.prepare(
       "SELECT interval_seconds,next_run_at FROM jobs WHERE name='octopus'",
     ).first<{ interval_seconds: number; next_run_at: number }>();
-    expect(job).toEqual({ interval_seconds: 21600, next_run_at: 0 });
+    expect(job).toEqual({ interval_seconds: 86400, next_run_at: 0 });
   });
 });

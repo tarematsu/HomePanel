@@ -1,7 +1,7 @@
 import homePanelWorker from './worker_entry.ts';
 import videoWorker from '../../video/src/entry.js';
 import { requestFamily } from './unified_routes.js';
-import { runSchedulerTick } from './scheduler.ts';
+import { queueSchedulerWatchdog } from './scheduler_coordinator.ts';
 import {
   inactiveVideoRuntimeResponse,
   retryInactiveVideoBatch,
@@ -31,6 +31,6 @@ export default {
   },
 
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(runSchedulerTick(env));
+    queueSchedulerWatchdog(env, ctx);
   }
 };

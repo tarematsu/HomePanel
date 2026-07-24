@@ -68,7 +68,7 @@ test('NG registration accepts an active video outside ranking_entries', async ()
   assert.deepEqual(db.lookup.args, [canonicalKey, canonicalKey]);
   assert.doesNotMatch(db.lookup.sql, /JOIN ranking_entries/);
   assert.match(db.lookup.sql, /video\.status = 'active'/);
-  assert.match(db.lookup.sql, /video_death_list/);
+  assert.doesNotMatch(db.lookup.sql, /video_death_list/);
   assert.equal(db.batchStatements.length, 3);
   assert.match(db.batchStatements[0].sql, /INSERT INTO video_blocklist/);
   assert.match(db.batchStatements[1].sql, /UPDATE videos/);

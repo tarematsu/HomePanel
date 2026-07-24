@@ -3,7 +3,7 @@ import { jstDayKey, type Env, type SourceResult } from "./sources";
 import { markStateChanged } from "./state_generation";
 import { memoizedStateHash } from "./state_hash_cache";
 
-export const WORKER_VERSION = "2.12.0";
+export const WORKER_VERSION = "2.13.0";
 
 const EMPTY_OBJECT_HASH = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 const HEX_DIGITS = "0123456789abcdef";
@@ -39,7 +39,7 @@ export const DASHBOARD_SOURCE_NAMES = [
   "environment",
 ] as const;
 const META_SOURCE_NAMES = [...DASHBOARD_SOURCE_NAMES, "radar"] as const;
-const STATE_HEARTBEAT_MS = 60 * 60_000;
+const STATE_HEARTBEAT_MS = 6 * 60 * 60_000;
 
 type DashboardSourceName = typeof DASHBOARD_SOURCE_NAMES[number];
 type CachedDashboardSource = { key: string; value: unknown };
@@ -207,7 +207,7 @@ function stablePayload(result: SourceResult): unknown {
   delete copy.generatedAt;
   delete copy.sampledAt;
   delete copy.monitorSampledAt;
-  if (result.source !== "switchbot") delete copy.lastPowerPollAt;
+  delete copy.lastPowerPollAt;
   if (result.source === "stationhead") delete copy.progressMs;
   if (result.source === "switchbot" && Array.isArray(copy.devices)) {
     copy.devices = copy.devices.map(device => {

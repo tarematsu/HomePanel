@@ -3,7 +3,7 @@ import { getDeviceSync } from "../src/device_sync";
 import type { Env } from "../src/sources";
 
 describe("device sync unchanged fast path", () => {
-  it("uses one snapshot statement and does not fetch state payload rows when versions match", async () => {
+  it("uses one manifest snapshot statement and does not fetch state payload rows when versions match", async () => {
     const statements: string[] = [];
     const first = vi.fn().mockResolvedValue({
       dashboard_version: 27,
@@ -37,7 +37,7 @@ describe("device sync unchanged fast path", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      workerVersion: "2.12.0",
+      workerVersion: "2.13.0",
       versions: {
         dashboard: 27,
         radar: 8,
@@ -50,7 +50,8 @@ describe("device sync unchanged fast path", () => {
     });
     expect(prepare).toHaveBeenCalledTimes(1);
     expect(first).toHaveBeenCalledTimes(1);
-    expect(statements[0]).toContain("SUM(CASE");
+    expect(statements[0]).toContain("FROM sync_manifest AS manifest");
+    expect(statements[0]).not.toContain("SUM(CASE");
     expect(statements[0]).toContain("device_configs");
     expect(statements[0]).toContain("device_commands");
     expect(statements.some(sql => sql.includes("SELECT source,version,payload"))).toBe(false);

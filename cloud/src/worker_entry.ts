@@ -11,10 +11,8 @@ import { cachedRadarBundleResponse } from "./radar_bundle_cache";
 import worker from "./worker_core";
 import { etagResponse, suppliedEtags, unauthorized } from "./response";
 import { radarFrameResponse } from "./radar_source";
-import { queueSchedulerWake } from "./scheduler_coordinator";
 import { WORKER_VERSION } from "./snapshot";
 import type { Env } from "./sources";
-import { receiveTelemetryOptimized } from "./telemetry_route";
 import { queueUpdateCheckPing } from "./update_check";
 import { updateFileResponse } from "./update_proxy";
 import {
@@ -111,15 +109,6 @@ export default {
       return etagResponse(request, meta.payload, "application/json; charset=utf-8", meta.hash);
     }
 
-    if (request.method === "POST" && path === "/v1/telemetry") {
-      console.warn("legacy-telemetry-endpoint-used");
-      return receiveTelemetryOptimized(request, env);
-    }
-
-    const response = await worker.fetch(request, env, ctx);
-    if (response.status === 202 && request.method === "POST" && path === "/v1/refresh") {
-      queueSchedulerWake(env, ctx);
-    }
-    return response;
+    return worker.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;

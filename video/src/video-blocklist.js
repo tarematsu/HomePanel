@@ -76,10 +76,6 @@ export async function blockPlaybackMedia(env, request, options = {}) {
          FROM videos AS video
         WHERE video.status = 'active'
           AND video.canonical_key = ?
-          AND NOT EXISTS (
-            SELECT 1 FROM video_death_list AS death
-             WHERE death.canonical_key = video.canonical_key
-          )
         LIMIT 1
      )
      SELECT EXISTS(

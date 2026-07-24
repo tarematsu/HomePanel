@@ -59,7 +59,7 @@ describe("state cache and D1 efficiency", () => {
     expect(second.status).toBe(304);
   });
 
-  it("suppresses unchanged current_state heartbeat writes for one hour", async () => {
+  it("suppresses unchanged current_state heartbeat writes for six hours", async () => {
     const startedAt = Date.now();
     vi.useFakeTimers();
     vi.setSystemTime(startedAt);
@@ -67,14 +67,14 @@ describe("state cache and D1 efficiency", () => {
     await updateState(env, { source: "weather", observedAt: startedAt, payload });
     const initial = await readState(env, "weather");
 
-    vi.setSystemTime(startedAt + 30 * 60_000);
-    await updateState(env, { source: "weather", observedAt: startedAt + 30 * 60_000, payload });
+    vi.setSystemTime(startedAt + 5 * 60 * 60_000);
+    await updateState(env, { source: "weather", observedAt: startedAt + 5 * 60 * 60_000, payload });
     const suppressed = await readState(env, "weather");
     expect(suppressed?.fetched_at).toBe(initial?.fetched_at);
 
-    vi.setSystemTime(startedAt + 61 * 60_000);
-    await updateState(env, { source: "weather", observedAt: startedAt + 61 * 60_000, payload });
+    vi.setSystemTime(startedAt + 6 * 60 * 60_000 + 60_000);
+    await updateState(env, { source: "weather", observedAt: startedAt + 6 * 60 * 60_000 + 60_000, payload });
     const written = await readState(env, "weather");
-    expect(written?.fetched_at).toBe(startedAt + 61 * 60_000);
+    expect(written?.fetched_at).toBe(startedAt + 6 * 60 * 60_000 + 60_000);
   });
 });

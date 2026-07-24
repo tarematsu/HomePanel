@@ -4,6 +4,8 @@ export interface TelemetryHeartbeatReceipt {
   last_sequence: number;
 }
 
+const HEARTBEAT_REFRESH_MS = 6 * 60 * 60_000;
+
 export function telemetryHeartbeatReturningStatement(
   env: Env,
   deviceId: string,
@@ -24,6 +26,19 @@ export function telemetryHeartbeatReturningStatement(
        outbox_count=excluded.outbox_count,
        payload=NULL,
        last_sequence=MAX(device_heartbeats.last_sequence,excluded.last_sequence)
+     WHERE device_heartbeats.app_version IS NOT excluded.app_version
+        OR device_heartbeats.stationhead_ok IS NOT excluded.stationhead_ok
+        OR device_heartbeats.outbox_count IS NOT excluded.outbox_count
+        OR device_heartbeats.payload IS NOT NULL
+        OR device_heartbeats.last_seen_at<=?7
      RETURNING last_sequence`,
-  ).bind(deviceId, now, appVersion, stationheadOk, outboxCount, lastSequence);
+  ).bind(
+    deviceId,
+    now,
+    appVersion,
+    stationheadOk,
+    outboxCount,
+    lastSequence,
+    now - HEARTBEAT_REFRESH_MS,
+  );
 }

@@ -1,8 +1,9 @@
 import { adminPage } from "./admin";
 import { authorizedAction, authorizedAnyDevice, authorizedDevice, deviceIdFromRequest } from "./auth";
 import { json } from "./http";
+import { normalizeRefreshJobNames } from "./refresh_jobs";
 import { methodNotAllowed, etagResponse, unauthorized } from "./response";
-import { requestRefresh, runSchedulerTick } from "./scheduler";
+import { queueSchedulerWake, queueSchedulerWatchdog } from "./scheduler_coordinator";
 import { buildMeta, ensureDashboard, readState, sha256Hex, updateState, WORKER_VERSION } from "./snapshot";
 import { constantTimeEqual } from "./crypto_cache";
 import { updateFileResponse, updateManifestResponse } from "./update_proxy";
@@ -20,7 +21,6 @@ import type { Env } from "./sources";
 import { fetchStationhead } from "./spotify_source";
 import { stationheadHealthPayload } from "./stationhead_health";
 import { receiveCompactTelemetry } from "./telemetry_compact";
-import { receiveTelemetryOptimized } from "./telemetry_route";
 
 async function dashboardJsonResponse(request: Request, env: Env): Promise<Response> {
   const snapshot = await ensureDashboard(env);
@@ -172,12 +172,6 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     return receiveCompactTelemetry(request, env, ctx);
   }
 
-  if (url.pathname === "/v1/telemetry") {
-    if (request.method !== "POST") return methodNotAllowed(["POST"]);
-    console.warn("legacy-telemetry-endpoint-used");
-    return receiveTelemetryOptimized(request, env);
-  }
-
   if (url.pathname === "/v1/refresh") {
     if (request.method !== "POST") return methodNotAllowed(["POST"]);
     if (!authorizedAction(request, env)) return unauthorized();
@@ -197,9 +191,11 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (Array.isArray(body.sources) && body.sources.some(value => typeof value !== "string")) {
       return json({ error: "sources must contain only strings" }, { status: 400 });
     }
-    const names = Array.isArray(body.sources) ? body.sources as string[] : undefined;
-    if (!await requestRefresh(env, names)) {
-      return json({ error: "sources must include a supported source" }, { status: 400 });
+    const requested = Array.isArray(body.sources) ? body.sources as string[] : undefined;
+    const names = normalizeRefreshJobNames(requested);
+    if (!names) return json({ error: "sources must include a supported source" }, { status: 400 });
+    if (!queueSchedulerWake(env, ctx, names)) {
+      return json({ error: "scheduler unavailable" }, { status: 503 });
     }
     return json({ queued: true }, { status: 202 });
   }
@@ -215,6 +211,6 @@ export default {
     });
   },
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(runSchedulerTick(env));
+    queueSchedulerWatchdog(env, ctx);
   },
 } satisfies ExportedHandler<Env>;

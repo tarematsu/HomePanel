@@ -3,6 +3,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { resetD1TestDatabase } from "./d1_test_utils";
 
 type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1] };
+type CountRow = {
+  active_videos: number;
+  active_mp4_videos: number;
+  feed_videos: number;
+  feed_mp4_videos: number;
+  dirty?: number;
+};
 
 beforeEach(async () => {
   const testEnv = env as TestEnv;
@@ -36,7 +43,7 @@ describe("D1 read hotspot migration", () => {
     expect(Number(triggers?.count)).toBe(0);
   });
 
-  it("restores active counts while preserving unrelated dirty state on block deletion", async () => {
+  it("restores active counts without marking the exact counter state dirty", async () => {
     const timestamp = "2026-07-23T00:00:00.000Z";
     const inserted = await env.DB.prepare(
       `INSERT INTO videos(media_url,canonical_key,media_type,first_seen_at,last_seen_at,status)
@@ -61,9 +68,56 @@ describe("D1 read hotspot migration", () => {
     const counts = await env.DB.prepare(
       "SELECT active_videos,blocked_videos,dirty FROM status_counts WHERE id=1",
     ).first<{ active_videos: number; blocked_videos: number; dirty: number }>();
-    expect(counts).toMatchObject({ active_videos: 1, blocked_videos: 0, dirty: 1 });
+    expect(counts).toMatchObject({ active_videos: 1, blocked_videos: 0, dirty: 0 });
     const video = await env.DB.prepare("SELECT status FROM videos WHERE id=?1")
       .bind(videoId).first<{ status: string }>();
     expect(video?.status).toBe("active");
+  });
+
+  it("decrements active and feed counts before a ranked video cascades away", async () => {
+    const timestamp = "2026-07-23T00:00:00.000Z";
+    const baseline = await env.DB.prepare(
+      `SELECT active_videos,active_mp4_videos,feed_videos,feed_mp4_videos
+         FROM status_counts WHERE id=1`,
+    ).first<CountRow>();
+    const inserted = await env.DB.prepare(
+      `INSERT INTO videos(media_url,canonical_key,media_type,first_seen_at,last_seen_at,status)
+       VALUES(?1,?2,'mp4',?3,?3,'active') RETURNING id`,
+    ).bind("https://media.test/ranked.mp4", "media.test/ranked.mp4", timestamp)
+      .first<{ id: number }>();
+    const videoId = Number(inserted?.id);
+    await env.DB.prepare(
+      `INSERT INTO ranking_entries(period,video_id,rank,captured_at)
+       VALUES('24h',?1,1,?2)`,
+    ).bind(videoId, timestamp).run();
+
+    const beforeDelete = await env.DB.prepare(
+      `SELECT active_videos,active_mp4_videos,feed_videos,feed_mp4_videos
+         FROM status_counts WHERE id=1`,
+    ).first<CountRow>();
+    expect(beforeDelete).toEqual({
+      active_videos: Number(baseline?.active_videos) + 1,
+      active_mp4_videos: Number(baseline?.active_mp4_videos) + 1,
+      feed_videos: Number(baseline?.feed_videos) + 1,
+      feed_mp4_videos: Number(baseline?.feed_mp4_videos) + 1,
+    });
+
+    await env.DB.prepare("DELETE FROM videos WHERE id=?1").bind(videoId).run();
+
+    const after = await env.DB.prepare(
+      `SELECT active_videos,active_mp4_videos,feed_videos,feed_mp4_videos,dirty
+         FROM status_counts WHERE id=1`,
+    ).first<CountRow>();
+    expect(after).toEqual({
+      active_videos: Number(baseline?.active_videos),
+      active_mp4_videos: Number(baseline?.active_mp4_videos),
+      feed_videos: Number(baseline?.feed_videos),
+      feed_mp4_videos: Number(baseline?.feed_mp4_videos),
+      dirty: 0,
+    });
+    const rankings = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM ranking_entries WHERE video_id=?1",
+    ).bind(videoId).first<{ count: number }>();
+    expect(Number(rankings?.count)).toBe(0);
   });
 });
