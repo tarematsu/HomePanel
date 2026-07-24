@@ -1,5 +1,6 @@
 import { authorizedDevice, deviceIdFromRequest } from "./auth";
 import { buildDeviceSyncPayloadForDevice } from "./device_sync";
+import { queueSchedulerWatchdog } from "./scheduler_coordinator";
 import type { Env } from "./sources";
 import { applyCompactTelemetryInput } from "./telemetry_compact";
 
@@ -43,7 +44,7 @@ async function applyTelemetry(
 export async function deviceExchangeResponse(
   request: Request,
   env: Env,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
 ): Promise<Response> {
   const deviceId = deviceIdFromRequest(request);
   if (!deviceId) return Response.json({ error: "valid deviceId is required" }, { status: 400 });
@@ -64,11 +65,19 @@ export async function deviceExchangeResponse(
     ? input.versions
     : {};
 
-  // Keep the exchange as one Worker invocation and pass already parsed fields
-  // directly into the D1 snapshot path. Rebuilding an internal Request/URL here
-  // needlessly repeated URL, query-string, and device-id parsing on every poll.
+  // A valid native poll is the deployment bootstrap/watchdog signal. The
+  // module-level throttle keeps this to at most once per day per isolate.
+  queueSchedulerWatchdog(env, ctx);
+
+  // Merge telemetry first. The R2 merge primes the environment cache, so the
+  // following sync read reuses the same row and can return the new sample in
+  // this response instead of one native polling cycle later.
+  const telemetryPayload: Record<string, unknown> = {};
+  if (input.telemetry !== undefined) {
+    await applyTelemetry(env, deviceId, input.telemetry, telemetryPayload);
+  }
   const payload = await buildDeviceSyncPayloadForDevice(env, deviceId, versions);
-  if (input.telemetry !== undefined) await applyTelemetry(env, deviceId, input.telemetry, payload);
+  Object.assign(payload, telemetryPayload);
 
   // Keep the exchange hot path focused on the small state/telemetry response.
   // The native client already falls back to the authenticated radar bundle URL
