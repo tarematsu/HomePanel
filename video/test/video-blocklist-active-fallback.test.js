@@ -29,7 +29,6 @@ function createDb(state) {
       }));
       return [
         { meta: { changes: 1 } },
-        { meta: { changes: 1 } },
         { meta: { changes: 0 } }
       ];
     }
@@ -68,9 +67,9 @@ test('NG registration accepts an active video outside ranking_entries', async ()
   assert.deepEqual(db.lookup.args, [canonicalKey, canonicalKey]);
   assert.doesNotMatch(db.lookup.sql, /JOIN ranking_entries/);
   assert.match(db.lookup.sql, /video\.status = 'active'/);
-  assert.match(db.lookup.sql, /video_death_list/);
-  assert.equal(db.batchStatements.length, 3);
+  assert.doesNotMatch(db.lookup.sql, /video_death_list/);
+  assert.equal(db.batchStatements.length, 2);
   assert.match(db.batchStatements[0].sql, /INSERT INTO video_blocklist/);
-  assert.match(db.batchStatements[1].sql, /UPDATE videos/);
-  assert.match(db.batchStatements[2].sql, /DELETE FROM ranking_entries/);
+  assert.match(db.batchStatements[1].sql, /DELETE FROM ranking_entries/);
+  assert.equal(db.batchStatements.some(statement => /UPDATE videos/.test(statement.sql)), false);
 });
