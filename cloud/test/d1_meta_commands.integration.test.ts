@@ -67,7 +67,7 @@ describe("D1 meta and command optimizations", () => {
       dashboardVersion: 27,
       radarVersion: 7,
       status: "stale",
-      workerVersion: "2.12.0",
+      workerVersion: "2.13.0",
     });
   });
 
@@ -124,7 +124,7 @@ describe("D1 meta and command optimizations", () => {
     const matching = await SELF.fetch(baseUrl, { headers: auth("test-device") });
     expect(matching.status).toBe(200);
     await expect(matching.json()).resolves.toEqual({
-      workerVersion: "2.12.0",
+      workerVersion: "2.13.0",
       versions: { dashboard: 27, radar: 8, switchbot: 5, stationhead: 6, stationheadHealth: 10, config: 9 },
       commands: [],
     });
@@ -138,7 +138,7 @@ describe("D1 meta and command optimizations", () => {
     );
     expect(stale.status).toBe(200);
     await expect(stale.json()).resolves.toEqual({
-      workerVersion: "2.12.0",
+      workerVersion: "2.13.0",
       versions: { dashboard: 27, radar: 8, switchbot: 5, stationhead: 6, stationheadHealth: 10, config: 9 },
       commands: [],
       radar: JSON.stringify({ marker: "radar" }),
