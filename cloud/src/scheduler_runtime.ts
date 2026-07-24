@@ -16,6 +16,7 @@ const RUNTIME_VERSION = 2;
 const MIN_RETRY_SECONDS = 60;
 const MAX_FAILURE_EXPONENT = 4;
 const EMPTY_RECHECK_SECONDS = 24 * 60 * 60;
+const MAX_RUNTIME_BATCH = 3;
 const NON_SOURCE_JOBS = new Set<string>([
   "cleanup",
   "update_check",
@@ -40,6 +41,13 @@ interface JobExecution {
   startedAt: number;
   success: boolean;
   message?: string;
+}
+
+interface PendingJobEvent {
+  jobName: string;
+  occurredAt: number;
+  event: "failed" | "recovered";
+  detail: string | null;
 }
 
 function normalizedJob(row: JobRow, nowSeconds: number): RuntimeJob {
@@ -143,31 +151,60 @@ async function executeRuntimeJob(env: Env, job: RuntimeJob): Promise<JobExecutio
   return { startedAt, success, ...(message === undefined ? {} : { message }) };
 }
 
-async function recordJobEvent(
-  env: Env,
+function transitionEvent(
   job: RuntimeJob,
   execution: JobExecution,
   completedAt: number,
-): Promise<void> {
-  const event = execution.success ? "recovered" : "failed";
-  if (execution.success && job.consecutiveFailures === 0) return;
-  await env.DB.prepare(
+): PendingJobEvent | null {
+  if (!execution.success && job.consecutiveFailures === 0) {
+    return {
+      jobName: job.name,
+      occurredAt: completedAt,
+      event: "failed",
+      detail: execution.message ?? "unknown error",
+    };
+  }
+  if (execution.success && job.consecutiveFailures > 0) {
+    return {
+      jobName: job.name,
+      occurredAt: completedAt,
+      event: "recovered",
+      detail: null,
+    };
+  }
+  return null;
+}
+
+async function recordJobEventsBestEffort(env: Env, events: readonly PendingJobEvent[]): Promise<void> {
+  if (!events.length) return;
+  const statement = env.DB.prepare(
     `INSERT INTO job_events(job_name,occurred_at,event,detail)
      VALUES(?1,?2,?3,?4)
      ON CONFLICT(job_name,occurred_at,event) DO NOTHING`,
-  ).bind(job.name, completedAt, event, execution.message ?? null).run();
+  );
+  try {
+    await env.DB.batch(events.map(event => statement.bind(
+      event.jobName,
+      event.occurredAt,
+      event.event,
+      event.detail,
+    )));
+  } catch (error) {
+    console.error("Failed to record scheduler transition events", error instanceof Error
+      ? error.message
+      : String(error));
+  }
 }
 
-function dueJob(envelope: RuntimeEnvelope, nowSeconds: number): RuntimeJob | null {
-  let selected: RuntimeJob | null = null;
-  for (const job of envelope.jobs) {
-    if (job.nextRunAt > nowSeconds) continue;
-    if (!selected || job.nextRunAt < selected.nextRunAt ||
-        (job.nextRunAt === selected.nextRunAt && job.name < selected.name)) {
-      selected = job;
-    }
-  }
-  return selected;
+function dueJobs(
+  envelope: RuntimeEnvelope,
+  nowSeconds: number,
+  limit = MAX_RUNTIME_BATCH,
+): RuntimeJob[] {
+  return envelope.jobs
+    .filter(job => job.nextRunAt <= nowSeconds)
+    .sort((left, right) => left.nextRunAt - right.nextRunAt || left.name.localeCompare(right.name))
+    .slice(0, Math.max(1, Math.trunc(limit)));
 }
 
 export async function runtimeNextWakeAt(
@@ -206,35 +243,45 @@ export async function runRuntimeSchedulerTick(
   state: DurableObjectState,
   env: Env,
   nowSeconds = Math.floor(Date.now() / 1000),
-): Promise<string | null> {
+): Promise<string[]> {
   const envelope = await runtimeEnvelope(state, env, nowSeconds);
-  const job = dueJob(envelope, nowSeconds);
-  if (!job) return null;
+  const jobs = dueJobs(envelope, nowSeconds);
+  if (!jobs.length) return [];
 
-  const execution = await executeRuntimeJob(env, job);
+  const executions = await Promise.all(jobs.map(job => executeRuntimeJob(env, job)));
   const completedAt = Math.floor(Date.now() / 1000);
-  await recordJobEvent(env, job, execution, completedAt);
+  const events: PendingJobEvent[] = [];
 
-  if (execution.success) {
-    job.nextRunAt = completedAt + job.intervalSeconds;
-    job.lastSuccessAt = execution.startedAt;
-    job.consecutiveFailures = 0;
-    job.lastError = null;
-  } else {
-    job.consecutiveFailures += 1;
-    const retrySeconds = Math.min(
-      job.intervalSeconds,
-      Math.max(
-        MIN_RETRY_SECONDS,
-        MIN_RETRY_SECONDS * 2 ** Math.min(MAX_FAILURE_EXPONENT, job.consecutiveFailures - 1),
-      ),
-    );
-    job.nextRunAt = completedAt + retrySeconds;
-    job.lastError = execution.message ?? "unknown error";
+  for (let index = 0; index < jobs.length; index += 1) {
+    const job = jobs[index]!;
+    const execution = executions[index]!;
+    const event = transitionEvent(job, execution, completedAt);
+    if (event) events.push(event);
+
+    if (execution.success) {
+      job.nextRunAt = completedAt + job.intervalSeconds;
+      job.lastSuccessAt = execution.startedAt;
+      job.consecutiveFailures = 0;
+      job.lastError = null;
+    } else {
+      job.consecutiveFailures += 1;
+      const retrySeconds = Math.min(
+        job.intervalSeconds,
+        Math.max(
+          MIN_RETRY_SECONDS,
+          MIN_RETRY_SECONDS * 2 ** Math.min(MAX_FAILURE_EXPONENT, job.consecutiveFailures - 1),
+        ),
+      );
+      job.nextRunAt = completedAt + retrySeconds;
+      job.lastError = execution.message ?? "unknown error";
+    }
   }
 
+  // Runtime progress is authoritative. Diagnostic D1 history is deliberately
+  // recorded only after the durable checkpoint and cannot block future alarms.
   await state.storage.put(RUNTIME_STORAGE_KEY, envelope);
-  return job.name;
+  await recordJobEventsBestEffort(env, events);
+  return jobs.map(job => job.name);
 }
 
 export async function resetRuntimeFromD1(
