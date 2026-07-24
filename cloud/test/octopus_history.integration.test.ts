@@ -126,6 +126,14 @@ describe("Octopus daily D1 history", () => {
     ).bind("A-gap").first<{ stable_through: number }>();
     expect(Number(storedCursor?.stable_through)).toBe(collectionStart);
 
+    const stillIncomplete = await synchronizeOctopusHistory(env, "A-gap", now, async () => []);
+    expect(stillIncomplete.cursorBefore).toBe(collectionStart);
+    expect(stillIncomplete.cursorAfter).toBe(collectionStart);
+    const monotonicCursor = await env.DB.prepare(
+      "SELECT stable_through FROM octopus_sync_state WHERE account_number=?1",
+    ).bind("A-gap").first<{ stable_through: number }>();
+    expect(Number(monotonicCursor?.stable_through)).toBe(collectionStart);
+
     const retried: OctopusRange[] = [];
     const repaired = await synchronizeOctopusHistory(env, "A-gap", now, async range => {
       retried.push(range);
