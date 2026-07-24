@@ -24,6 +24,7 @@ export interface OctopusHistorySyncResult {
   stableThrough: number;
   historyFloor: number;
   cursorBefore: number | null;
+  cursorAfter: number;
   fetchFrom: number;
   completed: boolean;
 }
@@ -32,6 +33,10 @@ interface DailyTotalRow {
   day: string;
   energy_kwh: number;
   slot_count: number;
+}
+
+interface DailyKeyRow {
+  day: string;
 }
 
 interface SyncStateRow {
@@ -125,23 +130,25 @@ async function persistDailyTotals(
   nowMs: number,
 ): Promise<void> {
   if (!totals.length) return;
-  const upsert = env.DB.prepare(
-    `INSERT INTO octopus_daily_totals(account_number,day,energy_kwh,slot_count,updated_at)
-     VALUES(?1,?2,?3,?4,?5)
+  const payload = JSON.stringify(totals);
+  await env.DB.prepare(
+    `WITH input AS (
+       SELECT json_extract(value,'$.day') AS day,
+              CAST(json_extract(value,'$.energyKwh') AS REAL) AS energy_kwh,
+              CAST(json_extract(value,'$.slotCount') AS INTEGER) AS slot_count
+         FROM json_each(?2)
+     )
+     INSERT INTO octopus_daily_totals(account_number,day,energy_kwh,slot_count,updated_at)
+     SELECT ?1,day,energy_kwh,slot_count,?3
+       FROM input
+      WHERE slot_count=48
      ON CONFLICT(account_number,day) DO UPDATE SET
        energy_kwh=excluded.energy_kwh,
        slot_count=excluded.slot_count,
        updated_at=excluded.updated_at
      WHERE octopus_daily_totals.energy_kwh IS NOT excluded.energy_kwh
         OR octopus_daily_totals.slot_count IS NOT excluded.slot_count`,
-  );
-  await env.DB.batch(totals.map(total => upsert.bind(
-    accountNumber,
-    total.day,
-    total.energyKwh,
-    total.slotCount,
-    nowMs,
-  )));
+  ).bind(accountNumber, payload, nowMs).run();
 }
 
 async function readSyncCursor(env: Env, accountNumber: string): Promise<number | null> {
@@ -150,6 +157,26 @@ async function readSyncCursor(env: Env, accountNumber: string): Promise<number |
   ).bind(accountNumber).first<SyncStateRow>();
   const value = Number(row?.stable_through);
   return Number.isFinite(value) ? value : null;
+}
+
+async function contiguousStoredThrough(
+  env: Env,
+  accountNumber: string,
+  fromMs: number,
+  toMs: number,
+): Promise<number> {
+  if (fromMs >= toMs) return toMs;
+  const fromDay = jstDayKey(fromMs);
+  const toDay = jstDayKey(toMs);
+  const result = await env.DB.prepare(
+    `SELECT day FROM octopus_daily_totals
+      WHERE account_number=?1 AND day>=?2 AND day<?3
+      ORDER BY day`,
+  ).bind(accountNumber, fromDay, toDay).all<DailyKeyRow>();
+  const stored = new Set((result.results ?? []).map(row => row.day));
+  let cursor = fromMs;
+  while (cursor < toMs && stored.has(jstDayKey(cursor))) cursor += DAY_MS;
+  return cursor;
 }
 
 async function writeSyncCursor(
@@ -182,23 +209,33 @@ export async function synchronizeOctopusHistory(
     ? octopusCollectionStart(nowMs)
     : cursorBefore - OCTOPUS_CORRECTION_OVERLAP_DAYS * DAY_MS;
   const fetchFrom = Math.min(stableThrough, Math.max(OCTOPUS_HISTORY_FLOOR_MS, initialFrom));
+  const totalsByDay = new Map<string, OctopusDailyTotal>();
   let supplyPoint: string | null = null;
 
   for (const range of safeRanges(fetchFrom, stableThrough)) {
     const readings = await fetchRange(range);
     const aggregated = aggregateCompleteDays(readings, range, supplyPoint);
     supplyPoint = aggregated.supplyPoint;
-    await persistDailyTotals(env, accountNumber, aggregated.totals, nowMs);
+    for (const total of aggregated.totals) totalsByDay.set(total.day, total);
   }
-  await writeSyncCursor(env, accountNumber, stableThrough, nowMs);
+
+  await persistDailyTotals(
+    env,
+    accountNumber,
+    [...totalsByDay.values()].sort((left, right) => left.day.localeCompare(right.day)),
+    nowMs,
+  );
+  const cursorAfter = await contiguousStoredThrough(env, accountNumber, fetchFrom, stableThrough);
+  await writeSyncCursor(env, accountNumber, cursorAfter, nowMs);
 
   return {
     stableCutoff,
     stableThrough,
     historyFloor: OCTOPUS_HISTORY_FLOOR_MS,
     cursorBefore,
+    cursorAfter,
     fetchFrom,
-    completed: true,
+    completed: cursorAfter >= stableThrough,
   };
 }
 
