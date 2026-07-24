@@ -279,6 +279,17 @@ export function buildOctopusDailyProfile(
   return profile;
 }
 
+export function projectOctopusMonthlyUsage(
+  usageKwh: number,
+  coveredDays: number,
+  billingDays: number,
+): number {
+  if (!Number.isFinite(usageKwh) || usageKwh < 0) return 0;
+  if (!Number.isFinite(coveredDays) || coveredDays <= 0) return 0;
+  if (!Number.isFinite(billingDays) || billingDays <= 0) return 0;
+  return usageKwh * billingDays / coveredDays;
+}
+
 export async function fetchOctopus(env: Env): Promise<SourceResult> {
   const legacyEnv = env as Env & { OCTOPUS_ACCOUNT?: string };
   const accountNumber = (env.OCTOPUS_ACCOUNT_NUMBER || legacyEnv.OCTOPUS_ACCOUNT || "").trim();
@@ -326,19 +337,22 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
   let previousUsage = 0;
   let currentUsage = 0;
   let previousDays = 0;
+  let currentDays = 0;
   for (const total of totals) {
     if (total.slotCount !== SLOTS_PER_DAY) continue;
     if (total.day >= previousStartDay && total.day < currentStartDay) {
       previousUsage += total.energyKwh;
       previousDays += 1;
     }
-    if (total.day >= currentStartDay && total.day < dataThroughDay) currentUsage += total.energyKwh;
+    if (total.day >= currentStartDay && total.day < dataThroughDay) {
+      currentUsage += total.energyKwh;
+      currentDays += 1;
+    }
   }
 
   const profile = buildOctopusDailyProfile(totals, profileRanges);
-  const elapsed = Math.max(0, dataThroughMs - currentStartMs);
-  const duration = Math.max(1, nextStart.getTime() - currentStartMs);
-  const projected = elapsed > 0 ? currentUsage * duration / elapsed : 0;
+  const billingDays = Math.max(1, Math.round((nextStart.getTime() - currentStartMs) / DAY_MS));
+  const projected = projectOctopusMonthlyUsage(currentUsage, currentDays, billingDays);
   const expectedDays = Math.round((currentStartMs - previousStartMs) / DAY_MS);
   return {
     source: "octopus",
@@ -358,6 +372,7 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
         rawStableCutoff: synchronized.stableCutoff,
         historyFloor: synchronized.historyFloor,
         cursorBefore: synchronized.cursorBefore,
+        cursorAfter: synchronized.cursorAfter,
         fetchFrom: synchronized.fetchFrom,
         completed: synchronized.completed,
         excludedRecentDays: 2,
@@ -373,6 +388,8 @@ export async function fetchOctopus(env: Env): Promise<SourceResult> {
       thisMonth: {
         usageToDate: Number(currentUsage.toFixed(3)),
         projectedUsage: Number(projected.toFixed(3)),
+        coveredDays: currentDays,
+        expectedDays: billingDays,
       },
     },
     observedAt: nowMs,
