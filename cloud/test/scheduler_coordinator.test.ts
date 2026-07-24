@@ -54,6 +54,14 @@ async function runAlarm(stub: DurableObjectStub): Promise<void> {
   });
 }
 
+async function insertFailingJob(name: string): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO jobs(
+       name,interval_seconds,next_run_at,lease_until,last_success_at,last_error,consecutive_failures
+     ) VALUES(?1,900,0,NULL,NULL,NULL,0)`,
+  ).bind(name).run();
+}
+
 beforeEach(async () => {
   const testEnv = env as TestEnv;
   await resetD1TestDatabase(testEnv.DB, testEnv.TEST_MIGRATIONS);
@@ -137,6 +145,75 @@ describe("SchedulerCoordinator Durable Object", () => {
     ).first<{ count: number }>();
     expect(Number(events?.count)).toBe(0);
     expect(Number(await alarmTime(stub))).toBeGreaterThan(Date.now());
+  });
+
+  it("advances up to three co-due jobs in one alarm", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await env.DB.prepare("UPDATE jobs SET next_run_at=?1, lease_until=NULL")
+      .bind(now + 3600)
+      .run();
+    await env.DB.prepare(
+      "UPDATE jobs SET next_run_at=0 WHERE name IN ('cleanup','update_check',?1)",
+    ).bind(LIVENESS_JOB_NAME).run();
+    const stub = coordinatorStub();
+    await stub.fetch("https://scheduler.internal/ensure", { method: "POST" });
+
+    await runAlarm(stub);
+
+    const stored = await runtime(stub);
+    const selected = stored?.jobs.filter(job => ["cleanup", "update_check", LIVENESS_JOB_NAME].includes(job.name)) ?? [];
+    expect(selected).toHaveLength(3);
+    expect(selected.every(job => job.nextRunAt > now)).toBe(true);
+  });
+
+  it("records only the first failure until the job recovers", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await env.DB.prepare("UPDATE jobs SET next_run_at=?1, lease_until=NULL").bind(now + 3600).run();
+    await insertFailingJob("unsupported_source");
+    const stub = coordinatorStub();
+    await stub.fetch("https://scheduler.internal/ensure", { method: "POST" });
+
+    await runAlarm(stub);
+    await stub.fetch("https://scheduler.internal/wake", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ names: ["unsupported_source"] }),
+    });
+    await runAlarm(stub);
+
+    const events = await env.DB.prepare(
+      "SELECT event,COUNT(*) AS count FROM job_events WHERE job_name=?1 GROUP BY event",
+    ).bind("unsupported_source").all<{ event: string; count: number }>();
+    expect(events.results).toEqual([{ event: "failed", count: 1 }]);
+    const stored = await runtime(stub);
+    expect(stored?.jobs.find(job => job.name === "unsupported_source")?.consecutiveFailures).toBe(2);
+  });
+
+  it("advances runtime even when transition history cannot be written", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await env.DB.prepare("UPDATE jobs SET next_run_at=?1, lease_until=NULL").bind(now + 3600).run();
+    await insertFailingJob("history_failure_source");
+    await env.DB.exec(
+      `CREATE TRIGGER reject_job_events
+       BEFORE INSERT ON job_events
+       BEGIN
+         SELECT RAISE(FAIL,'job event storage unavailable');
+       END`,
+    );
+    const stub = coordinatorStub();
+    await stub.fetch("https://scheduler.internal/ensure", { method: "POST" });
+
+    await runAlarm(stub);
+
+    const stored = await runtime(stub);
+    const failed = stored?.jobs.find(job => job.name === "history_failure_source");
+    expect(failed?.consecutiveFailures).toBe(1);
+    expect(Number(failed?.nextRunAt)).toBeGreaterThan(now);
+    const events = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE job_name=?1",
+    ).bind("history_failure_source").first<{ count: number }>();
+    expect(Number(events?.count)).toBe(0);
+    await env.DB.exec("DROP TRIGGER reject_job_events");
   });
 
   it("refreshes only the requested runtime job without touching D1", async () => {
