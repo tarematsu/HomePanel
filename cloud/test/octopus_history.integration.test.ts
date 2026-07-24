@@ -56,6 +56,7 @@ describe("Octopus daily D1 history", () => {
 
     expect(result.completed).toBe(true);
     expect(result.cursorBefore).toBeNull();
+    expect(result.cursorAfter).toBe(stableThrough);
     expect(result.fetchFrom).toBe(collectionStart);
     expect(result.stableThrough).toBe(stableThrough);
     expect(result.historyFloor).toBe(OCTOPUS_HISTORY_FLOOR_MS);
@@ -96,6 +97,7 @@ describe("Octopus daily D1 history", () => {
     expect(requested[0]?.from.getTime()).toBe(firstStableThrough - DAY_MS);
     expect(requested[0]?.to.getTime()).toBe(firstStableThrough + DAY_MS);
     expect(result.cursorBefore).toBe(firstStableThrough);
+    expect(result.cursorAfter).toBe(firstStableThrough + DAY_MS);
     expect(result.fetchFrom).toBe(firstStableThrough - DAY_MS);
     expect(result.stableThrough).toBe(firstStableThrough + DAY_MS);
 
@@ -103,6 +105,35 @@ describe("Octopus daily D1 history", () => {
       "SELECT COUNT(*) AS count FROM octopus_daily_totals WHERE account_number=?1",
     ).bind("A-incremental").first<{ count: number }>();
     expect(Number(stored?.count)).toBe(8);
+  });
+
+  it("keeps the cursor at the first incomplete bootstrap day and retries it", async () => {
+    const now = Date.parse("2026-07-10T18:00:00Z");
+    const collectionStart = octopusCollectionStart(now);
+    const stableThrough = octopusCompleteStableThroughJst(now);
+    const missingDayEnd = collectionStart + DAY_MS;
+
+    const incomplete = await synchronizeOctopusHistory(env, "A-gap", now, async range =>
+      completeReadings(range).filter(reading => {
+        const observedAt = Date.parse(reading.startAt);
+        return observedAt < collectionStart || observedAt >= missingDayEnd;
+      }));
+
+    expect(incomplete.completed).toBe(false);
+    expect(incomplete.cursorAfter).toBe(collectionStart);
+    const storedCursor = await env.DB.prepare(
+      "SELECT stable_through FROM octopus_sync_state WHERE account_number=?1",
+    ).bind("A-gap").first<{ stable_through: number }>();
+    expect(Number(storedCursor?.stable_through)).toBe(collectionStart);
+
+    const retried: OctopusRange[] = [];
+    const repaired = await synchronizeOctopusHistory(env, "A-gap", now, async range => {
+      retried.push(range);
+      return completeReadings(range);
+    });
+    expect(retried.some(range => range.from.getTime() <= collectionStart && range.to.getTime() >= missingDayEnd)).toBe(true);
+    expect(repaired.completed).toBe(true);
+    expect(repaired.cursorAfter).toBe(stableThrough);
   });
 
   it("uses a compact daily-only schema without supply-point indexes", async () => {
