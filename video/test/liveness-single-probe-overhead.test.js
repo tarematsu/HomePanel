@@ -18,13 +18,15 @@ test('phase transitions initialize bounds with read-only snapshot queries', () =
   assert.doesNotMatch(source, /SET phase = 'base'/);
 });
 
-test('five-video liveness probes a batch concurrently and records once', () => {
+test('five-video liveness probes concurrently and advances only after mutations succeed', () => {
   assert.doesNotMatch(source, /mapWithConcurrency/);
   assert.doesNotMatch(source, /getLivenessStatus/);
   assert.doesNotMatch(source, /SELECT COUNT\(\*\) AS count FROM video_death_list/);
 
   const run = source.slice(source.indexOf('export async function runLivenessMonitor'));
   assert.match(run, /Promise\.all\(rows\.map\(row => probeVideoUrl\(row\.mediaUrl\)\)\)/);
-  assert.match(run, /applyProbeResults\(env\.DB, state\.phase, rows, probes/);
+  assert.match(run, /const phase = state\.phase/);
+  assert.match(run, /applyProbeResults\(env\.DB, phase, rows, probes/);
+  assert.ok(run.indexOf('await applyProbeResults') < run.indexOf('state = { ...state, baseCursorId'));
   assert.equal((run.match(/recordRunAndRelease\(/g) || []).length, 1);
 });
