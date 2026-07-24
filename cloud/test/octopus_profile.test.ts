@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildOctopusDailyProfile,
   completeDayProfileRanges,
+  projectOctopusMonthlyUsage,
   type OctopusProfileRanges,
 } from "../src/octopus_source";
 import type { OctopusDailyTotal } from "../src/octopus_history";
@@ -91,5 +92,11 @@ describe("Octopus complete-day profile", () => {
     const profile = buildOctopusDailyProfile(totals, ranges);
     expect(profile.every(point => point.currentTotal === null)).toBe(true);
     expect(profile.every(point => point.currentComplete === false)).toBe(true);
+  });
+
+  it("projects from covered complete days instead of treating gaps as zero usage", () => {
+    expect(projectOctopusMonthlyUsage(60, 6, 30)).toBe(300);
+    expect(projectOctopusMonthlyUsage(60, 0, 30)).toBe(0);
+    expect(projectOctopusMonthlyUsage(Number.NaN, 6, 30)).toBe(0);
   });
 });
