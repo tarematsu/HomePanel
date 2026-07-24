@@ -193,13 +193,13 @@ describe("SchedulerCoordinator Durable Object", () => {
     const now = Math.floor(Date.now() / 1000);
     await env.DB.prepare("UPDATE jobs SET next_run_at=?1, lease_until=NULL").bind(now + 3600).run();
     await insertFailingJob("history_failure_source");
-    await env.DB.exec(
+    await env.DB.prepare(
       `CREATE TRIGGER reject_job_events
        BEFORE INSERT ON job_events
        BEGIN
          SELECT RAISE(FAIL,'job event storage unavailable');
        END`,
-    );
+    ).run();
     const stub = coordinatorStub();
     await stub.fetch("https://scheduler.internal/ensure", { method: "POST" });
 
@@ -213,7 +213,7 @@ describe("SchedulerCoordinator Durable Object", () => {
       "SELECT COUNT(*) AS count FROM job_events WHERE job_name=?1",
     ).bind("history_failure_source").first<{ count: number }>();
     expect(Number(events?.count)).toBe(0);
-    await env.DB.exec("DROP TRIGGER reject_job_events");
+    await env.DB.prepare("DROP TRIGGER reject_job_events").run();
   });
 
   it("refreshes only the requested runtime job without touching D1", async () => {
