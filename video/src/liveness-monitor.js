@@ -430,13 +430,17 @@ export async function runLivenessMonitor(env) {
         continue;
       }
 
+      const phase = state.phase;
       const probes = await Promise.all(rows.map(row => probeVideoUrl(row.mediaUrl)));
+      const checkedAt = new Date().toISOString();
+      const result = await applyProbeResults(env.DB, phase, rows, probes, checkedAt);
+
+      // Advance only after the mutation batch succeeds. A transient D1 failure
+      // must retry these rows instead of persisting a cursor past unapplied work.
       const last = rows[rows.length - 1];
-      if (state.phase === BASE_PHASE) state = { ...state, baseCursorId: number(last.id) };
+      if (phase === BASE_PHASE) state = { ...state, baseCursorId: number(last.id) };
       else state = { ...state, deathCursorKey: last.canonicalKey };
 
-      const checkedAt = new Date().toISOString();
-      const result = await applyProbeResults(env.DB, state.phase, rows, probes, checkedAt);
       totals.checkedCount += rows.length;
       totals.deadCount += result.deadCount;
       totals.revivedCount += result.revivedCount;
