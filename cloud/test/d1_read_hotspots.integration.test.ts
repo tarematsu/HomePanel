@@ -3,6 +3,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { resetD1TestDatabase } from "./d1_test_utils";
 
 type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1] };
+type CountRow = {
+  active_videos: number;
+  active_mp4_videos: number;
+  feed_videos: number;
+  feed_mp4_videos: number;
+  dirty?: number;
+};
 
 beforeEach(async () => {
   const testEnv = env as TestEnv;
@@ -69,6 +76,10 @@ describe("D1 read hotspot migration", () => {
 
   it("decrements active and feed counts before a ranked video cascades away", async () => {
     const timestamp = "2026-07-23T00:00:00.000Z";
+    const baseline = await env.DB.prepare(
+      `SELECT active_videos,active_mp4_videos,feed_videos,feed_mp4_videos
+         FROM status_counts WHERE id=1`,
+    ).first<CountRow>();
     const inserted = await env.DB.prepare(
       `INSERT INTO videos(media_url,canonical_key,media_type,first_seen_at,last_seen_at,status)
        VALUES(?1,?2,'mp4',?3,?3,'active') RETURNING id`,
@@ -80,15 +91,15 @@ describe("D1 read hotspot migration", () => {
        VALUES('24h',?1,1,?2)`,
     ).bind(videoId, timestamp).run();
 
-    const before = await env.DB.prepare(
+    const beforeDelete = await env.DB.prepare(
       `SELECT active_videos,active_mp4_videos,feed_videos,feed_mp4_videos
          FROM status_counts WHERE id=1`,
-    ).first<Record<string, number>>();
-    expect(before).toMatchObject({
-      active_videos: 1,
-      active_mp4_videos: 1,
-      feed_videos: 1,
-      feed_mp4_videos: 1,
+    ).first<CountRow>();
+    expect(beforeDelete).toEqual({
+      active_videos: Number(baseline?.active_videos) + 1,
+      active_mp4_videos: Number(baseline?.active_mp4_videos) + 1,
+      feed_videos: Number(baseline?.feed_videos) + 1,
+      feed_mp4_videos: Number(baseline?.feed_mp4_videos) + 1,
     });
 
     await env.DB.prepare("DELETE FROM videos WHERE id=?1").bind(videoId).run();
@@ -96,12 +107,12 @@ describe("D1 read hotspot migration", () => {
     const after = await env.DB.prepare(
       `SELECT active_videos,active_mp4_videos,feed_videos,feed_mp4_videos,dirty
          FROM status_counts WHERE id=1`,
-    ).first<Record<string, number>>();
-    expect(after).toMatchObject({
-      active_videos: 0,
-      active_mp4_videos: 0,
-      feed_videos: 0,
-      feed_mp4_videos: 0,
+    ).first<CountRow>();
+    expect(after).toEqual({
+      active_videos: Number(baseline?.active_videos),
+      active_mp4_videos: Number(baseline?.active_mp4_videos),
+      feed_videos: Number(baseline?.feed_videos),
+      feed_mp4_videos: Number(baseline?.feed_mp4_videos),
       dirty: 0,
     });
     const rankings = await env.DB.prepare(
