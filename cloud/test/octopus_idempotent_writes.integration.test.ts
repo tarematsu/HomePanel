@@ -7,79 +7,59 @@ import {
 } from "../src/octopus_history";
 import { resetD1TestDatabase } from "./d1_test_utils";
 
-type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1] };
+ type TestEnv = typeof env & { TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1] };
 
-const HOUR_MS = 60 * 60_000;
+const HALF_HOUR_MS = 30 * 60_000;
 
 beforeEach(async () => {
   const testEnv = env as TestEnv;
   await resetD1TestDatabase(testEnv.DB, testEnv.TEST_MIGRATIONS);
 });
 
-describe("Octopus idempotent writes", () => {
-  it("keeps updated_at stable for unchanged readings and updates corrected values", async () => {
-    const firstNow = Date.parse("2026-07-10T18:00:00Z");
-    const observedAt = Date.parse("2026-07-07T18:00:00Z");
-    const comparison = {
-      from: new Date("2026-06-25T15:00:00.000Z"),
-      to: new Date("2026-07-02T15:00:00.000Z"),
-    };
-    let energyKwh = 0.25;
+describe("Octopus idempotent daily writes", () => {
+  it("keeps updated_at stable for unchanged totals and updates a corrected overlap day", async () => {
+    const now = Date.parse("2026-07-10T18:00:00Z");
+    const correctedDayStart = Date.parse("2026-07-07T15:00:00Z");
+    let correctedDaySlotValue = 0.25;
     const fetchRange = async (range: OctopusRange): Promise<OctopusReading[]> => {
-      if (range.from.getTime() > observedAt || observedAt >= range.to.getTime()) return [];
-      return [{
-        supplyPoint: "spin-idempotent",
-        startAt: new Date(observedAt).toISOString(),
-        value: energyKwh,
-      }];
+      const readings: OctopusReading[] = [];
+      for (let observedAt = range.from.getTime(); observedAt < range.to.getTime(); observedAt += HALF_HOUR_MS) {
+        readings.push({
+          supplyPoint: "spin-idempotent",
+          startAt: new Date(observedAt).toISOString(),
+          value: observedAt >= correctedDayStart && observedAt < correctedDayStart + 48 * HALF_HOUR_MS
+            ? correctedDaySlotValue
+            : 0.1,
+        });
+      }
+      return readings;
     };
 
-    await synchronizeOctopusHistory(
-      env,
-      "A-idempotent",
-      firstNow,
-      "idempotent-profile",
-      comparison,
-      fetchRange,
-    );
+    await synchronizeOctopusHistory(env, "A-idempotent", now, fetchRange);
     const initial = await env.DB.prepare(
-      `SELECT energy_kwh,updated_at FROM octopus_readings
-        WHERE account_number=?1 AND supply_point=?2 AND observed_at=?3`,
-    ).bind("A-idempotent", "spin-idempotent", observedAt)
+      `SELECT energy_kwh,updated_at FROM octopus_daily_totals
+        WHERE account_number=?1 AND day=?2`,
+    ).bind("A-idempotent", "2026-07-08")
       .first<{ energy_kwh: number; updated_at: number }>();
-    expect(initial).toEqual({ energy_kwh: 0.25, updated_at: firstNow });
+    expect(initial).toEqual({ energy_kwh: 12, updated_at: now });
 
-    const unchangedNow = firstNow + 6 * HOUR_MS;
-    await synchronizeOctopusHistory(
-      env,
-      "A-idempotent",
-      unchangedNow,
-      "idempotent-profile",
-      comparison,
-      fetchRange,
-    );
+    const unchangedNow = now + 60_000;
+    await synchronizeOctopusHistory(env, "A-idempotent", unchangedNow, fetchRange);
     const unchanged = await env.DB.prepare(
-      `SELECT energy_kwh,updated_at FROM octopus_readings
-        WHERE account_number=?1 AND supply_point=?2 AND observed_at=?3`,
-    ).bind("A-idempotent", "spin-idempotent", observedAt)
+      `SELECT energy_kwh,updated_at FROM octopus_daily_totals
+        WHERE account_number=?1 AND day=?2`,
+    ).bind("A-idempotent", "2026-07-08")
       .first<{ energy_kwh: number; updated_at: number }>();
-    expect(unchanged).toEqual({ energy_kwh: 0.25, updated_at: firstNow });
+    expect(unchanged).toEqual({ energy_kwh: 12, updated_at: now });
 
-    energyKwh = 0.5;
-    const correctedNow = unchangedNow + 6 * HOUR_MS;
-    await synchronizeOctopusHistory(
-      env,
-      "A-idempotent",
-      correctedNow,
-      "idempotent-profile",
-      comparison,
-      fetchRange,
-    );
+    correctedDaySlotValue = 0.5;
+    const correctedNow = unchangedNow + 60_000;
+    await synchronizeOctopusHistory(env, "A-idempotent", correctedNow, fetchRange);
     const corrected = await env.DB.prepare(
-      `SELECT energy_kwh,updated_at FROM octopus_readings
-        WHERE account_number=?1 AND supply_point=?2 AND observed_at=?3`,
-    ).bind("A-idempotent", "spin-idempotent", observedAt)
+      `SELECT energy_kwh,updated_at FROM octopus_daily_totals
+        WHERE account_number=?1 AND day=?2`,
+    ).bind("A-idempotent", "2026-07-08")
       .first<{ energy_kwh: number; updated_at: number }>();
-    expect(corrected).toEqual({ energy_kwh: 0.5, updated_at: correctedNow });
+    expect(corrected).toEqual({ energy_kwh: 24, updated_at: correctedNow });
   });
 });
