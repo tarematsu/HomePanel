@@ -107,6 +107,12 @@ export async function blockPlaybackMedia(env, request, options = {}) {
        ON CONFLICT(canonical_key) DO NOTHING`
     ).bind(state.canonicalKey, state.mediaUrl, state.id, blockedAt),
     env.DB.prepare(
+      `UPDATE videos
+          SET status = 'hidden'
+        WHERE canonical_key = ?
+          AND status <> 'hidden'`
+    ).bind(state.canonicalKey),
+    env.DB.prepare(
       `DELETE FROM ranking_entries WHERE video_id = ?`
     ).bind(state.id)
   ]);
