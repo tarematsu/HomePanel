@@ -1,6 +1,6 @@
 import { radarBundleShardResponse } from "./radar_bundle";
 import {
-  resetRuntimeFromD1,
+  refreshRuntimeJobs,
   runRuntimeSchedulerTick,
   runtimeNextWakeAt,
 } from "./scheduler_runtime";
@@ -16,6 +16,10 @@ interface SchedulerEnv extends Env {
   SCHEDULER_COORDINATOR?: DurableObjectNamespace;
 }
 
+interface WakeRequest {
+  names?: unknown;
+}
+
 let nextEnsureAllowedAt = 0;
 let nextWatchdogAllowedAt = 0;
 
@@ -29,10 +33,18 @@ function coordinatorStub(env: Env): DurableObjectStub | null {
   return namespace.get(namespace.idFromName(COORDINATOR_NAME));
 }
 
-async function signalCoordinator(env: Env, path: "/ensure" | "/wake"): Promise<void> {
+async function signalCoordinator(
+  env: Env,
+  path: "/ensure" | "/wake",
+  names?: readonly string[],
+): Promise<void> {
   const stub = coordinatorStub(env);
   if (!stub) return;
-  const response = await stub.fetch(`https://scheduler.internal${path}`, { method: "POST" });
+  const response = await stub.fetch(`https://scheduler.internal${path}`, {
+    method: "POST",
+    headers: names === undefined ? undefined : { "Content-Type": "application/json" },
+    body: names === undefined ? undefined : JSON.stringify({ names }),
+  });
   if (!response.ok) throw new Error(`scheduler coordinator ${path} failed: HTTP ${response.status}`);
 }
 
@@ -64,9 +76,13 @@ export function queueSchedulerWatchdog(
   return true;
 }
 
-export function queueSchedulerWake(env: Env, ctx: ExecutionContext): boolean {
+export function queueSchedulerWake(
+  env: Env,
+  ctx: ExecutionContext,
+  names?: readonly string[],
+): boolean {
   if (!namespaceFor(env)) return false;
-  ctx.waitUntil(signalCoordinator(env, "/wake").catch(error => {
+  ctx.waitUntil(signalCoordinator(env, "/wake", names).catch(error => {
     console.error("Failed to wake scheduler alarm", error instanceof Error ? error.message : String(error));
   }));
   return true;
@@ -108,11 +124,18 @@ export class SchedulerCoordinator {
       return radarBundleShardResponse(request, this.env);
     }
     if (path === "/wake") {
-      // Manual refresh is rare. Re-import the D1 configuration snapshot only on
-      // this explicit signal; normal alarms remain entirely in DO storage.
-      await resetRuntimeFromD1(this.state, this.env);
+      let body: WakeRequest = {};
+      try {
+        body = await request.json<WakeRequest>();
+      } catch {
+        body = {};
+      }
+      const names = Array.isArray(body.names)
+        ? body.names.filter((name): name is string => typeof name === "string")
+        : undefined;
+      const changed = await refreshRuntimeJobs(this.state, this.env, names);
       const alarmAt = await this.setEarlierAlarm(Date.now() + MIN_ALARM_DELAY_MS);
-      return Response.json({ scheduled: true, alarmAt }, { status: 202 });
+      return Response.json({ scheduled: true, changed, alarmAt }, { status: 202 });
     }
     if (path === "/ensure") {
       const alarmAt = await this.scheduleNext();
@@ -123,8 +146,6 @@ export class SchedulerCoordinator {
 
   async alarm(): Promise<void> {
     try {
-      // This object serializes alarms, so runtime leases and successful
-      // completion checkpoints do not need D1 writes.
       await runRuntimeSchedulerTick(this.state, this.env);
     } catch (error) {
       console.error("Scheduler alarm job failed", error instanceof Error ? error.message : String(error));
