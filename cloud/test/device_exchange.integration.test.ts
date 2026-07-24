@@ -94,19 +94,24 @@ describe("device exchange", () => {
     expect(heartbeat?.count).toBe(0);
   });
 
-  it("returns sync and compact telemetry receipt in one binary response", async () => {
+  it("returns the newly merged environment and compact telemetry receipt in one binary response", async () => {
     const observedAt = Math.floor((Date.now() - 1000) / 900_000) * 900_000;
     const response = await exchange({ versions, telemetry: telemetry(1, observedAt) });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("application/vnd.homepanel.device-exchange");
     const decoded = decodeExchange(new Uint8Array(await response.arrayBuffer()));
     expect(decoded.radar).toHaveLength(0);
-    expect(decoded.payload).toMatchObject({
-      versions,
-      telemetry: {
-        accepted: 1,
-        acknowledgedSequences: [1],
-        nextSequence: 2,
+    expect(decoded.payload.versions).toMatchObject({ ...versions, dashboard: 1 });
+    expect(decoded.payload.telemetry).toEqual({
+      accepted: 1,
+      acknowledgedSequences: [1],
+      nextSequence: 2,
+    });
+    expect(JSON.parse(String(decoded.payload.dashboard))).toMatchObject({
+      environment: {
+        deviceId: "homepanel-device",
+        bucketMinutes: 15,
+        history: [{ t: observedAt, co2: 640 }],
       },
     });
 
@@ -133,16 +138,6 @@ describe("device exchange", () => {
       "SELECT last_sequence,payload FROM device_heartbeats WHERE device_id=?1",
     ).bind("homepanel-device").first<{ last_sequence: number; payload: string | null }>();
     expect(heartbeat).toEqual({ last_sequence: 1, payload: null });
-
-    const refreshed = decodeExchange(new Uint8Array(await (await exchange({ versions })).arrayBuffer()));
-    expect(refreshed.payload.versions).toMatchObject({ dashboard: 1 });
-    expect(JSON.parse(String(refreshed.payload.dashboard))).toMatchObject({
-      environment: {
-        deviceId: "homepanel-device",
-        bucketMinutes: 15,
-        history: [{ t: observedAt, co2: 640 }],
-      },
-    });
   });
 
   it("acknowledges a retried telemetry batch without duplicating R2 aggregates", async () => {
